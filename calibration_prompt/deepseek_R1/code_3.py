@@ -1,0 +1,157 @@
+import numpy as np
+import xarray as xr
+from py_wake import HorizontalGrid, All2AllIterative
+from bayes_opt import BayesianOptimization
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+
+# [Keep all your original imports here]
+
+class WakeFlowAnalyzer:
+    def __init__(self, model=1, downstream=True):
+        self.MODEL = model
+        self.DOWNWIND = downstream
+        self.D = DTU10MW().diameter()
+        self._load_data()
+        self._setup_domain()
+        self._load_reference_data()
+        self.site = Hornsrev1Site()
+        self.turbine = DTU10MW()
+        self._init_optimization_space()
+
+    def _load_data(self):
+        self.dat = xr.load_dataset('./DTU10MW.nc').assign_coords(
+            x=lambda ds: ds.x * self.D, 
+            y=lambda ds: ds.y * self.D
+        )
+
+    def _setup_domain(self):
+        x_bounds = (2*self.D, 10*self.D) if self.DOWNWIND else (-2*self.D, -1*self.D)
+        self.grid = HorizontalGrid(
+            x=np.linspace(x_bounds[0], x_bounds[1], 100),
+            y=np.linspace(-2*self.D, 2*self.D, 100)
+        )
+
+    def _load_reference_data(self):
+        self.ref_data = self.dat.sel(
+            x=slice(self.grid.x.min(), self.grid.x.max()),
+            y=slice(self.grid.y.min(), self.grid.y.max())
+        )
+
+    def _init_optimization_space(self):
+        self.param_config = {
+            1: self._model1_params,
+            2: self._model2_params
+        }[self.MODEL]()
+
+    def _model1_params(self):
+        return {
+            'pbounds': {
+                'a_s': (0.001, 0.5), 'b_s': (0.001, 0.01),
+                'c_s': (0.001, 0.5), 'b_f': (-2, 1),
+                'c_f': (0.1, 5), 'ch1': (-1, 2),
+                'ch2': (-1, 2), 'ch3': (-1, 2), 'ch4': (-1, 2)
+            },
+            'defaults': {
+                'a_s': 0.17, 'b_s': 0.005, 'c_s': 0.2,
+                'b_f': -0.68, 'c_f': 2.41,
+                'ch1': 0.73, 'ch2': 0.8325,
+                'ch3': -0.0325, 'ch4': -0.32
+            }
+        }
+
+    def _model2_params(self):
+        return {
+            'pbounds': {
+                'A': (0.001, 0.5), 'cti1': (0.01, 5),
+                'cti2': (0.01, 5), 'ceps': (0.01, 3),
+                'ctlim': (0.01, 1), 'ch1': (-1, 2),
+                'ch2': (-1, 2), 'ch3': (-1, 2), 'ch4': (-1, 2)
+            },
+            'defaults': {
+                'A': 0.04, 'cti1': 1.5, 'cti2': 0.8,
+                'ceps': 0.25, 'ctlim': 0.999,
+                'ch1': 0.73, 'ch2': 0.8325,
+                'ch3': -0.0325, 'ch4': -0.3
+            }
+        }
+
+    def create_wake_model(self, **params):
+        if self.MODEL == 1:
+            deficit_model = BlondelSuperGaussianDeficit2020(
+                **{k: params[k] for k in ['a_s', 'b_s', 'c_s', 'b_f', 'c_f']}
+            )
+        else:
+            deficit_model = TurboGaussianDeficit(
+                A=params['A'], cTI=[params['cti1'], params['cti2']],
+                ctlim=params['ctlim'], ceps=params['ceps'],
+                ct2a=ct2a_mom1d, groundModel=Mirror(),
+                rotorAvgModel=GaussianOverlapAvgModel()
+            )
+            deficit_model.WS_key = 'WS_jlk'
+
+        return All2AllIterative(
+            site=self.site, windTurbines=self.turbine,
+            wake_deficitModel=deficit_model,
+            superpositionModel=LinearSum(),
+            turbulenceModel=CrespoHernandez(
+                c=np.array([params[f'ch{i}'] for i in range(1,5)])
+        )
+
+    def evaluate_model(self, wfm):
+        sim_res = wfm([0], [0], 
+            ws=np.arange(4, 11), 
+            TI=np.arange(0.05, 0.45, 0.05),
+            wd=[270]*len(full_ti)
+        )
+        flow_map = sim_res.flow_map(self.grid)
+        pred_deficit = (sim_res.WS - flow_map.WS_eff) / sim_res.WS
+        
+        errors = self.ref_data.deficit - pred_deficit
+        return {
+            'rmse': np.sqrt((errors**2).mean()),
+            'mean_abs_error': np.abs(errors).mean(),
+            'p90_error': errors.quantile(0.9)
+        }
+
+    def optimize_parameters(self, n_iter=50):
+        self.optimizer = BayesianOptimization(
+            f=self._evaluate,
+            pbounds=self.param_config['pbounds'],
+            random_state=1
+        )
+        self.optimizer.probe(params=self.param_config['defaults'], lazy=True)
+        self.optimizer.maximize(init_points=10, n_iter=n_iter)
+        return self.optimizer.max
+
+    def _evaluate(self, **params):
+        wfm = self.create_wake_model(**params)
+        metrics = self.evaluate_model(wfm)
+        return -metrics['rmse']  # BayesianOptimization maximizes the value
+
+    def visualize_results(self, best_params):
+        wfm = self.create_wake_model(**best_params)
+        metrics = self.evaluate_model(wfm)
+        
+        fig, ax = plt.subplots(2, 2, figsize=(15, 12))
+        self._plot_errors(ax[0,0], metrics['mean_abs_error'], 'Mean Absolute Error')
+        self._plot_errors(ax[0,1], metrics['p90_error'], '90th Percentile Error')
+        self._plot_optimization_history(ax[1,0])
+        self._plot_parameter_comparison(ax[1,1], best_params)
+        plt.tight_layout()
+        plt.savefig('final_analysis.png')
+
+    def _plot_errors(self, ax, error_field, title):
+        im = ax.imshow(error_field, extent=[self.grid.x.min(), self.grid.x.max(),
+                                           self.grid.y.min(), self.grid.y.max()])
+        plt.colorbar(im, ax=ax)
+        ax.set_title(title)
+        ax.set_xlabel('Downwind Distance [m]')
+        ax.set_ylabel('Crosswind Distance [m]')
+
+# [Add remaining visualization methods]
+
+if __name__ == "__main__":
+    analyzer = WakeFlowAnalyzer(model=2, downstream=True)
+    best_result = analyzer.optimize_parameters(n_iter=50)
+    analyzer.visualize_results(best_result['params'])

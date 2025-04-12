@@ -1,0 +1,525 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+import xarray as xr
+from py_wake.rotor_avg_models.gaussian_overlap_model import GaussianOverlapAvgModel
+from py_wake.deficit_models.gaussian import TurboGaussianDeficit
+from py_wake.examples.data.dtu10mw._dtu10mw import DTU10MW
+from py_wake.deficit_models.gaussian import BlondelSuperGaussianDeficit2020
+from py_wake import HorizontalGrid
+from py_wake.deflection_models import JimenezWakeDeflection # Although not used (None)
+from py_wake.turbulence_models import CrespoHernandez
+# from py_wake.rotor_avg_models import RotorCenter # Not used in the final selected models
+from py_wake.deficit_models import SelfSimilarityDeficit2020
+from py_wake.wind_farm_models import All2AllIterative
+from py_wake.superposition_models import LinearSum
+from py_wake.ground_models import Mirror
+from py_wake.examples.data.hornsrev1 import Hornsrev1Site
+from bayes_opt import BayesianOptimization
+from py_wake.deficit_models.utils import ct2a_mom1d
+import os
+
+# --- Configuration ---
+DATA_FILE = './DTU10MW.nc'
+OUTPUT_DIR = 'optimization_results'
+FIGS_DIR = os.path.join(OUTPUT_DIR, 'figs')
+
+DOWNWIND = True  # True for wake region, False for upstream blockage region
+MODEL = 2        # Model 1: Blondel wake, Model 2: TurboGaussian wake
+
+if MODEL not in {1, 2}:
+    raise ValueError("MODEL must be 1 or 2")
+
+# Create output directories if they don't exist
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+os.makedirs(FIGS_DIR, exist_ok=True)
+
+# --- Load Data and Setup Turbine/Site ---
+try:
+    dat = xr.load_dataset(DATA_FILE)
+except FileNotFoundError:
+    print(f"Error: Data file not found at {DATA_FILE}")
+    exit()
+
+turbine = DTU10MW()
+D = turbine.diameter()
+dat = dat.assign_coords(x=dat.x * D, y=dat.y * D) # Scale coordinates by diameter
+
+# --- Define Region of Interest (ROI) ---
+if DOWNWIND:
+    X_LB, X_UB = 2, 10
+    region_name = "downstream"
+else:
+    X_LB, X_UB = -2, -1
+    region_name = "upstream"
+
+roi_x = slice(X_LB * D, X_UB * D)
+roi_y = slice(-2 * D, 2 * D) # Fixed y-range
+
+try:
+    flow_roi = dat.sel(x=roi_x, y=roi_y)
+    if flow_roi.x.size == 0 or flow_roi.y.size == 0:
+        raise ValueError("ROI selection resulted in empty data. Check X_LB/X_UB and data coordinates.")
+    target_x = flow_roi.x.values
+    target_y = flow_roi.y.values
+    target_grid = HorizontalGrid(x=target_x, y=target_y) # Define grid once
+except Exception as e:
+    print(f"Error selecting ROI or defining target grid: {e}")
+    print(f"Available x range: {dat.x.min().item()} to {dat.x.max().item()}")
+    print(f"Available y range: {dat.y.min().item()} to {dat.y.max().item()}")
+    exit()
+
+# --- Define Simulation Cases (Wind Speed and Turbulence Intensity) ---
+TIs = np.arange(0.05, 0.45, 0.05)
+WSs = np.arange(4, 11)
+
+# Create combinations of WS and TI
+ws_grid, ti_grid = np.meshgrid(WSs, TIs)
+full_ws = ws_grid.flatten()
+full_ti = ti_grid.flatten()
+n_cases = full_ws.size
+print(f"Running {n_cases} simulation cases (WS/TI combinations).")
+
+site = Hornsrev1Site() # Using Hornsrev1Site for atmospheric conditions
+
+# --- Pre-calculate Observed Deficits ---
+# Need CT/TI corresponding to each ws/ti case first. Use default params for this.
+# (This requires running the model once, but avoids re-running inside the loop)
+
+# Define Default Parameters (central place for defaults)
+default_params_model1_downwind = {'a_s': 0.17, 'b_s': 0.005, 'c_s': 0.2, 'b_f': -0.68, 'c_f': 2.41, 'ch1': 0.73, 'ch2': 0.8325, 'ch3': -0.0325, 'ch4': -0.32}
+default_params_model1_upstream = {'ss_alpha': 0.8888888888888888, 'ss_beta': 1.4142135623730951, 'rp1': -0.672, 'rp2': 0.4897, 'ng1': -1.381, 'ng2': 2.627, 'ng3': -1.524, 'ng4': 1.336} # Removed fg params as they are not used for SelfSimilarity in blockage
+default_params_model2_downwind = {'A': 0.04, 'cti1': 1.5, 'cti2': 0.8, 'ceps': 0.25, 'ctlim': 0.999, 'ch1': 0.73, 'ch2': 0.8325, 'ch3': -0.0325, 'ch4': -0.3}
+default_params_model2_upstream = default_params_model1_upstream # Assuming same blockage params for Model 2 upstream
+
+def get_default_params(model, downwind):
+    if model == 1:
+        return default_params_model1_downwind if downwind else default_params_model1_upstream
+    elif model == 2:
+        return default_params_model2_downwind if downwind else default_params_model2_upstream
+    else:
+        raise ValueError("Invalid model number")
+
+defaults = get_default_params(MODEL, DOWNWIND)
+
+
+def create_wfm(params, model, downwind, site, turbine):
+    """
+    Creates and returns a PyWake WindFarmModel instance based on configuration.
+
+    Parameters
+    ----------
+    params : dict
+        Dictionary containing the parameters for the selected models.
+    model : int
+        Model identifier (1 or 2).
+    downwind : bool
+        Flag indicating downstream (True) or upstream (False) focus.
+    site : Site
+        PyWake Site object.
+    turbine : WindTurbines
+        PyWake WindTurbines object.
+
+    Returns
+    -------
+    All2AllIterative
+        Instantiated PyWake wind farm model.
+    """
+    wake_deficitModel = None
+    turbulenceModel = None
+    blockage_deficitModel = None
+
+    # --- Configure Models Based on Flags and Parameters ---
+    if downwind:
+        blockage_args = {} # No blockage tuning downwind
+        turb_args = {'c': np.array([params['ch1'], params['ch2'], params['ch3'], params['ch4']])}
+        turbulenceModel = CrespoHernandez(**turb_args)
+
+        if model == 1:
+            # Blondel Wake Model
+            def_args = {k: params[k] for k in ['a_s', 'b_s', 'c_s', 'b_f', 'c_f']}
+            wake_deficitModel = BlondelSuperGaussianDeficit2020(**def_args)
+            # Use default SelfSimilarity for blockage effect if needed, not tuned here
+            blockage_deficitModel = SelfSimilarityDeficit2020(groundModel=Mirror()) # Added Mirror as it was in original blockage call
+        elif model == 2:
+            # TurboGaussian Wake Model
+            wake_deficitModel = TurboGaussianDeficit(
+                A=params['A'],
+                cTI=[params['cti1'], params['cti2']],
+                ctlim=params['ctlim'],
+                ceps=params['ceps'],
+                ct2a=ct2a_mom1d,
+                groundModel=Mirror(), # Include Mirror as per original
+                rotorAvgModel=GaussianOverlapAvgModel() # Include RotorAvg as per original
+            )
+            wake_deficitModel.WS_key = 'WS_jlk' # Specific key for TurboGaussian
+            # Use default SelfSimilarity for blockage effect if needed, not tuned here
+            blockage_deficitModel = SelfSimilarityDeficit2020(groundModel=Mirror()) # Added Mirror
+
+    else: # Upstream (Blockage Focus)
+        def_args = {} # Use default wake params when focusing on blockage
+        turb_args = {} # Use default turbulence params when focusing on blockage
+        blockage_args = {
+            'ss_alpha': params['ss_alpha'],
+            'ss_beta': params['ss_beta'],
+            'r12p': np.array([params['rp1'], params['rp2']]),
+            'ngp': np.array([params['ng1'], params['ng2'], params['ng3'], params['ng4']])
+        }
+        # Ground model for blockage only needed if MODEL == 2 in original logic? Clarified: Add Mirror always for SelfSim block.
+        # if model == 2: # Original logic had this check
+        blockage_args['groundModel'] = Mirror() # Apply Mirror for blockage
+
+        # Use default wake/turbulence models
+        wake_deficitModel = BlondelSuperGaussianDeficit2020() # Default Blondel
+        turbulenceModel = CrespoHernandez() # Default CrespoHernandez
+        blockage_deficitModel = SelfSimilarityDeficit2020(**blockage_args)
+
+
+    # --- Instantiate the WFM ---
+    wfm = All2AllIterative(
+        site, turbine,
+        wake_deficitModel=wake_deficitModel,
+        superpositionModel=LinearSum(),
+        deflectionModel=None, # Explicitly None as in original
+        turbulenceModel=turbulenceModel,
+        blockage_deficitModel=blockage_deficitModel
+    )
+    return wfm
+
+# Create WFM with default params to get CT/TI for interpolation
+print("Running initial simulation with default parameters to get CT/TI...")
+default_wfm = create_wfm(defaults, MODEL, DOWNWIND, site, turbine)
+initial_sim_res = default_wfm(
+    [0], [0], # Single turbine at origin
+    ws=full_ws,
+    TI=full_ti,
+    wd=[270] * n_cases, # Fixed wind direction
+    time=True # Request time dimension matching ws/ti cases
+)
+
+print("Interpolating reference data...")
+obs_values_list = []
+for t in range(n_cases):
+    # Get CT/TI for this specific case
+    ct_t = initial_sim_res.CT.isel(time=t, wt=0).item()
+    ti_t = initial_sim_res.TI.isel(time=t, wt=0).item()
+    # Interpolate the reference data for this CT/TI
+    try:
+        observed_deficit = flow_roi.deficits.interp(ct=ct_t, ti=ti_t, z=0) # Assuming z=0 is hub height
+        obs_values_list.append(observed_deficit.rename({'x': 'i', 'y': 'j'})) # Rename coords for concat
+    except Exception as e:
+        print(f"Warning: Interpolation failed for case {t} (WS={full_ws[t]:.1f}, TI={full_ti[t]:.2f}, CT={ct_t:.3f}). Skipping. Error: {e}")
+        # Optionally append NaNs or handle differently
+        # For now, create a dummy array with NaNs
+        nan_array = xr.DataArray(np.full((target_x.size, target_y.size), np.nan),
+                                 coords={'i': target_x, 'j': target_y}, dims=['i', 'j'])
+        obs_values_list.append(nan_array)
+
+
+# Concatenate along the 'time' dimension (which corresponds to ws/ti cases)
+all_obs = xr.concat(obs_values_list, dim='time')
+# Assign time-based coordinates for clarity if needed (optional)
+all_obs['time'] = np.arange(n_cases)
+all_obs['ws'] = ('time', full_ws)
+all_obs['ti'] = ('time', full_ti)
+
+# Check if all observations are NaN (interpolation failed completely)
+if all_obs.isnull().all():
+    print("Error: All observed values are NaN after interpolation. Check reference data coordinates (ct, ti, z) and interpolation range.")
+    exit()
+
+# --- Define Optimization Objective Function ---
+def evaluate_rmse(**kwargs):
+    """Objective function for Bayesian Optimization (returns negative RMSE)."""
+    try:
+        # 1. Create WFM with current parameters
+        wfm = create_wfm(kwargs, MODEL, DOWNWIND, site, turbine)
+
+        # 2. Run simulation
+        sim_res = wfm(
+            [0], [0],
+            ws=full_ws, TI=full_ti, wd=[270] * n_cases,
+            time=True
+        )
+
+        # 3. Calculate flow map (predicted velocities)
+        # Ensure grid matches target_x, target_y used for all_obs
+        flow_map = sim_res.flow_map(target_grid) # Reusing the grid object
+
+        # 4. Calculate predicted deficits
+        # Ensure broadcasting works correctly: sim_res.WS is (time, wt), flow_map.WS_eff is (time, h, x, y)
+        ws_free_stream = sim_res.WS.isel(wt=0) # Shape (time,)
+        ws_effective = flow_map.WS_eff.isel(h=0) # Shape (time, x, y) - Assuming single height level
+        pred_deficit = (ws_free_stream - ws_effective) / ws_free_stream
+
+        # 5. Calculate RMSE (comparing with pre-calculated 'all_obs')
+        # Ensure dimensions match for subtraction (pred_deficit should be (time, x, y))
+        # all_obs should also be (time, x, y) after renaming and concat
+        diff_sq = (all_obs - pred_deficit)**2
+        # Mean over spatial dimensions (x, y), then mean over time dimension
+        mean_rmse = np.sqrt(diff_sq.mean(dim=['i', 'j'])).mean(dim='time').item()
+
+        if np.isnan(mean_rmse):
+            # Penalize NaN results heavily during optimization
+            print("Warning: RMSE calculation resulted in NaN. Penalizing.")
+            return -1.0 # Assign a large negative value (poor score)
+        return -mean_rmse # Return negative RMSE for maximization
+
+    except Exception as e:
+        print(f"Error during simulation or RMSE calculation: {e}")
+        print(f"Parameters causing error: {kwargs}")
+        return -1.0 # Penalize errors
+
+
+# --- Define Parameter Bounds (pbounds) ---
+if MODEL == 1:
+    if DOWNWIND:
+        pbounds = {
+            'a_s': (0.001, 0.5), 'b_s': (0.001, 0.01), 'c_s': (0.001, 0.5),
+            'b_f': (-2, 1), 'c_f': (0.1, 5),
+            'ch1': (-1, 2), 'ch2': (-1, 2), 'ch3': (-1, 2), 'ch4': (-1, 2),
+        }
+    else: # UPSTREAM
+        pbounds = {
+            'ss_alpha': (0.05, 3), 'ss_beta': (0.05, 3),
+            'rp1': (-2, 2), 'rp2': (-2, 2),
+            'ng1': (-3, 3), 'ng2': (-3, 3), 'ng3': (-3, 3), 'ng4': (-3, 3),
+            # Removed 'fg' params as they are not used for SelfSimilarity in blockage
+        }
+elif MODEL == 2:
+    if DOWNWIND:
+        pbounds = {
+            'A': (0.001, .5), 'cti1': (.01, 5), 'cti2': (0.01, 5),
+            'ceps': (0.01, 3), 'ctlim': (0.5, 0.9999), # Adjusted lower bound for ctlim
+            'ch1': (-1, 2), 'ch2': (-1, 2), 'ch3': (-1, 2), 'ch4': (-1, 2),
+        }
+    else: # UPSTREAM (Using same blockage bounds as Model 1 Upstream)
+         pbounds = {
+            'ss_alpha': (0.05, 3), 'ss_beta': (0.05, 3),
+            'rp1': (-2, 2), 'rp2': (-2, 2),
+            'ng1': (-3, 3), 'ng2': (-3, 3), 'ng3': (-3, 3), 'ng4': (-3, 3),
+        }
+
+# --- Run Bayesian Optimization ---
+print("Setting up Bayesian Optimization...")
+optimizer = BayesianOptimization(
+    f=evaluate_rmse,
+    pbounds=pbounds,
+    random_state=1,
+    verbose=2 # Print progress
+)
+
+# Probe the default parameters first
+print("Probing default parameters...")
+optimizer.probe(params=defaults, lazy=True)
+
+print("Starting optimization...")
+optimizer.maximize(
+    init_points=50, # Number of random exploration steps
+    n_iter=200      # Number of Bayesian optimization steps
+)
+
+print("Optimization finished.")
+best_params = optimizer.max['params']
+best_rmse = -optimizer.max['target'] # Convert back to positive RMSE
+
+print("\n--- Best Parameters Found ---")
+for key, val in best_params.items():
+    print(f"{key}: {val:.4f}")
+print(f"\nBest RMSE: {best_rmse:.5f}")
+
+# --- Create Optimization Animation ---
+print("Generating optimization animation...")
+fig_ani, (ax_ani1, ax_ani2) = plt.subplots(1, 2, figsize=(15, 6))
+
+def update_plot(frame):
+    ax_ani1.clear()
+    ax_ani2.clear()
+
+    # Get the best parameters and corresponding RMSE up to the current frame
+    iterations = optimizer.res[:frame+1]
+    if not iterations: return ax_ani1, ax_ani2 # Handle empty case
+
+    current_target = np.array([-res['target'] for res in iterations])
+    best_target_history = np.minimum.accumulate(current_target)
+    best_idx = np.argmin(current_target)
+    current_best_params = iterations[best_idx]['params']
+    current_best_rmse = best_target_history[-1]
+
+    # Plot the entire history in gray
+    ax_ani1.plot(current_target, color='gray', alpha=0.5, label='Iteration RMSE')
+    # Plot the best RMSE so far in black
+    ax_ani1.plot(best_target_history, color='black', label='Best RMSE so far')
+    ax_ani1.set_title('Optimization Convergence')
+    ax_ani1.set_xlabel('Iteration')
+    ax_ani1.set_ylabel('RMSE')
+    ax_ani1.legend()
+    ax_ani1.grid(True)
+
+    # Use the best parameters so far for the bar plot
+    keys = list(current_best_params.keys())
+    best_vals = [current_best_params.get(k, np.nan) for k in keys] # Use .get for safety
+    default_vals_ordered = [defaults.get(k, np.nan) for k in keys]
+
+    bar_width = 0.35
+    x_pos = np.arange(len(keys))
+    ax_ani2.bar(x_pos - bar_width/2, best_vals, bar_width, label='Optimized')
+    ax_ani2.bar(x_pos + bar_width/2, default_vals_ordered, bar_width, label='Default',
+                edgecolor='black', linewidth=1.5, color='none', capstyle='butt')
+    ax_ani2.set_title(f'Best Params (RMSE: {current_best_rmse:.4f}) - Iteration {frame}')
+    ax_ani2.set_xticks(x_pos)
+    ax_ani2.set_xticklabels(keys, rotation=45, ha="right")
+    ax_ani2.legend()
+    ax_ani2.grid(axis='y', linestyle='--')
+    plt.tight_layout()
+    return ax_ani1, ax_ani2
+
+# Ensure the number of frames matches the results
+num_frames = len(optimizer.res)
+if num_frames > 0:
+    ani = animation.FuncAnimation(fig_ani, update_plot, frames=num_frames, repeat=False)
+    # Save as MP4
+    ani_filename = os.path.join(OUTPUT_DIR, f'optimization_M{MODEL}_{region_name}_anim.mp4')
+    writer = animation.FFMpegWriter(fps=10) # Adjust fps as needed
+    try:
+        ani.save(ani_filename, writer=writer)
+        print(f"Animation saved to {ani_filename}")
+    except Exception as e:
+        print(f"Error saving animation (ffmpeg might be needed): {e}")
+else:
+    print("No optimization results to animate.")
+plt.close(fig_ani)
+
+
+# --- Post-Optimization Analysis with Best Parameters ---
+print("\nRunning final simulation with best parameters...")
+final_wfm = create_wfm(best_params, MODEL, DOWNWIND, site, turbine)
+final_sim_res = final_wfm(
+    [0], [0],
+    ws=full_ws, TI=full_ti, wd=[270] * n_cases,
+    time=True
+)
+
+# Calculate final flow map and predicted deficits with BEST params
+final_flow_map = final_sim_res.flow_map(target_grid)
+final_ws_free = final_sim_res.WS.isel(wt=0)
+final_ws_eff = final_flow_map.WS_eff.isel(h=0)
+final_pred_deficit = (final_ws_free - final_ws_eff) / final_ws_free
+
+# Calculate final differences and RMSEs
+final_diff = all_obs - final_pred_deficit # Shape (time, i, j)
+final_rmse_per_case = np.sqrt(((final_diff)**2).mean(dim=['i', 'j']))
+
+# --- Generate Final Plots ---
+
+# 1. Final Parameter Comparison Bar Plot
+print("Generating final parameter comparison plot...")
+fig_bar, ax_bar = plt.subplots(figsize=(10, 6))
+keys = list(best_params.keys())
+best_vals = [best_params.get(k, np.nan) for k in keys]
+default_vals_ordered = [defaults.get(k, np.nan) for k in keys]
+bar_width = 0.35
+x_pos = np.arange(len(keys))
+ax_bar.bar(x_pos - bar_width/2, best_vals, bar_width, label='Optimized')
+ax_bar.bar(x_pos + bar_width/2, default_vals_ordered, bar_width, label='Default',
+           edgecolor='black', linewidth=1.5, color='none', capstyle='butt')
+ax_bar.set_xticks(x_pos)
+ax_bar.set_xticklabels(keys, rotation=45, ha="right")
+ax_bar.set_ylabel('Parameter Value')
+ax_bar.set_title(f'Optimized vs Default Parameters (Model {MODEL}, {region_name})\nFinal RMSE: {best_rmse:.4f}')
+ax_bar.legend()
+ax_bar.grid(axis='y', linestyle='--')
+plt.tight_layout()
+bar_filename = os.path.join(OUTPUT_DIR, f'params_M{MODEL}_{region_name}_bar.png')
+plt.savefig(bar_filename)
+print(f"Parameter plot saved to {bar_filename}")
+plt.close(fig_bar)
+
+# 2. Aggregated Error Flow Field Plots (Mean and P90)
+print("Generating aggregated error plots (Mean, P90)...")
+mean_diff = final_diff.mean(dim='time')
+p90_diff = final_diff.quantile(0.9, dim='time')
+
+fig_err, axes_err = plt.subplots(1, 2, figsize=(14, 6), sharey=True)
+levels = np.linspace(min(mean_diff.min(), p90_diff.min()), max(mean_diff.max(), p90_diff.max()), 11) # Consistent levels
+
+# Mean Error Plot
+cont_mean = axes_err[0].contourf(target_x / D, target_y / D, mean_diff.T, levels=levels, cmap='coolwarm', extend='both')
+axes_err[0].set_title('Mean Error (Observed - Predicted Deficit)')
+axes_err[0].set_xlabel('x/D')
+axes_err[0].set_ylabel('y/D')
+axes_err[0].grid(True, linestyle='--', alpha=0.5)
+axes_err[0].set_aspect('equal', adjustable='box')
+
+# P90 Error Plot
+cont_p90 = axes_err[1].contourf(target_x / D, target_y / D, p90_diff.T, levels=levels, cmap='coolwarm', extend='both')
+axes_err[1].set_title('P90 Error (Observed - Predicted Deficit)')
+axes_err[1].set_xlabel('x/D')
+# axes_err[1].set_ylabel('y/D') # Shared Y
+axes_err[1].grid(True, linestyle='--', alpha=0.5)
+axes_err[1].set_aspect('equal', adjustable='box')
+
+fig_err.colorbar(cont_mean, ax=axes_err.ravel().tolist(), label='Deficit Error')
+fig_err.suptitle(f'Aggregated Prediction Errors (Model {MODEL}, {region_name})')
+plt.tight_layout(rect=[0, 0.03, 1, 0.95]) # Adjust layout for suptitle
+agg_err_filename = os.path.join(FIGS_DIR, f'agg_error_M{MODEL}_{region_name}.png')
+plt.savefig(agg_err_filename)
+print(f"Aggregated error plot saved to {agg_err_filename}")
+plt.close(fig_err)
+
+# 3. (Optional) Individual Case Plots (can generate many files)
+# Consider enabling this only if detailed inspection is needed
+# print("Generating individual case comparison plots...")
+# for t in range(n_cases):
+#     ws_t = full_ws[t]
+#     ti_t = full_ti[t]
+#     rmse_t = final_rmse_per_case.isel(time=t).item()
+
+#     if np.isnan(rmse_t): # Skip plotting if RMSE is NaN for this case
+#         print(f"Skipping plot for case {t} (WS={ws_t:.1f}, TI={ti_t:.2f}) due to NaN RMSE.")
+#         continue
+
+#     fig_case, ax_case = plt.subplots(1, 3, figsize=(18, 5), sharey=True)
+#     obs_t = all_obs.isel(time=t)
+#     pred_t = final_pred_deficit.isel(time=t)
+#     diff_t = final_diff.isel(time=t)
+
+#     # Determine common color limits for deficits
+#     min_val = min(obs_t.min().item(), pred_t.min().item())
+#     max_val = max(obs_t.max().item(), pred_t.max().item())
+#     levels_def = np.linspace(min_val, max_val, 11)
+
+#     # Determine symmetric color limits for difference
+#     max_abs_diff = abs(diff_t).max().item()
+#     levels_diff = np.linspace(-max_abs_diff, max_abs_diff, 11)
+
+#     # Plot Observed
+#     cont_obs = ax_case[0].contourf(target_x / D, target_y / D, obs_t.T, levels=levels_def, cmap='viridis', extend='both')
+#     ax_case[0].set_title(f'Observed Deficit')
+#     ax_case[0].set_ylabel('y/D')
+#     fig_case.colorbar(cont_obs, ax=ax_case[0], label='Deficit')
+
+#     # Plot Predicted
+#     cont_pred = ax_case[1].contourf(target_x / D, target_y / D, pred_t.T, levels=levels_def, cmap='viridis', extend='both')
+#     ax_case[1].set_title(f'Predicted Deficit (RMSE: {rmse_t:.4f})')
+#     fig_case.colorbar(cont_pred, ax=ax_case[1], label='Deficit')
+
+#     # Plot Difference
+#     cont_diff = ax_case[2].contourf(target_x / D, target_y / D, diff_t.T, levels=levels_diff, cmap='coolwarm', extend='both')
+#     ax_case[2].set_title('Difference (Obs - Pred)')
+#     fig_case.colorbar(cont_diff, ax=ax_case[2], label='Error')
+
+#     for ax in ax_case:
+#         ax.set_xlabel('x/D')
+#         ax.grid(True, linestyle='--', alpha=0.5)
+#         ax.set_aspect('equal', adjustable='box')
+
+#     fig_case.suptitle(f'Case {t}: WS={ws_t:.1f} m/s, TI={ti_t:.2f}')
+#     plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+#     case_filename = os.path.join(FIGS_DIR, f'case_{t}_M{MODEL}_{region_name}_err.png')
+#     plt.savefig(case_filename)
+#     plt.close(fig_case)
+# print("Individual case plots generated.")
+
+print("\nScript finished.")

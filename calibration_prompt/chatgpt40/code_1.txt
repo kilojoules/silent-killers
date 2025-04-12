@@ -1,0 +1,133 @@
+# main.py
+
+import numpy as np
+import xarray as xr
+import matplotlib.pyplot as plt
+
+from py_wake.examples.data.dtu10mw._dtu10mw import DTU10MW
+from py_wake.examples.data.hornsrev1 import Hornsrev1Site
+from py_wake.wind_farm_models import All2AllIterative
+from py_wake.superposition_models import LinearSum
+from py_wake.turbulence_models import CrespoHernandez
+from py_wake.deficit_models.gaussian import TurboGaussianDeficit, BlondelSuperGaussianDeficit2020
+from py_wake.deficit_models import SelfSimilarityDeficit2020
+from py_wake.deficit_models.utils import ct2a_mom1d
+from py_wake.rotor_avg_models.gaussian_overlap_model import GaussianOverlapAvgModel
+from py_wake.ground_models import Mirror
+from py_wake import HorizontalGrid
+
+# ========== CONFIG ==========
+MODEL = 2
+DOWNWIND = True
+DATA_PATH = './DTU10MW.nc'
+D = DTU10MW().diameter()
+
+X_LB, X_UB = (2, 10) if DOWNWIND else (-2, -1)
+roi_x = slice(X_LB * D, X_UB * D)
+roi_y = slice(-2 * D, 2 * D)
+
+# ========== LOAD AND PREPARE DATA ==========
+def load_data(path, roi_x, roi_y):
+    dat = xr.load_dataset(path)
+    dat = dat.assign_coords(x=dat.x * D, y=dat.y * D)
+    return dat.sel(x=roi_x, y=roi_y)
+
+# ========== WIND FARM MODEL FACTORY ==========
+def build_wfm(model, downwind, params):
+    site = Hornsrev1Site()
+    turbine = DTU10MW()
+
+    if downwind:
+        if model == 1:
+            wake_deficit = BlondelSuperGaussianDeficit2020(**{k: params[k] for k in ['a_s', 'b_s', 'c_s', 'b_f', 'c_f']})
+        else:
+            wake_deficit = TurboGaussianDeficit(
+                A=params['A'], cTI=[params['cti1'], params['cti2']],
+                ctlim=params['ctlim'], ceps=params['ceps'], ct2a=ct2a_mom1d,
+                groundModel=Mirror(), rotorAvgModel=GaussianOverlapAvgModel()
+            )
+            wake_deficit.WS_key = 'WS_jlk'
+
+        turb_model = CrespoHernandez(c=np.array([params[k] for k in ['ch1', 'ch2', 'ch3', 'ch4']]))
+        blockage_model = SelfSimilarityDeficit2020()
+
+    else:
+        wake_deficit = BlondelSuperGaussianDeficit2020()
+        turb_model = CrespoHernandez()
+        blockage_model = SelfSimilarityDeficit2020(
+            ss_alpha=params['ss_alpha'],
+            ss_beta=params['ss_beta'],
+            r12p=np.array([params['rp1'], params['rp2']]),
+            ngp=np.array([params['ng1'], params['ng2'], params['ng3'], params['ng4']]),
+            groundModel=Mirror() if model == 2 else None
+        )
+
+    return All2AllIterative(
+        site, turbine,
+        wake_deficitModel=wake_deficit,
+        superpositionModel=LinearSum(),
+        deflectionModel=None,
+        turbulenceModel=turb_model,
+        blockage_deficitModel=blockage_model
+    )
+
+# ========== METRICS ==========
+def compute_metrics(observed_deficit, predicted_deficit):
+    error = observed_deficit - predicted_deficit
+    return {
+        'rmse': float(np.sqrt(np.mean(error**2))),
+        'bias': float(np.mean(error)),
+        'mae': float(np.mean(np.abs(error))),
+        'p90': float(np.percentile(np.abs(error), 90))
+    }
+
+# ========== EVALUATION LOOP ==========
+def evaluate_model(wfm, target_x, target_y, full_ws, full_ti, flow_roi):
+    sim_res = wfm([0], [0], ws=full_ws, TI=full_ti, wd=[270] * len(full_ws), time=True)
+    errors = []
+
+    for t in range(len(full_ws)):
+        fm = sim_res.flow_map(HorizontalGrid(x=target_x, y=target_y), time=[t])['WS_eff'].isel(h=0)
+        baseline = sim_res.isel(time=t).WS
+        predicted_deficit = 1 - (fm / baseline)
+
+        obs_deficit = flow_roi.deficits.interp(
+            ct=sim_res.isel(time=t).CT,
+            ti=sim_res.isel(time=t).TI,
+            z=0
+        ).isel(wt=0).T
+
+        metrics = compute_metrics(obs_deficit, predicted_deficit)
+        errors.append(metrics)
+
+        # Optional plotting per timestep...
+    
+    return errors
+
+# ========== MAIN EXECUTION ==========
+def main():
+    flow_roi = load_data(DATA_PATH, roi_x, roi_y)
+    target_x = flow_roi.x
+    target_y = flow_roi.y
+
+    WSs = np.arange(4, 11)
+    TIs = np.arange(0.05, 0.45, 0.05)
+    full_ws = np.array([[ws] * len(TIs) for ws in WSs]).flatten()
+    full_ti = np.tile(TIs, len(WSs))
+
+    # Example default params (use actual optimized ones if available)
+    params = {
+        'A': 0.04, 'cti1': 1.5, 'cti2': 0.8, 'ceps': 0.25, 'ctlim': 0.999,
+        'ch1': 0.73, 'ch2': 0.8325, 'ch3': -0.0325, 'ch4': -0.3
+    }
+
+    wfm = build_wfm(MODEL, DOWNWIND, params)
+    results = evaluate_model(wfm, target_x, target_y, full_ws, full_ti, flow_roi)
+
+    df = pd.DataFrame(results)
+    print(df.describe())
+    df.to_csv('evaluation_metrics.csv', index=False)
+
+if __name__ == "__main__":
+    main()
+

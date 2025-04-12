@@ -1,0 +1,139 @@
+import numpy as np
+import xarray as xr
+from py_wake import ... # (keep all your imports)
+
+class WakeModelOptimizer:
+    def __init__(self, model_type=1, downstream=True):
+        self.model_type = model_type
+        self.downstream = downstream
+        self.D = DTU10MW().diameter()
+        self.load_reference_data()
+        self.setup_defaults()
+        
+    def load_reference_data(self):
+        """Load and prepare reference data"""
+        dat = xr.load_dataset('./DTU10MW.nc')
+        dat = dat.assign_coords(x=dat.x * self.D, y=dat.y * self.D)
+        
+        if self.downstream:
+            roi_x = slice(2 * self.D, 10 * self.D)
+        else:
+            roi_x = slice(-2 * self.D, -1 * self.D)
+            
+        roi_y = slice(-2 * self.D, 2 * self.D)
+        self.flow_roi = dat.sel(x=roi_x, y=roi_y)
+        
+    def setup_defaults(self):
+        """Define default parameters and bounds"""
+        if self.model_type == 1:
+            if self.downstream:
+                self.pbounds = {...}  # Your existing pbounds
+                self.defaults = {...}  # Your existing defaults
+            else:
+                ...
+        else:
+            ...
+    
+    def create_wake_model(self, params):
+        """Instantiate wake model with given parameters"""
+        if self.downstream:
+            if self.model_type == 1:
+                def_args = {k: params[k] for k in ['a_s', 'b_s', 'c_s', 'b_f', 'c_f']}
+                wake_model = BlondelSuperGaussianDeficit2020(**def_args)
+            else:
+                wake_model = TurboGaussianDeficit(
+                    A=params['A'], 
+                    cTI=[params['cti1'], params['cti2']],
+                    ctlim=params['ctlim'],
+                    ...)
+        else:
+            ...
+            
+        return All2AllIterative(
+            Hornsrev1Site(), DTU10MW(),
+            wake_deficitModel=wake_model,
+            turbulenceModel=CrespoHernandez(
+                c=np.array([params['ch1'], params['ch2'], ...])),
+            ...)
+    
+    def evaluate_model(self, params):
+        """Evaluate model performance for given parameters"""
+        wfm = self.create_wake_model(params)
+        sim_res = wfm([0], [0], ws=self.full_ws, TI=self.full_ti, ...)
+        
+        # Calculate velocity deficits
+        flow_map = sim_res.flow_map(HorizontalGrid(x=self.flow_roi.x, y=self.flow_roi.y))
+        pred_deficit = (sim_res.WS - flow_map.WS_eff) / sim_res.WS
+        
+        # Compare with reference data
+        rmse = self.calculate_rmse(pred_deficit)
+        return -rmse
+    
+    def calculate_rmse(self, pred_deficit):
+        """Calculate RMSE against reference data"""
+        obs_values = []
+        for t in range(pred_deficit.time.size):
+            this_pred = sim_res.isel(time=t, wt=0)
+            obs_deficit = self.flow_roi.deficits.interp(
+                ct=this_pred.CT, ti=this_pred.TI, z=0)
+            obs_values.append(obs_deficit.T)
+            
+        all_obs = xr.concat(obs_values, dim='time')
+        return float(np.sqrt(((all_obs - pred_deficit) ** 2).mean(['x', 'y'])).mean('time'))
+    
+    def optimize(self):
+        """Run Bayesian optimization"""
+        optimizer = BayesianOptimization(
+            f=self.evaluate_model,
+            pbounds=self.pbounds,
+            random_state=1)
+        
+        optimizer.probe(params=self.defaults, lazy=True)
+        optimizer.maximize(init_points=50, n_iter=200)
+        return optimizer
+    
+    def visualize_results(self, optimizer):
+        """Generate all visualizations"""
+        self.plot_optimization_convergence(optimizer)
+        self.plot_parameter_comparison(optimizer.max['params'])
+        self.plot_flow_field_comparisons(optimizer.max['params'])
+    
+    def plot_flow_field_comparisons(self, best_params):
+        """Generate flow field comparison plots with error metrics"""
+        wfm = self.create_wake_model(best_params)
+        sim_res = wfm([0], [0], ws=self.full_ws, TI=self.full_ti, ...)
+        flow_map = sim_res.flow_map(HorizontalGrid(x=self.flow_roi.x, y=self.flow_roi.y))
+        
+        errors = []
+        for t in range(flow_map.time.size):
+            # Calculate observed and predicted deficits
+            this_pred = sim_res.isel(time=t)
+            obs_deficit = self.flow_roi.deficits.interp(...)
+            pred_deficit = (this_pred.WS - flow_map.WS_eff.isel(time=t)) / this_pred.WS
+            
+            # Calculate error metrics
+            error = obs_deficit - pred_deficit
+            abs_error = np.abs(error)
+            errors.append({
+                'time': t,
+                'rmse': np.sqrt(np.mean(error**2)),
+                'mae': np.mean(abs_error),
+                'p90': np.percentile(abs_error, 90)
+            })
+            
+            # Plot comparison
+            fig, ax = plt.subplots(3, 1, figsize=(8, 12))
+            self._plot_contourf(ax[0], obs_deficit, 'Observed Deficit')
+            self._plot_contourf(ax[1], pred_deficit, 'Predicted Deficit')
+            self._plot_contourf(ax[2], error, 'Error')
+            
+        # Create error summary statistics
+        error_df = pd.DataFrame(errors)
+        print(f"Average RMSE: {error_df.rmse.mean():.4f}")
+        print(f"P90 Absolute Error: {error_df.p90.mean():.4f}")
+        
+    def _plot_contourf(self, ax, data, title):
+        """Helper for contour plots"""
+        c = ax.contourf(self.flow_roi.x, self.flow_roi.y, data)
+        plt.colorbar(c, ax=ax)
+        ax.set_title(title)
