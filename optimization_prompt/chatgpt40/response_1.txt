@@ -1,0 +1,157 @@
+The root cause of the crash you're facing is that **one or more worker HDF5 files are invalid or empty**, which causes the `h5py.File(worker_file, 'r')` operation during the merging phase to raise an `OSError: Unable to synchronously open file (file signature not found)`.
+
+This is confirmed by:
+- Your log indicating that all optimizations completed (or attempted to), but one of the worker files was corrupt or empty.
+- A `0 byte` worker file:  
+  ```
+  0 -rw-rw-r--  1 juqu juqu    0 Feb 25 11:09 worker_61817.h5
+  ```
+- The error traceback points directly to opening a file with `h5py.File(worker_file, 'r')`, which failed.
+
+---
+
+### 🔧 How to Modify the Script to Handle This Cleanly
+
+You need to **check the validity of each worker file** before trying to open and copy its contents. Here's how to modify the merging loop to skip bad files and avoid crashing:
+
+#### ✅ Updated Merging Code Snippet (in `main()`)
+
+Replace this block:
+```python
+with h5py.File(worker_file, 'r') as h5_in:
+    for key in h5_in:
+        if key != 'init' and key not in h5_out:
+            h5_out.copy(h5_in[key], key)
+```
+
+With this safer version:
+```python
+try:
+    if os.path.getsize(worker_file) == 0:
+        logger.warning(f"Skipping empty worker file: {worker_file}")
+        continue
+    with h5py.File(worker_file, 'r') as h5_in:
+        for key in h5_in:
+            if key != 'init' and key not in h5_out:
+                h5_out.copy(h5_in[key], key)
+except (OSError, Exception) as e:
+    logger.error(f"Failed to process worker file {worker_file}: {e}")
+    continue
+```
+
+This ensures:
+- Empty files are skipped.
+- Any corrupted file won't crash the process.
+- You get clear logs for which file failed.
+
+---
+
+### ✅ Optional: Add File Validity Check When Creating Worker Files
+
+You could also improve robustness during creation with a **post-validation** after `optimize_layout`. E.g., inside `optimize_layout()` before returning `True`, verify the file:
+
+```python
+if os.path.exists(worker_file) and os.path.getsize(worker_file) == 0:
+    logger.error(f"Worker file is empty: {worker_file}")
+    return False
+```
+
+---
+
+### 🔄 Can I Recover the Missing Data?
+
+Yes, since `monitor.py` shows that **only 482 of 3000 configs completed**, and your merging was interrupted, you can:
+1. **Re-run the script with `--no-hot-start` disabled** (i.e., allow hot-start).
+2. It will skip completed configs and pick up the remaining ones.
+3. Add the error handling above to ensure partial results always merge cleanly.
+
+---
+
+Would you like help modifying the `main()` function directly with these patches?
+
+
+Great — here’s a **fully patched version of the `main()` merging block** in your `precompute_farm_layouts.py` that:
+
+- Skips empty/corrupted worker files.
+- Logs errors cleanly.
+- Ensures the process continues without crashing.
+
+---
+
+### 🔧 **Patch the Merging Section in `main()`**
+
+Replace **this original block**:
+```python
+with h5py.File(args.output, mode) as h5_out:
+    # Add metadata
+    h5_out.attrs['grid_size'] = args.grid_size
+    h5_out.attrs['random_pct'] = args.random_pct
+    h5_out.attrs['total_configs'] = len(configs) + len(completed_configs)
+    h5_out.attrs['successful_configs'] = success_count + len(completed_configs)
+    
+    # Copy data from worker files
+    for worker_file in glob.glob(os.path.join(temp_dir, "worker_*.h5")):
+        with h5py.File(worker_file, 'r') as h5_in:
+            for key in h5_in:
+                if key != 'init' and key not in h5_out:
+                    h5_out.copy(h5_in[key], key)
+        # Clean up worker file
+        os.remove(worker_file)
+```
+
+---
+
+### ✅ **With This Safe Version:**
+
+```python
+with h5py.File(args.output, mode) as h5_out:
+    # Add metadata
+    h5_out.attrs['grid_size'] = args.grid_size
+    h5_out.attrs['random_pct'] = args.random_pct
+    h5_out.attrs['total_configs'] = len(configs) + len(completed_configs)
+    h5_out.attrs['successful_configs'] = success_count + len(completed_configs)
+    
+    # Copy data from worker files
+    for worker_file in glob.glob(os.path.join(temp_dir, "worker_*.h5")):
+        try:
+            if not os.path.exists(worker_file):
+                logger.warning(f"Worker file not found: {worker_file}")
+                continue
+            if os.path.getsize(worker_file) == 0:
+                logger.warning(f"Skipping empty worker file: {worker_file}")
+                continue
+
+            with h5py.File(worker_file, 'r') as h5_in:
+                for key in h5_in:
+                    if key != 'init' and key not in h5_out:
+                        h5_out.copy(h5_in[key], key)
+
+        except (OSError, Exception) as e:
+            logger.error(f"Failed to process worker file {worker_file}: {e}")
+
+        finally:
+            try:
+                os.remove(worker_file)
+            except Exception as e:
+                logger.warning(f"Could not delete worker file {worker_file}: {e}")
+```
+
+---
+
+### ✅ Bonus: Fail Fast in `optimize_layout()`
+
+You can also add this right before `return True` in `optimize_layout()`:
+```python
+if os.path.exists(worker_file) and os.path.getsize(worker_file) == 0:
+    logger.error(f"Worker file is unexpectedly empty after write: {worker_file}")
+    return False
+```
+
+---
+
+With these fixes, your process will now:
+- **Skip bad files** during merging instead of crashing.
+- **Log everything** for debugging.
+- **Resume smoothly** next time with hot-start.
+
+Let me know if you'd like me to help with a versioned backup of the original code or unit tests for this logic.

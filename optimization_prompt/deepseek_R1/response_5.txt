@@ -1,0 +1,88 @@
+To resolve the error caused by invalid worker files during the merge phase, modify the script to detect and handle such issues proactively:
+
+1. **Enhance Worker Initialization Validation**:
+```python
+def worker_init(output_dir):
+    """Initialize per-worker temporary HDF5 file with validation"""
+    import os
+    import logging
+    import h5py
+    import numpy as np
+    from multiprocessing import current_process
+    
+    logger = logging.getLogger(__name__)
+    worker_id = current_process().pid
+    worker_file = os.path.join(output_dir, f"worker_{worker_id}.h5")
+    current_process().worker_file = worker_file
+
+    try:
+        # Attempt to create and validate the HDF5 file
+        with h5py.File(worker_file, 'w') as f:
+            f.create_dataset('init', data=np.array([1]))
+            if 'init' not in f:
+                raise RuntimeError("Worker file initialization failed")
+        logger.info(f"Worker {worker_id}: Successfully initialized HDF5 file")
+    except Exception as e:
+        logger.critical(f"Worker {worker_id}: FATAL ERROR creating HDF5 file: {str(e)}")
+        # Propagate error to main process
+        raise RuntimeError("Worker file initialization failed") from e
+```
+
+2. **Add Corruption Check During Merge**:
+```python
+# In main() function, modify the merging section:
+def main():
+    # ... existing code ...
+    with h5py.File(args.output, mode) as h5_out:
+        # Add metadata
+        h5_out.attrs.update({...})
+        
+        # Copy data from worker files with validation
+        for worker_file in glob.glob(os.path.join(temp_dir, "worker_*.h5")):
+            try:
+                # Verify file is valid HDF5 before merging
+                with h5py.File(worker_file, 'r') as h5_in:
+                    if 'init' not in h5_in:
+                        logger.error(f"Invalid worker file: {worker_file} - missing init dataset")
+                        continue
+                    for key in h5_in:
+                        if key != 'init' and key not in h5_out:
+                            h5_out.copy(h5_in[key], key)
+                os.remove(worker_file)
+            except Exception as e:
+                logger.error(f"Corrupted worker file {worker_file}: {str(e)}")
+                # Optional: Keep corrupted files for debugging
+                # import shutil
+                # shutil.move(worker_file, worker_file + ".corrupt")
+                
+    # Clean up temp directory
+    os.rmdir(temp_dir)
+    logger.info(f"Results saved to {args.output}")
+```
+
+3. **Add Global Error Handling**:
+```python
+# At the top of the main() function
+def main():
+    """Main function with global error handling"""
+    try:
+        # ... original main code ...
+    except Exception as e:
+        logger.critical(f"Fatal error: {str(e)}")
+        logger.info("Attempting to save partial results...")
+        # Add emergency merge logic here if needed
+        sys.exit(1)
+```
+
+**Key Improvements**:
+1. **Worker Validation**: Fails immediately if worker file creation fails
+2. **Corruption Detection**: Skips invalid files during merge instead of crashing
+3. **Error Logging**: Clearly identifies problematic files for later investigation
+4. **Graceful Exit**: Prevents silent failures and ensures partial results are saved
+
+To recover existing data:
+1. Check the `layouts.h5_temp` directory for `.corrupt` files
+2. Run the merge process again with `--no-hot-start` to attempt inclusion of valid worker files
+3. Manually inspect any reported corrupted files using HDF5 tools like `h5dump`
+
+This ensures the process stops cleanly on critical errors while preserving completed work.

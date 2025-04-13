@@ -1,0 +1,171 @@
+def is_valid_hdf5_file(file_path):
+    """Check if a file is a valid HDF5 file by attempting to open it.
+    
+    Args:
+        file_path: Path to HDF5 file
+        
+    Returns:
+        bool: True if file is valid HDF5, False otherwise
+    """
+    if not os.path.exists(file_path):
+        return False
+        
+    # Check if file is empty
+    if os.path.getsize(file_path) == 0:
+        return False
+        
+    try:
+        with h5py.File(file_path, 'r') as f:
+            # Try to access a key to verify it's readable
+            for _ in f.keys():
+                break
+        return True
+    except Exception as e:
+        logger.warning(f"Invalid HDF5 file {file_path}: {str(e)}")
+        return False
+
+
+# In the main function, replace the file merging code with this:
+def main():
+    # ... existing code ...
+    
+    # Merge worker files into final output
+    if not args.no_hot_start and os.path.exists(args.output):
+        # Use append mode to preserve existing results
+        mode = 'a'
+    else:
+        # Use write mode for new file or when hot start is disabled
+        mode = 'w'
+    
+    total_worker_files = 0
+    valid_worker_files = 0
+    invalid_worker_files = 0
+    
+    with h5py.File(args.output, mode) as h5_out:
+        # Add metadata
+        h5_out.attrs['grid_size'] = args.grid_size
+        h5_out.attrs['random_pct'] = args.random_pct
+        h5_out.attrs['total_configs'] = len(configs) + len(completed_configs)
+        h5_out.attrs['successful_configs'] = success_count + len(completed_configs)
+        
+        # Copy data from worker files
+        worker_files = glob.glob(os.path.join(temp_dir, "worker_*.h5"))
+        total_worker_files = len(worker_files)
+        
+        for worker_file in worker_files:
+            if is_valid_hdf5_file(worker_file):
+                try:
+                    with h5py.File(worker_file, 'r') as h5_in:
+                        for key in h5_in:
+                            if key != 'init' and key not in h5_out:  # Skip 'init' dataset and avoid duplicates
+                                h5_out.copy(h5_in[key], key)
+                    valid_worker_files += 1
+                except Exception as e:
+                    invalid_worker_files += 1
+                    logger.error(f"Error processing {worker_file}: {str(e)}")
+                    # Don't remove file on error to allow manual recovery
+                    continue
+                
+                # Only remove file if successfully processed
+                try:
+                    os.remove(worker_file)
+                except Exception as e:
+                    logger.warning(f"Could not remove worker file {worker_file}: {str(e)}")
+            else:
+                invalid_worker_files += 1
+                logger.warning(f"Skipping invalid HDF5 file: {worker_file}")
+                # Move invalid file to a different directory for inspection
+                invalid_dir = f"{temp_dir}_invalid"
+                os.makedirs(invalid_dir, exist_ok=True)
+                try:
+                    invalid_name = os.path.basename(worker_file)
+                    os.rename(worker_file, os.path.join(invalid_dir, invalid_name))
+                except Exception as e:
+                    logger.warning(f"Could not move invalid file {worker_file}: {str(e)}")
+    
+    logger.info(f"Worker files: {valid_worker_files} valid, {invalid_worker_files} invalid out of {total_worker_files}")
+    
+    # Only try to remove temp directory if all files processed
+    if invalid_worker_files == 0:
+        try:
+            os.rmdir(temp_dir)
+        except Exception as e:
+            logger.warning(f"Could not remove temp directory {temp_dir}: {str(e)}")
+    else:
+        logger.warning(f"Not removing temp directory {temp_dir} due to invalid files")
+    
+    logger.info(f"Results saved to {args.output}")
+
+
+# Also improve the worker_init function to ensure valid files are created:
+def worker_init(output_dir):
+    """Initialize per-worker temporary HDF5 file"""
+    import os
+    import logging
+    import h5py
+    import numpy as np
+    from multiprocessing import current_process
+    
+    logger = logging.getLogger(__name__)
+    worker_id = current_process().pid
+    worker_file = os.path.join(output_dir, f"worker_{worker_id}.h5")
+    
+    # Check if file already exists (from a previous run)
+    if os.path.exists(worker_file):
+        try:
+            os.remove(worker_file)
+            logger.info(f"Worker {worker_id}: Removed existing worker file")
+        except Exception as e:
+            logger.warning(f"Worker {worker_id}: Could not remove existing file: {str(e)}")
+    
+    # Store file path on worker process object
+    current_process().worker_file = worker_file
+    
+    # Initialize empty HDF5 file with a test dataset to ensure it's valid
+    retry_count = 3
+    success = False
+    
+    for attempt in range(retry_count):
+        try:
+            with h5py.File(worker_file, 'w') as f:
+                # Create a small dataset to validate file
+                f.create_dataset('init', data=np.array([1]))
+                success = True
+                logger.info(f"Worker {worker_id}: Successfully initialized HDF5 file (attempt {attempt+1})")
+                break
+        except Exception as e:
+            logger.error(f"Worker {worker_id}: Failed to create HDF5 file (attempt {attempt+1}): {str(e)}")
+            # Small delay before retry
+            import time
+            time.sleep(1)
+    
+    if not success:
+        logger.critical(f"Worker {worker_id}: Failed to initialize HDF5 file after {retry_count} attempts")
+        # Signal to the worker that it should not continue
+        current_process().worker_file = None
+        
+    # Rest of the function remains the same
+    # Force process affinity to separate cores (Linux only)
+    try:
+        import psutil
+        process = psutil.Process()
+        # Get worker index from Pool (not the pid)
+        worker_idx = int(current_process().name.split('-')[-1]) if '-' in current_process().name else 0
+        # Set affinity to a specific CPU core
+        process.cpu_affinity([worker_idx % os.cpu_count()])
+        logger.info(f"Worker {worker_id} assigned to CPU {worker_idx % os.cpu_count()}")
+    except Exception as e:
+        logger.warning(f"Worker {worker_id}: CPU affinity setup failed: {str(e)}")
+
+
+# Modify the optimize_layout function to check if worker_file is None
+def optimize_layout(config, farm_boundaries, grid_size=18, random_pct=30, update_interval=None):
+    """Run optimization and save to worker-specific temp file"""
+    try:
+        worker_file = getattr(current_process(), 'worker_file', None)
+        if worker_file is None:
+            logger.error(f"Worker initialization failed, skipping optimization for {config}")
+            return False
+            
+        # Rest of the function remains the same
+        # ...

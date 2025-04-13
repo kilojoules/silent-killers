@@ -1,0 +1,89 @@
+The error message
+
+OSError: Unable to synchronously open file (file signature not found)
+
+indicates that one or more worker files is not a valid HDF5 file. In other words, at the time of merging the temporary files, your script encountered a file (for example, one with zero bytes) that does not have the expected HDF5 “signature.”
+
+Below is an explanation of the problem and a recommended modification to reliably detect the problem and stop the process cleanly:
+Diagnosis
+
+    Worker File Creation Issue
+    In your worker initialization (see the code in the uploaded context files) you create a temporary worker HDF5 file by writing a small “init” dataset. However, if a worker fails or its file is left empty (or corrupted) due to an unexpected interruption or error, then during the final merging stage the call
+
+    with h5py.File(worker_file, 'r') as h5_in:
+
+    fails with the “file signature not found” error. In your case, one or more files (for example, one file shows a size of 0 bytes in your directory listing) are not valid HDF5 files.
+
+    Merging Worker Files
+    The merging block does not currently check whether each worker file is a valid HDF5 file. It simply loops over all files and attempts to open them. When an invalid file is encountered, it raises an exception that terminates the entire process.
+
+Recommended Modification
+
+To reliably detect an invalid worker file and stop the process cleanly, you can modify the merging step in your main() function as follows:
+
+    Check File Validity Before Processing
+    Use the helper function h5py.is_hdf5(worker_file). This function returns True if the file appears to be a valid HDF5 file. Additionally, you can check that the file size is nonzero.
+
+    Wrap the File-Opening Code in a Try/Except Block
+    Enclose the call to h5py.File(...) within a try/except block. If an exception occurs (either from an invalid signature or any other error), log the error and then abort using sys.exit(1) or raise an exception to stop further processing.
+
+Here’s an example of how you might modify the merging loop:
+
+import sys  # at the top of the file
+
+# Merge worker files into final output
+with h5py.File(args.output, mode) as h5_out:
+    # Add metadata
+    h5_out.attrs['grid_size'] = args.grid_size
+    h5_out.attrs['random_pct'] = args.random_pct
+    h5_out.attrs['total_configs'] = len(configs) + len(completed_configs)
+    h5_out.attrs['successful_configs'] = success_count + len(completed_configs)
+
+    # Copy data from worker files
+    for worker_file in glob.glob(os.path.join(temp_dir, "worker_*.h5")):
+        # Check if file exists and is non-empty
+        if os.path.getsize(worker_file) == 0:
+            logger.error(f"Worker file {worker_file} is empty.")
+            sys.exit(1)
+        # Validate HDF5 format before attempting to open it
+        if not h5py.is_hdf5(worker_file):
+            logger.error(f"Worker file {worker_file} is not a valid HDF5 file (signature not found).")
+            sys.exit(1)
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                for key in h5_in:
+                    # Skip initial dummy dataset and avoid duplicates
+                    if key != 'init' and key not in h5_out:
+                        h5_out.copy(h5_in[key], key)
+        except Exception as e:
+            logger.error(f"Error opening worker file {worker_file}: {e}")
+            sys.exit(1)
+        # Remove the worker file after successful processing
+        os.remove(worker_file)
+
+Explanation:
+
+    File Size Check:
+    By using os.path.getsize(worker_file), you ensure that the file isn’t empty.
+
+    HDF5 Format Check:
+    Calling h5py.is_hdf5(worker_file) confirms whether the file contains the proper HDF5 signature.
+
+    Error Handling:
+    In the event that a file fails any of these checks or an exception is raised while opening it, the process logs the error and exits cleanly (or you could choose to raise an exception).
+
+This modification ensures that any invalid worker file is caught early in the merging process, and the error is reported immediately, preventing partial results or silent failures.
+Additional Considerations
+
+    Worker Initialization:
+    You might also consider adding similar validation immediately after a worker file is created in the worker_init function. This proactive approach could include opening the file for reading (or checking its signature) right after the creation of the init dataset.
+
+    Robust Cleanup:
+    If you want the overall process to log all errors (perhaps to retry or take remedial action), you could also aggregate the errors and then stop after processing the merging loop, rather than exiting immediately on the first failure.
+
+    Graceful Shutdown:
+    Depending on your needs, you could trigger a cleanup function before exiting to ensure that no temporary files remain and that logging or notification is comprehensive.
+
+By implementing these checks, your script will be more robust and will reliably detect and report any issue with worker files, stopping the process cleanly rather than crashing unpredictably during the final output merging stage.
+
+References: The modifications build upon the existing code structure in your provided script (see context_1.txt and context_3.txt for the worker file initialization and merging code).

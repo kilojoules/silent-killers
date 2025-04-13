@@ -1,0 +1,117 @@
+The crash you're seeing during the final HDF5 merging (`OSError: Unable to synchronously open file (file signature not found)`) is caused by a corrupted or invalid worker HDF5 file — likely one of the 0-byte files like `worker_61817.h5`. This breaks `h5py.File(..., 'r')`, which assumes a valid HDF5 signature at the file header.
+
+To make your pipeline **robust and able to fail gracefully**, you can modify your merging script to:
+
+1. **Check each worker file's validity before opening it**.
+2. **Skip or log bad files**, and optionally **abort the merge process early**.
+3. **Cleanly terminate with an informative error message**.
+
+---
+
+### ✅ Suggested Fix in Python (to use in your `main()` or merging loop)
+
+Here’s a reliable pattern to catch this:
+
+```python
+import h5py
+import os
+
+def is_valid_hdf5(filepath):
+    """Quick check for HDF5 signature without opening via h5py."""
+    try:
+        if os.path.getsize(filepath) == 0:
+            return False
+        with open(filepath, 'rb') as f:
+            sig = f.read(8)
+            return sig == b'\x89HDF\r\n\x1a\n'
+    except Exception as e:
+        print(f"Error checking file {filepath}: {e}")
+        return False
+
+# Your loop for merging worker files
+for worker_file in worker_files:
+    if not is_valid_hdf5(worker_file):
+        print(f"Invalid or corrupted HDF5 file detected: {worker_file}. Skipping or aborting.")
+        # Option 1: skip and continue
+        # continue
+
+        # Option 2: abort early
+        raise RuntimeError(f"Aborting due to invalid HDF5 file: {worker_file}")
+    
+    with h5py.File(worker_file, 'r') as h5_in:
+        # merge logic here
+```
+
+---
+
+### 🔍 Diagnosis Recap
+
+- You expected 3000 configs, but only 482 completed (from `monitor.py` output).
+- The error only hit at the **final join step**, not during individual optimizations.
+- `layouts.h5_temp` contains many suspiciously small (~800 bytes or even 0 bytes) `worker_XXXXX.h5` files.
+
+This suggests that some worker processes either:
+- Crashed or timed out before writing data.
+- Wrote empty or incomplete files (especially `worker_61817.h5` which is **0 bytes**).
+
+---
+
+### ✅ Bonus: Pre-filter list of files
+
+If you're globbing or iterating over files, you can filter out broken ones like so:
+
+```python
+valid_files = [f for f in glob.glob("worker_*.h5") if is_valid_hdf5(f)]
+```
+
+---
+
+Let me know if you'd like help modifying the actual merge code you're using, or automating recovery by re-running only failed seeds.
+
+
+Awesome. If you're planning to rerun or salvage missing configs, here are a couple of ideas to keep in mind:
+
+---
+
+### 🧼 Clean Up Zero or Invalid Files
+
+You can clean them up ahead of merging to reduce clutter:
+
+```bash
+# Delete all 0-byte files (safe to do)
+find layouts.h5_temp -type f -size 0 -name 'worker_*.h5' -delete
+
+# Or log them first:
+find layouts.h5_temp -type f -size 0 -name 'worker_*.h5'
+```
+
+---
+
+### 🛠️ Track Incomplete Work
+
+You already have a nice monitor script (`monitor.py`) that summarizes completed configs. You could extend that to **export a list of missing seeds/farms/types**, and then selectively rerun only those.
+
+For example:
+
+```python
+# Pseudocode
+expected = set((f, t, s) for f in farms for t in types for s in seeds)
+completed = set(counts.keys())
+missing = expected - completed
+```
+
+Want help building that list automatically?
+
+---
+
+### 🧪 Final Merging Tip
+
+Once the bad files are filtered/skipped, your final merge logic should be much safer. Still, you might want to:
+
+- Log every file that gets merged (especially sizes).
+- Keep track of how many datasets/attributes were added from each.
+- Optionally save an audit log with a timestamped filename, like `merge_log_YYYYMMDD.txt`.
+
+---
+
+Let me know how you want to handle recovery: skip, rerun, or salvage — and I’ll help you script it up.

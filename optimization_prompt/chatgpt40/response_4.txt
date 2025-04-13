@@ -1,0 +1,236 @@
+Thanks for the detailed logs and context — this is super helpful. Here's what's happening and how we can fix it cleanly.
+
+---
+
+### 🔍 **Diagnosis: What Went Wrong**
+The crash occurred during **merging of worker HDF5 files**:
+
+```python
+with h5py.File(worker_file, 'r') as h5_in:
+```
+
+This line failed with:
+
+```
+OSError: Unable to synchronously open file (file signature not found)
+```
+
+This means at least one `worker_XXXX.h5` file is **invalid or corrupted**, possibly due to:
+- Being **0 bytes** (confirmed by `worker_61817.h5`)
+- Being **written incompletely**, maybe due to an interrupted process
+
+---
+
+### ✅ **How to Detect and Handle This Cleanly**
+
+We want to **skip invalid worker files** during the merge, log the issue, and optionally **delete or quarantine** those files.
+
+---
+
+### 💡 **Solution: Patch the Merge Loop**
+
+Modify the merging part in your `main()` function (bottom of the script) like this:
+
+```python
+import shutil
+
+# Directory to move bad worker files
+bad_dir = os.path.join(temp_dir, "bad_files")
+os.makedirs(bad_dir, exist_ok=True)
+
+with h5py.File(args.output, mode) as h5_out:
+    h5_out.attrs['grid_size'] = args.grid_size
+    h5_out.attrs['random_pct'] = args.random_pct
+    h5_out.attrs['total_configs'] = len(configs) + len(completed_configs)
+    h5_out.attrs['successful_configs'] = success_count + len(completed_configs)
+
+    for worker_file in glob.glob(os.path.join(temp_dir, "worker_*.h5")):
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                for key in h5_in:
+                    if key != 'init' and key not in h5_out:
+                        h5_out.copy(h5_in[key], key)
+        except (OSError, IOError) as e:
+            logger.warning(f"Skipping corrupt or unreadable worker file: {worker_file} ({str(e)})")
+            shutil.move(worker_file, os.path.join(bad_dir, os.path.basename(worker_file)))
+        else:
+            os.remove(worker_file)
+```
+
+---
+
+### 🛡️ **Extra: Guard Future Runs**
+
+You might also want to **validate worker file integrity** before merging, e.g.:
+
+```python
+def is_valid_h5(file_path):
+    try:
+        with h5py.File(file_path, 'r') as f:
+            return True
+    except Exception:
+        return False
+```
+
+Use it during merging or add a pre-check step.
+
+---
+
+### 📦 Recovering Data
+
+You can **rescue partial results** by:
+- Re-running with `--no-hot-start` to avoid filtering
+- Or cleaning up bad files and letting it hot-start again
+
+The `monitor.py` confirms many configs are still missing, so you’re good to resume.
+
+---
+
+### ✅ Summary
+
+- The crash was caused by trying to open a **corrupt/zero-byte worker file**
+- You should skip and optionally quarantine unreadable worker files during merging
+- Consider adding file integrity checks before processing
+
+Would you like me to generate a small helper script to scan and clean the bad worker files now?
+
+
+
+Awesome. Here's a small standalone script to scan all your `layouts.h5_temp/worker_*.h5` files and **move invalid ones** to a `bad_files/` quarantine folder inside that directory.
+
+---
+
+### 🧼 `clean_worker_files.py`
+
+```python
+import os
+import h5py
+import shutil
+import glob
+import logging
+
+# Setup logging
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
+# Directory where worker files are stored
+temp_dir = "layouts.h5_temp"
+bad_dir = os.path.join(temp_dir, "bad_files")
+
+os.makedirs(bad_dir, exist_ok=True)
+
+# Function to check if an HDF5 file is valid
+def is_valid_h5(file_path):
+    try:
+        with h5py.File(file_path, 'r'):
+            return True
+    except Exception as e:
+        logging.warning(f"Invalid HDF5 file: {file_path} ({str(e)})")
+        return False
+
+# Scan and clean
+worker_files = glob.glob(os.path.join(temp_dir, "worker_*.h5"))
+logging.info(f"Scanning {len(worker_files)} worker files...")
+
+bad_count = 0
+
+for worker_file in worker_files:
+    if not is_valid_h5(worker_file):
+        shutil.move(worker_file, os.path.join(bad_dir, os.path.basename(worker_file)))
+        bad_count += 1
+
+logging.info(f"Scan complete. {bad_count} bad files moved to: {bad_dir}")
+```
+
+---
+
+### ▶️ Usage
+
+From your repo directory:
+
+```bash
+python clean_worker_files.py
+```
+
+---
+
+### 📌 Notes
+
+- It only **moves** bad files — no deletions, so you can review them later.
+- After this, you're safe to rerun `precompute_farm_layouts.py` (with or without hot start).
+
+Let me know if you’d like it to also print how many configs each worker contributed before removing bad ones — easy to add.
+
+Thanks for the thorough info. You're spot-on — the error stems from **trying to merge an invalid or corrupt worker file** (`OSError: Unable to synchronously open file (file signature not found)`) at the very end, *after* all optimization processes have completed.
+
+### 🔍 Diagnosis
+
+From your logs and script:
+
+- The optimization ran mostly fine (2999/3000 completed).
+- One or more **worker HDF5 files** are corrupt — **likely zero-byte files** (e.g. `worker_61817.h5`).
+- The final merge step attempts to `h5py.File(worker_file, 'r')` **without validating** the file first, and crashes hard on invalid input.
+
+---
+
+### ✅ Recommended Fix: Detect Invalid Worker Files Before Merging
+
+Modify the `main()` function's **merge section** like this:
+
+#### 🔧 Replace this block:
+```python
+for worker_file in glob.glob(os.path.join(temp_dir, "worker_*.h5")):
+    with h5py.File(worker_file, 'r') as h5_in:
+        for key in h5_in:
+            if key != 'init' and key not in h5_out:
+                h5_out.copy(h5_in[key], key)
+    os.remove(worker_file)
+```
+
+#### 💡 With this safer version:
+```python
+for worker_file in glob.glob(os.path.join(temp_dir, "worker_*.h5")):
+    try:
+        # Skip if the file is empty or too small
+        if os.path.getsize(worker_file) < 1024:
+            logger.warning(f"Skipping invalid or empty file: {worker_file}")
+            continue
+        
+        with h5py.File(worker_file, 'r') as h5_in:
+            for key in h5_in:
+                if key != 'init' and key not in h5_out:
+                    h5_out.copy(h5_in[key], key)
+    except (OSError, IOError) as e:
+        logger.warning(f"Could not read worker file {worker_file}: {e}")
+    finally:
+        try:
+            os.remove(worker_file)
+        except Exception as e:
+            logger.warning(f"Failed to remove {worker_file}: {e}")
+```
+
+This ensures:
+- Files like `worker_61817.h5` (size = 0 bytes) get skipped cleanly.
+- `OSError` during `h5py.File()` won't crash the whole script.
+- Temporary files are still cleaned up even if skipped.
+
+---
+
+### 🧼 Optional: Extra Safeguard During Worker File Creation
+
+In `worker_init()`, you're already writing a dummy `init` dataset. Good!
+
+You could go one step further and check that `worker_file` **exists and is >1KB** *before the worker returns success*, as a sanity check.
+
+---
+
+### 🔁 Recovery Tip
+
+Since `monitor.py` confirms that ~16% (482/3000) were completed and the valid worker files are still in `layouts.h5_temp`, **you don’t have to rerun everything**. Just:
+
+1. Patch the merge block above.
+2. Re-run only the **merge step**, e.g. comment out everything after parsing in `main()` except the final merge.
+3. Then restart the full run with `--no-hot-start` off and it’ll skip the completed configs.
+
+---
+
+Let me know if you want a modified `main()` block that just merges or a quick script to extract all valid data from `layouts.h5_temp` without redoing the full run.

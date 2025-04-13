@@ -1,0 +1,126 @@
+$ ls -hlarts layouts.h5_temp
+total 9.1M
+1.0K -rw-rw-r--  1 juqu juqu  800 Feb 24 16:44 worker_114160.h5
+1.0K -rw-rw-r--  1 juqu juqu  800 Feb 24 16:44 worker_114159.h5
+1.0K -rw-rw-r--  1 juqu juqu  800 Feb 24 16:44 worker_114158.h5
+1.0K -rw-rw-r--  1 juqu juqu  800 Feb 24 16:44 worker_114157.h5
+1.0K -rw-rw-r--  1 juqu juqu  800 Feb 24 17:01 worker_64518.h5
+   0 -rw-rw-r--  1 juqu juqu    0 Feb 25 11:09 worker_61817.h5
+1.0K -rw-rw-r--  1 juqu juqu  800 Feb 25 11:13 worker_61865.h5
+1.0K -rw-rw-r--  1 juqu juqu  800 Feb 25 11:13 worker_61864.h5
+1.0K -rw-rw-r--  1 juqu juqu  800 Feb 25 11:13 worker_61863.h5
+1.0K -rw-rw-r--  1 juqu juqu  800 Feb 25 11:17 worker_61946.h5
+1.0K -rw-rw-r--  1 juqu juqu  800 Feb 25 11:17 worker_61943.h5
+1.0K -rw-rw-r--  1 juqu juqu  800 Feb 25 11:17 worker_61942.h5
+1.0K -rw-rw-r--  1 juqu juqu  800 Feb 25 11:17 worker_61941.h5
+1.0K -rw-rw-r--  1 juqu juqu  800 Feb 25 11:17 worker_61940.h5
+1.0K -rw-rw-r--  1 juqu juqu  800 Feb 25 11:17 worker_61939.h5
+1.0K -rw-rw-r--  1 juqu juqu  800 Feb 25 11:17 worker_61937.h5
+1.0K -rw-rw-r--  1 juqu juqu  800 Feb 25 11:17 worker_61936.h5
+1.0K -rw-rw-r--  1 juqu juqu  800 Feb 25 11:17 worker_61935.h5
+1.0K -rw-rw-r--  1 juqu juqu  800 Feb 25 11:17 worker_61934.h5
+1.0K -rw-rw-r--  1 juqu juqu  800 Feb 25 11:17 worker_61931.h5
+1.0K -rw-rw-r--  1 juqu juqu  800 Feb 25 11:17 worker_61930.h5
+1.0K -rw-rw-r--  1 juqu juqu  800 Feb 25 11:17 worker_61929.h5
+1.0K -rw-rw-r--  1 juqu juqu  800 Feb 25 11:17 worker_61928.h5
+1.0K -rw-rw-r--  1 juqu juqu  800 Feb 25 11:17 worker_61927.h5
+1.0K -rw-rw-r--  1 juqu juqu  800 Feb 25 11:21 worker_62106.h5
+1.0K -rw-rw-r--  1 juqu juqu  800 Feb 25 11:22 worker_62124.h5
+1.0K -rw-rw-r--  1 juqu juqu  800 Feb 25 11:22 worker_62123.h5
+1.0K -rw-rw-r--  1 juqu juqu  800 Feb 25 11:22 worker_62122.h5
+1.0K -rw-rw-r--  1 juqu juqu  800 Feb 25 11:22 worker_62121.h5
+3.5K -rw-rw-r--  1 juqu juqu 3.4K Feb 25 11:38 worker_62220.h5
+3.5K -rw-rw-r--  1 juqu juqu 3.4K Feb 25 11:38 worker_62219.h5
+3.5K -rw-rw-r--  1 juqu juqu 3.4K Feb 25 11:38 worker_62221.h5
+4.5K -rw-rw-r--  1 juqu juqu 4.1K Feb 25 11:58 worker_62341.h5
+2.5K -rw-rw-r--  1 juqu juqu 2.1K Feb 25 11:59 worker_62451.h5
+2.5K -rw-rw-r--  1 juqu juqu 2.1K Feb 25 11:59 worker_62450.h5
+2.5K -rw-rw-r--  1 juqu juqu 2.1K Feb 25 11:59 worker_62448.h5
+ 52K -rw-rw-r--  1 juqu juqu  52K Feb 25 13:22 worker_42248.h5
+ 49K -rw-rw-r--  1 juqu juqu  49K Feb 25 13:23 worker_42245.h5
+ 52K -rw-rw-r--  1 juqu juqu  52K Feb 25 13:23 worker_42243.h5
+ 49K -rw-rw-r--  1 juqu juqu  49K Feb 25 13:25 worker_42238.h5
+ 49K -rw-rw-r--  1 juqu juqu  49K Feb 25 13:26 worker_42253.h5
+ 49K -rw-rw-r--  1 juqu juqu  49K Feb 25 13:26 worker_42236.h5
+ 49K -rw-rw-r--  1 juqu juqu  49K Feb 25 13:26 worker_42237.h5
+ 56K -rw-rw-r--  1 juqu juqu  56K Feb 25 13:26 worker_42250.h5
+ 56K -rw-rw-r--  1 juqu juqu  56K Feb 25 13:26 worker_42241.h5
+ 56K -rw-rw-r--  1 juqu juqu  56K Feb 25 13:26 worker_42240.h5
+ 49K -rw-rw-r--  1 juqu juqu  49K Feb 25 13:26 worker_42255.h5
+ 56K -rw-rw-r--  1 juqu juqu  56K Feb 25 13:27 worker_42251.h5
+ 49K -rw-rw-r--  1 juqu juqu  49K Feb 25 13:27 worker_42252.h5
+ 49K -rw-rw-r--  1 juqu juqu  49K Feb 25 13:27 worker_42239.h5
+ 56K -rw-rw-r--  1 juqu juqu  56K Feb 25 13:27 worker_42242.h5
+ 56K -rw-rw-r--  1 juqu juqu  56K Feb 25 13:27 worker_42249.h5
+ 49K -rw-rw-r--  1 juqu juqu  49K Feb 25 13:27 worker_42254.h5
+164K -rw-rw-r--  1 juqu juqu 164K Feb 25 17:47 worker_44202.h5
+164K -rw-rw-r--  1 juqu juqu 164K Feb 25 17:49 worker_44203.h5
+164K -rw-rw-r--  1 juqu juqu 164K Feb 25 17:54 worker_44195.h5
+164K -rw-rw-r--  1 juqu juqu 164K Feb 25 17:54 worker_44211.h5
+164K -rw-rw-r--  1 juqu juqu 164K Feb 25 18:00 worker_44194.h5
+164K -rw-rw-r--  1 juqu juqu 164K Feb 25 18:00 worker_44210.h5
+164K -rw-rw-r--  1 juqu juqu 164K Feb 25 18:20 worker_44198.h5
+164K -rw-rw-r--  1 juqu juqu 164K Feb 25 18:21 worker_44196.h5
+164K -rw-rw-r--  1 juqu juqu 164K Feb 25 18:25 worker_44206.h5
+164K -rw-rw-r--  1 juqu juqu 164K Feb 25 18:26 worker_44201.h5
+164K -rw-rw-r--  1 juqu juqu 164K Feb 25 18:26 worker_44204.h5
+164K -rw-rw-r--  1 juqu juqu 164K Feb 25 18:26 worker_44207.h5
+164K -rw-rw-r--  1 juqu juqu 164K Feb 25 18:26 worker_44216.h5
+164K -rw-rw-r--  1 juqu juqu 164K Feb 25 18:27 worker_44217.h5
+164K -rw-rw-r--  1 juqu juqu 164K Feb 25 18:27 worker_44213.h5
+164K -rw-rw-r--  1 juqu juqu 164K Feb 25 18:28 worker_44215.h5
+164K -rw-rw-r--  1 juqu juqu 164K Feb 25 18:29 worker_44193.h5
+161K -rw-rw-r--  1 juqu juqu 161K Feb 25 18:29 worker_44200.h5
+164K -rw-rw-r--  1 juqu juqu 164K Feb 25 18:32 worker_44214.h5
+164K -rw-rw-r--  1 juqu juqu 164K Feb 25 18:32 worker_44209.h5
+164K -rw-rw-r--  1 juqu juqu 164K Feb 25 18:33 worker_44208.h5
+164K -rw-rw-r--  1 juqu juqu 164K Feb 25 18:33 worker_44192.h5
+164K -rw-rw-r--  1 juqu juqu 164K Feb 25 18:38 worker_44199.h5
+164K -rw-rw-r--  1 juqu juqu 164K Feb 25 18:47 worker_44190.h5
+164K -rw-rw-r--  1 juqu juqu 164K Feb 25 19:01 worker_44191.h5
+164K -rw-rw-r--  1 juqu juqu 164K Feb 25 19:07 worker_44189.h5
+161K -rw-rw-r--  1 juqu juqu 161K Feb 25 22:03 worker_46907.h5
+161K -rw-rw-r--  1 juqu juqu 161K Feb 25 22:18 worker_47650.h5
+161K -rw-rw-r--  1 juqu juqu 161K Feb 25 22:20 worker_47326.h5
+161K -rw-rw-r--  1 juqu juqu 161K Feb 25 22:20 worker_47960.h5
+161K -rw-rw-r--  1 juqu juqu 161K Feb 25 22:25 worker_47925.h5
+161K -rw-rw-r--  1 juqu juqu 161K Feb 25 22:27 worker_47290.h5
+130K -rw-rw-r--  1 juqu juqu 130K Feb 25 22:29 worker_48353.h5
+ 32K -rw-rw-r--  1 juqu juqu  32K Feb 25 22:30 worker_49493.h5
+130K -rw-rw-r--  1 juqu juqu 130K Feb 25 22:31 worker_48273.h5
+161K -rw-rw-r--  1 juqu juqu 161K Feb 25 22:34 worker_47529.h5
+2.5K -rw-rw-r--  1 juqu juqu 2.1K Feb 25 22:34 worker_49998.h5
+ 32K -rw-rw-r--  1 juqu juqu  32K Feb 25 22:34 worker_49566.h5
+130K -rw-rw-r--  1 juqu juqu 130K Feb 25 22:34 worker_48419.h5
+161K -rw-rw-r--  1 juqu juqu 161K Feb 25 22:34 worker_47390.h5
+146K -rw-rw-r--  1 juqu juqu 146K Feb 25 22:34 worker_46973.h5
+2.5K -rw-rw-r--  1 juqu juqu 2.1K Feb 25 22:34 worker_50032.h5
+ 16K -rw-rw-r--  1 juqu juqu  16K Feb 25 22:36 worker_49730.h5
+161K -rw-rw-r--  1 juqu juqu 161K Feb 25 22:36 worker_47686.h5
+2.5K -rw-rw-r--  1 juqu juqu 2.1K Feb 25 22:36 worker_50082.h5
+161K -rw-rw-r--  1 juqu juqu 161K Feb 25 22:37 worker_47460.h5
+2.5K -rw-rw-r--  1 juqu juqu 2.1K Feb 25 22:37 worker_50131.h5
+161K -rw-rw-r--  1 juqu juqu 161K Feb 25 22:38 worker_47089.h5
+161K -rw-rw-r--  1 juqu juqu 161K Feb 25 22:38 worker_47425.h5
+2.5K -rw-rw-r--  1 juqu juqu 2.1K Feb 25 22:38 worker_50199.h5
+161K -rw-rw-r--  1 juqu juqu 161K Feb 25 22:40 worker_48061.h5
+2.5K -rw-rw-r--  1 juqu juqu 2.1K Feb 25 22:40 worker_50251.h5
+161K -rw-rw-r--  1 juqu juqu 161K Feb 25 22:40 worker_47495.h5
+161K -rw-rw-r--  1 juqu juqu 161K Feb 25 22:40 worker_47580.h5
+161K -rw-rw-r--  1 juqu juqu 161K Feb 25 22:40 worker_47721.h5
+2.5K -rw-rw-r--  1 juqu juqu 2.1K Feb 25 22:40 worker_50326.h5
+2.5K -rw-rw-r--  1 juqu juqu 2.1K Feb 25 22:40 worker_50360.h5
+146K -rw-rw-r--  1 juqu juqu 146K Feb 25 22:40 worker_48143.h5
+161K -rw-rw-r--  1 juqu juqu 161K Feb 25 22:41 worker_47791.h5
+2.5K -rw-rw-r--  1 juqu juqu 2.1K Feb 25 22:41 worker_50396.h5
+161K -rw-rw-r--  1 juqu juqu 161K Feb 25 22:42 worker_47995.h5
+2.5K -rw-rw-r--  1 juqu juqu 2.1K Feb 25 22:42 worker_50464.h5
+ 16K -rw-rw-r--  1 juqu juqu  16K Feb 25 22:42 worker_49780.h5
+ 16K -rw-rw-r--  1 juqu juqu  16K Feb 25 22:45 worker_49880.h5
+161K -rw-rw-r--  1 juqu juqu 161K Feb 25 22:47 worker_47139.h5
+ 16K -rw-rw-r--  1 juqu juqu  16K Feb 25 22:50 worker_49813.h5
+ 16K -rw-rw-r--  1 juqu juqu  16K Feb 25 22:51 worker_49929.h5
+161K -rw-rw-r--  1 juqu juqu 161K Feb 25 22:52 worker_47008.h5
+ 512 drwxrwxr-x  2 juqu juqu  121 Feb 25 22:52 .
+ 512 drwxrwxr-x 66 juqu juqu   95 Feb 27 13:29 ..
+(niwe) /work/users/juqu/ocdtuct_repo $ 

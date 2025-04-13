@@ -1,0 +1,128 @@
+Okay, let's diagnose the issue and modify the script.
+
+Diagnosis
+
+    The Error: The traceback shows an OSError: Unable to synchronously open file (file signature not found) when the main script attempts to open a worker's temporary HDF5 file (worker_file) using h5py.File(worker_file, 'r') during the final merging step.   
+
+Cause: This specific h5py error means the file being opened is not a valid HDF5 file. Looking at the temporary file listing (ls -hlarts layouts.h5_temp), we can see worker_61817.h5 has a size of 0 bytes. This indicates that the worker process responsible for this file likely crashed or was terminated before it could write any data (including the HDF5 signature) or close the file properly. The main process then encounters this empty/corrupt file during the merge loop and fails.  
+Process Flow: The script uses worker processes to perform optimizations in parallel, with each worker writing results to its own temporary HDF5 file. After the workers finish (or are interrupted), the main process iterates through these temporary files to combine them into the final output file. The failure occurs at this final merging stage.  
+Data Loss: Since worker_61817.h5 is empty, the results for the specific configuration(s) assigned to that worker process are lost and cannot be recovered from that file. The log message INFO:main:Completed 2999/3000 optimizations successfully confirms that only one optimization task failed, aligning with one corrupted worker file.  
+
+How to Modify the Script
+
+To detect this error reliably and handle it cleanly during the merge process, you should wrap the file opening and copying logic within a try...except block. This will allow the script to skip the invalid file, log a warning, and continue merging the results from the valid files.
+
+Modify the merging part of the main function in precompute_farm_layouts.py (around line 451):
+Python
+
+    # ... (previous code in main function) ...
+
+    failed_worker_files = []
+    with h5py.File(args.output, mode) as h5_out:
+        # Add metadata
+        h5_out.attrs['grid_size'] = args.grid_size
+        h5_out.attrs['random_pct'] = args.random_pct
+        # Adjust total/successful counts later if files fail
+        h5_out.attrs['total_configs'] = len(configs) + len(completed_configs)
+        # Initial successful count, might decrease if worker files are bad
+        h5_out.attrs['successful_configs'] = success_count + len(completed_configs)
+
+        # Copy data from worker files
+        worker_files = glob.glob(os.path.join(temp_dir, "worker_*.h5"))
+        logger.info(f"Attempting to merge {len(worker_files)} worker files...")
+
+        for worker_file in worker_files:
+            try:
+                # Check file size first, h5py might hang on empty files
+                if os.path.getsize(worker_file) == 0:
+                    logger.warning(f"Skipping empty worker file: {worker_file}")
+                    failed_worker_files.append(worker_file)
+                    continue # Skip to the next file
+
+                with h5py.File(worker_file, 'r') as h5_in:
+                    # Optional: Add a check for the 'init' dataset if needed
+                    # if 'init' not in h5_in:
+                    #     logger.warning(f"Worker file {worker_file} missing 'init' dataset, might be incomplete. Skipping.")
+                    #     failed_worker_files.append(worker_file)
+                    #     continue
+
+                    copied_keys = 0
+                    for key in h5_in:
+                        if key != 'init': # Skip 'init' dataset
+                           if key not in h5_out:
+                                h5_out.copy(h5_in[key], key)
+                                copied_keys += 1
+                           else:
+                               # This case might happen if hot-start merges results already present
+                               logger.debug(f"Key {key} from {worker_file} already exists in {args.output}. Skipping copy.")
+                    logger.debug(f"Copied {copied_keys} keys from {worker_file}")
+
+            except OSError as e:
+                # Catch the specific error or broader h5py errors
+                logger.error(f"Failed to open or read worker file {worker_file}: {e}. Skipping this file.")
+                failed_worker_files.append(worker_file)
+            except Exception as e:
+                # Catch any other unexpected errors during processing
+                logger.error(f"Unexpected error processing worker file {worker_file}: {e}. Skipping this file.")
+                failed_worker_files.append(worker_file)
+            finally:
+                 # Attempt to remove the worker file regardless of success/failure
+                 try:
+                     if os.path.exists(worker_file):
+                        os.remove(worker_file)
+                 except Exception as e:
+                     logger.warning(f"Could not remove worker file {worker_file}: {e}")
+
+        # Update final count if any worker files failed
+        if failed_worker_files:
+             # A more accurate success count requires knowing how many results were *expected*
+             # from the failed files. This is complex. We'll adjust based on the initial 'success_count'
+             # assuming each failed file corresponds to at least one failed task reported earlier.
+             # For simplicity, we just log the number of failed files.
+             logger.warning(f"Failed to merge data from {len(failed_worker_files)} worker files: {failed_worker_files}")
+             # You could potentially adjust h5_out.attrs['successful_configs'] here if you
+             # can determine how many configurations were lost.
+
+
+    # Clean up temp directory (only if it's empty)
+    try:
+        if not os.listdir(temp_dir): # Check if directory is empty
+             os.rmdir(temp_dir)
+        else:
+             logger.warning(f"Temp directory {temp_dir} not empty after merge attempt. Manual cleanup might be needed.")
+    except Exception as e:
+        logger.warning(f"Could not remove temp directory {temp_dir}: {e}")
+
+    logger.info(f"Results saved to {args.output}. {len(failed_worker_files)} worker files could not be merged.")
+
+    # Optionally, exit with a non-zero status code if files failed
+    if failed_worker_files:
+        sys.exit(1) # Signal that the process finished with errors
+
+
+if __name__ == "__main__":
+    import multiprocessing
+    multiprocessing.set_start_method('spawn', force=True)
+    main()
+
+Explanation of Changes:
+
+    try...except Block: The core logic that opens (h5py.File) and copies data (h5_out.copy) from each worker_file is placed inside a try block.   
+
+    OSError Handling: An except OSError as e block is added to catch the specific "file signature not found" error (and potentially other OS-level file errors).
+    Empty File Check: An if os.path.getsize(worker_file) == 0: check is added before trying to open the file with h5py, as h5py might hang or behave unpredictably with 0-byte files.
+    General Exception Handling: A broader except Exception as e is included to catch other potential issues during the read/copy process for a specific file.
+    Logging: If an error occurs for a file, an error message is logged using logger.error, and the filename is added to the failed_worker_files list.
+    Continue Processing: Crucially, after catching an error for one file, the loop continues to the next worker_file, allowing the merging of valid results.
+    Cleanup (finally): The os.remove(worker_file) is moved inside a finally block associated with the try...except for processing each file. This ensures an attempt is made to remove the worker file whether it was processed successfully or failed. An additional try-except is added around the remove operation itself for robustness.
+    Final Logging & Exit Status: After the loop, the script logs a summary of any files that failed to merge and optionally exits with a status code of 1 using sys.exit(1) to signal that the process completed but encountered errors.
+
+Recovering Missing Data:
+
+As mentioned, the data from worker_61817.h5 is lost. However, the script includes a "hot start" feature. If you simply rerun the precompute_farm_layouts.py script with the same arguments (and without --no-hot-start), it should:  
+
+    Scan the existing layouts.h5 file (which now contains the 2999 successfully merged results).   
+
+Identify the one configuration that is missing.  
+Run only the optimization for that single missing configuration.  
+Merge the result into the existing layouts.h5 file.

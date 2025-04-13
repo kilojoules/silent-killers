@@ -1,0 +1,163 @@
+Analysis of the HDF5 File Corruption Issue
+
+The error occurs during the final merge step when trying to combine worker files into the main output file. The specific error OSError: Unable to synchronously open file (file signature not found) indicates that one of the worker HDF5 files is corrupted or invalid.
+Root Cause
+
+    Worker File Corruption: Some worker files (like worker_61817.h5 with 0 bytes) are empty or corrupted, causing the merge operation to fail.
+
+    No File Validation: The script doesn't verify worker files before attempting to merge them.
+
+    No Error Handling for Merge: The merge operation isn't properly handling invalid files.
+
+    No Recovery Mechanism: When a merge fails, there's no way to recover the successfully completed optimizations.
+
+Solution
+
+Here's how to modify the script to prevent this issue:
+1. Add Worker File Validation
+python
+Copy
+
+def validate_worker_file(filepath):
+    """Validate that an HDF5 file is not corrupted"""
+    try:
+        with h5py.File(filepath, 'r') as f:
+            # Check basic structure
+            if 'init' not in f:
+                return False
+            # Check for at least one valid configuration group
+            for key in f:
+                if isinstance(f[key], h5py.Group) and 'layout' in f[key] and 'aep' in f[key]:
+                    return True
+        return False
+    except:
+        return False
+
+2. Modify the Merge Process
+python
+Copy
+
+def merge_worker_files(output_file, temp_dir, completed_configs):
+    """Safely merge worker files into final output"""
+    valid_files = []
+    corrupted_files = []
+    
+    # First scan all worker files for validity
+    for worker_file in glob.glob(os.path.join(temp_dir, "worker_*.h5")):
+        if validate_worker_file(worker_file):
+            valid_files.append(worker_file)
+        else:
+            corrupted_files.append(worker_file)
+            logger.error(f"Found corrupted worker file: {worker_file}")
+    
+    if corrupted_files:
+        logger.warning(f"Found {len(corrupted_files)} corrupted worker files")
+    
+    # Create/open output file
+    if not valid_files:
+        logger.error("No valid worker files found to merge")
+        return False
+    
+    mode = 'a' if os.path.exists(output_file) else 'w'
+    success = True
+    
+    try:
+        with h5py.File(output_file, mode) as h5_out:
+            # Copy data from valid worker files
+            for worker_file in valid_files:
+                try:
+                    with h5py.File(worker_file, 'r') as h5_in:
+                        for key in h5_in:
+                            if key != 'init' and key not in h5_out:
+                                h5_out.copy(h5_in[key], key)
+                    # Clean up worker file
+                    os.remove(worker_file)
+                except Exception as e:
+                    logger.error(f"Failed to merge {worker_file}: {str(e)}")
+                    success = False
+    
+    except Exception as e:
+        logger.error(f"Critical error during merge: {str(e)}")
+        success = False
+    
+    return success
+
+3. Modify the Main Function
+
+Update the merge section in main():
+python
+Copy
+
+# Merge worker files into final output
+merge_success = merge_worker_files(args.output, temp_dir, completed_configs)
+
+if not merge_success:
+    logger.error("Failed to merge some worker files. Partial results may be available in temp directory.")
+    sys.exit(1)
+
+# Only remove temp dir if merge was fully successful
+try:
+    os.rmdir(temp_dir)
+except OSError:
+    logger.warning(f"Temp directory {temp_dir} not empty after merge - some files may have been corrupted")
+
+4. Add Periodic Worker File Validation
+
+Add periodic checks in the optimization loop:
+python
+Copy
+
+# In the worker_init function:
+def worker_init(output_dir):
+    """Initialize per-worker temporary HDF5 file with periodic validation"""
+    worker_id = current_process().pid
+    worker_file = os.path.join(output_dir, f"worker_{worker_id}.h5")
+    current_process().worker_file = worker_file
+    
+    # Initialize with validation
+    try:
+        with h5py.File(worker_file, 'w') as f:
+            f.create_dataset('init', data=np.array([1]))
+        logger.info(f"Worker {worker_id}: Successfully initialized HDF5 file")
+    except Exception as e:
+        logger.error(f"Worker {worker_id}: Failed to create HDF5 file: {str(e)}")
+        raise RuntimeError(f"Worker {worker_id} failed to initialize HDF5 file")
+
+5. Recovery Mechanism
+
+Add a function to recover data from partial runs:
+python
+Copy
+
+def recover_partial_results(temp_dir, output_file):
+    """Attempt to recover results from a failed run"""
+    if not os.path.exists(temp_dir):
+        logger.error("No temp directory found for recovery")
+        return False
+    
+    logger.info(f"Attempting recovery from {temp_dir}")
+    return merge_worker_files(output_file, temp_dir, {})
+
+Implementation Recommendations
+
+    Run the recovery function on your existing temp directory to salvage completed optimizations.
+
+    Add validation checks to detect corrupt files early.
+
+    Implement periodic saving of intermediate results to minimize data loss.
+
+    Consider using a database instead of HDF5 for more robust concurrent writes.
+
+    Add checksum verification for worker files before merging.
+
+The modified script will now:
+
+    Detect and handle corrupted worker files
+
+    Provide better error messages
+
+    Allow recovery of partial results
+
+    Prevent silent failures during merge operations
+
+This should make the process more robust when running for large numbers of seeds.

@@ -1,0 +1,511 @@
+# Wind Farm Layout Optimization Error Analysis
+
+Looking at the error message and file data provided, I've identified a critical issue in the wind farm layout optimization script that caused the final merge operation to fail despite nearly completing all the work.
+
+## Problem Identified
+
+The script failed with this error:
+```
+OSError: Unable to synchronously open file (file signature not found)
+```
+
+This occurred during the final stage where the script attempts to merge all the worker files into the output HDF5 file. Examining the directory listing in `layouts.h5_temp`, I found a key issue:
+
+```
+0 -rw-rw-r--  1 juqu juqu    0 Feb 25 11:09 worker_61817.h5
+```
+
+There's an **empty worker file** with 0 bytes. When the merge process tries to open this file with `h5py.File(worker_file, 'r')`, it fails because there's no valid HDF5 file signature.
+
+## Solution
+
+Let's modify the code to make it more robust against corrupted or invalid worker files. Here's how we can fix the issue in the main function:
+
+def validate_worker_file(worker_file):
+    """
+    Validate if a worker file is a valid HDF5 file
+    
+    Args:
+        worker_file: Path to worker file
+        
+    Returns:
+        Boolean indicating if file is valid
+    """
+    # Check if file exists and is not empty
+    if not os.path.exists(worker_file):
+        logger.warning(f"Worker file does not exist: {worker_file}")
+        return False
+        
+    # Check file size - empty or very small files can't be valid HDF5
+    if os.path.getsize(worker_file) < 100:  # Minimum size for a valid HDF5 file
+        logger.warning(f"Worker file too small to be valid HDF5: {worker_file} ({os.path.getsize(worker_file)} bytes)")
+        return False
+    
+    # Try opening the file to verify HDF5 format
+    try:
+        with h5py.File(worker_file, 'r') as f:
+            # Check if file has any valid content
+            if len(f.keys()) == 0 or (len(f.keys()) == 1 and 'init' in f):
+                logger.warning(f"Worker file has no valid data: {worker_file}")
+                return False
+            return True
+    except Exception as e:
+        logger.error(f"Error validating worker file {worker_file}: {str(e)}")
+        return False
+
+
+def main():
+    """Main function to run the optimization"""
+    # Existing code...
+    
+    # Merge worker files into final output
+    if not args.no_hot_start and os.path.exists(args.output):
+        # Use append mode to preserve existing results
+        mode = 'a'
+    else:
+        # Use write mode for new file or when hot start is disabled
+        mode = 'w'
+    
+    # Track files that couldn't be processed
+    invalid_files = []
+    processed_files = []
+    
+    with h5py.File(args.output, mode) as h5_out:
+        # Add metadata
+        h5_out.attrs['grid_size'] = args.grid_size
+        h5_out.attrs['random_pct'] = args.random_pct
+        h5_out.attrs['total_configs'] = len(configs) + len(completed_configs)
+        h5_out.attrs['successful_configs'] = success_count + len(completed_configs)
+        
+        # Copy data from worker files - with validation
+        for worker_file in glob.glob(os.path.join(temp_dir, "worker_*.h5")):
+            if not validate_worker_file(worker_file):
+                invalid_files.append(worker_file)
+                continue
+                
+            try:
+                with h5py.File(worker_file, 'r') as h5_in:
+                    keys_copied = 0
+                    for key in h5_in:
+                        if key != 'init' and key not in h5_out:  # Skip 'init' dataset and avoid duplicates
+                            h5_out.copy(h5_in[key], key)
+                            keys_copied += 1
+                    logger.info(f"Copied {keys_copied} datasets from {worker_file}")
+                    processed_files.append(worker_file)
+            except Exception as e:
+                logger.error(f"Error processing worker file {worker_file}: {str(e)}")
+                invalid_files.append(worker_file)
+    
+    # Clean up processed worker files
+    for worker_file in processed_files:
+        try:
+            os.remove(worker_file)
+        except Exception as e:
+            logger.warning(f"Could not remove worker file {worker_file}: {str(e)}")
+    
+    # Report on any invalid files
+    if invalid_files:
+        logger.warning(f"Found {len(invalid_files)} invalid worker files that were skipped:")
+        for file in invalid_files:
+            logger.warning(f"  - {file}")
+        logger.warning("These files are preserved for inspection")
+        
+        # Create a subdirectory for invalid files
+        invalid_dir = os.path.join(temp_dir, "invalid")
+        os.makedirs(invalid_dir, exist_ok=True)
+        
+        # Move invalid files instead of deleting them
+        for file in invalid_files:
+            try:
+                shutil.move(file, os.path.join(invalid_dir, os.path.basename(file)))
+            except Exception as e:
+                logger.error(f"Failed to move invalid file {file}: {str(e)}")
+    
+    # If temp directory is empty (except for the invalid subdirectory), remove it
+    if not invalid_files or all(os.path.dirname(f) == invalid_dir for f in invalid_files):
+        try:
+            # This will fail if the directory is not empty
+            os.rmdir(temp_dir)
+        except OSError:
+            logger.info(f"Temporary directory {temp_dir} is not empty and was preserved")
+    
+    logger.info(f"Results saved to {args.output}")
+
+## Additional Improvements
+
+We should also enhance the worker initialization and file writing to prevent the creation of invalid files in the first place:
+
+
+def worker_init(output_dir):
+    """Initialize per-worker temporary HDF5 file"""
+    import os  # Import at the beginning of the function
+    import logging
+    import h5py
+    import numpy as np
+    from multiprocessing import current_process
+    
+    logger = logging.getLogger(__name__)
+    worker_id = current_process().pid
+    worker_file = os.path.join(output_dir, f"worker_{worker_id}.h5")
+    
+    # Store file path on worker process object
+    current_process().worker_file = worker_file
+    
+    # Initialize empty HDF5 file with a test dataset to ensure it's valid
+    max_retries = 3
+    success = False
+    
+    for attempt in range(max_retries):
+        try:
+            with h5py.File(worker_file, 'w') as f:
+                f.create_dataset('init', data=np.array([1]))
+                # Force flush to ensure data is written
+                f.flush()
+                logger.info(f"Worker {worker_id}: Successfully initialized HDF5 file (attempt {attempt+1})")
+                success = True
+                break
+        except Exception as e:
+            logger.error(f"Worker {worker_id}: Failed to create HDF5 file (attempt {attempt+1}): {str(e)}")
+            # Wait before retrying
+            import time
+            time.sleep(1)
+    
+    if not success:
+        logger.critical(f"Worker {worker_id}: Failed to initialize HDF5 file after {max_retries} attempts")
+        # This will cause the worker to exit
+        raise RuntimeError(f"Could not initialize worker HDF5 file after {max_retries} attempts")
+
+    # Force process affinity to separate cores (Linux only)
+    try:
+        import psutil
+        process = psutil.Process()
+        worker_idx = int(current_process().name.split('-')[-1]) if '-' in current_process().name else 0
+        process.cpu_affinity([worker_idx % os.cpu_count()])
+        logger.info(f"Worker {worker_id} assigned to CPU {worker_idx % os.cpu_count()}")
+    except Exception as e:
+        logger.warning(f"Worker {worker_id}: CPU affinity setup failed: {str(e)}")
+
+
+def optimize_layout(config, farm_boundaries, grid_size=18, random_pct=30, update_interval=None):
+    """Run optimization and save to worker-specific temp file"""
+    try:
+        worker_file = current_process().worker_file
+        farm_idx = config['farm_idx']
+        boundary = np.array(farm_boundaries[farm_idx]).T.tolist()
+        
+        # ... [existing optimization code] ...
+        
+        # Save to worker-specific file with retry logic
+        max_retries = 3
+        save_success = False
+        
+        for attempt in range(max_retries):
+            try:
+                with h5py.File(worker_file, 'a') as f:
+                    # Check if group already exists (from a previous attempt)
+                    group_name = f"farm{farm_idx}_t{config['type_idx']}_s{config['ss_seed']}"
+                    if group_name in f:
+                        del f[group_name]  # Remove existing group to avoid partial data
+                        
+                    grp = f.create_group(group_name)
+                    grp.create_dataset('layout', data=np.vstack([problem['x'], problem['y']]))
+                    grp.create_dataset('aep', data=problem.cost) 
+                    for k, v in config.items():
+                        grp.attrs[k] = v
+                    
+                    # Force flush to ensure data is written to disk
+                    f.flush()
+                    
+                logger.info(f"Successfully optimized farm {farm_idx}, type {config['type_idx']}, seed {config['ss_seed']}")
+                save_success = True
+                break
+            except Exception as e:
+                logger.error(f"Failed to save results (attempt {attempt+1}): {str(e)}")
+                import time
+                time.sleep(1)  # Wait before retrying
+        
+        if not save_success:
+            logger.error(f"Failed to save results for farm {farm_idx}, type {config['type_idx']}, seed {config['ss_seed']} after {max_retries} attempts")
+            return False
+            
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed {config}: {str(e)}")
+        return False
+    finally:
+        # Clean up memory
+        gc.collect()
+
+## Graceful Termination and Recovery Mechanism
+
+We should also add functionality to handle keyboard interrupts and provide a recovery mechanism:
+
+
+def merge_worker_files(output_file, temp_dir, metadata=None, force=False):
+    """
+    Merge worker files into the main output file
+    
+    Args:
+        output_file: Path to output HDF5 file
+        temp_dir: Directory containing worker files
+        metadata: Optional dictionary of metadata to add to the output file
+        force: Whether to force creation of a new file (overwrite existing)
+        
+    Returns:
+        Tuple of (success_count, skipped_count, failed_count)
+    """
+    logger.info(f"Merging worker files from {temp_dir} into {output_file}")
+    
+    # Decide file mode
+    if force or not os.path.exists(output_file):
+        mode = 'w'
+        logger.info("Creating new output file")
+    else:
+        mode = 'a'
+        logger.info("Appending to existing output file")
+        
+    # Prepare worker file list
+    worker_files = glob.glob(os.path.join(temp_dir, "worker_*.h5"))
+    logger.info(f"Found {len(worker_files)} worker files")
+    
+    # Track statistics
+    success_count = 0
+    skipped_count = 0
+    failed_count = 0
+    invalid_files = []
+    
+    # Create output file and merge
+    try:
+        with h5py.File(output_file, mode) as h5_out:
+            # Add metadata if provided
+            if metadata:
+                for key, value in metadata.items():
+                    h5_out.attrs[key] = value
+                    
+            # Process each worker file
+            for worker_file in worker_files:
+                # Skip invalid files
+                if not validate_worker_file(worker_file):
+                    invalid_files.append(worker_file)
+                    failed_count += 1
+                    continue
+                    
+                try:
+                    with h5py.File(worker_file, 'r') as h5_in:
+                        keys_copied = 0
+                        for key in h5_in:
+                            if key != 'init':  # Skip init dataset
+                                if key in h5_out:
+                                    skipped_count += 1
+                                    continue
+                                    
+                                h5_out.copy(h5_in[key], key)
+                                keys_copied += 1
+                                success_count += 1
+                                
+                        logger.info(f"Copied {keys_copied} datasets from {worker_file}")
+                        
+                    # Remove successfully processed file
+                    os.remove(worker_file)
+                except Exception as e:
+                    logger.error(f"Error processing worker file {worker_file}: {str(e)}")
+                    invalid_files.append(worker_file)
+                    failed_count += 1
+    except Exception as e:
+        logger.error(f"Error creating or writing to output file: {str(e)}")
+        return 0, 0, len(worker_files)
+        
+    # Handle invalid files
+    if invalid_files:
+        invalid_dir = os.path.join(temp_dir, "invalid")
+        os.makedirs(invalid_dir, exist_ok=True)
+        
+        for file in invalid_files:
+            try:
+                import shutil
+                shutil.move(file, os.path.join(invalid_dir, os.path.basename(file)))
+                logger.warning(f"Moved invalid file to {invalid_dir}: {os.path.basename(file)}")
+            except Exception as e:
+                logger.error(f"Failed to move invalid file {file}: {str(e)}")
+                
+    logger.info(f"Merge complete: {success_count} datasets copied, {skipped_count} skipped, {failed_count} failed")
+    return success_count, skipped_count, failed_count
+
+
+def recover_from_previous_run(output_file, temp_dir):
+    """
+    Attempt to recover data from a previous run that was interrupted
+    
+    Args:
+        output_file: Path to output HDF5 file
+        temp_dir: Directory containing temporary worker files
+        
+    Returns:
+        Boolean indicating if recovery was attempted
+    """
+    worker_files = glob.glob(os.path.join(temp_dir, "worker_*.h5"))
+    
+    if not worker_files:
+        logger.info("No worker files found for recovery")
+        return False
+        
+    logger.warning(f"Found {len(worker_files)} worker files from previous run")
+    logger.warning("Attempting to recover data...")
+    
+    # Get existing configurations from output file
+    completed_configs = scan_existing_results(output_file)
+    
+    # Create recovery metadata
+    metadata = {
+        'recovery_timestamp': time.time(),
+        'recovery_date': time.strftime('%Y-%m-%d %H:%M:%S'),
+        'recovered_from': len(worker_files),
+        'existing_configs': len(completed_configs)
+    }
+    
+    # Merge the worker files
+    success, skipped, failed = merge_worker_files(output_file, temp_dir, metadata)
+    
+    logger.warning(f"Recovery summary: {success} datasets recovered, {skipped} skipped, {failed} failed")
+    
+    return True
+
+
+def graceful_shutdown(pool, temp_dir, output_file, configs, completed_configs, results, args):
+    """Handle keyboard interrupt by saving partial results"""
+    logger.warning("Keyboard interrupt detected. Attempting to save partial results...")
+    
+    try:
+        # Close the pool without waiting for ongoing tasks
+        pool.terminate()
+        pool.join()
+        
+        # Mark the remaining tasks as failures in our results list
+        remaining = len(configs) - len(results)
+        results.extend([False] * remaining)
+        
+        # Calculate successful optimizations
+        success_count = sum(1 for r in results if r)
+        logger.info(f"Successfully completed {success_count}/{len(configs)} optimizations")
+        
+        # Merge the results we have so far
+        metadata = {
+            'grid_size': args.grid_size,
+            'random_pct': args.random_pct,
+            'total_configs': len(configs) + len(completed_configs),
+            'successful_configs': success_count + len(completed_configs),
+            'interrupted': True,
+            'interrupt_timestamp': time.time()
+        }
+        
+        merge_worker_files(output_file, temp_dir, metadata)
+        
+        logger.info("Partial results saved successfully")
+        return True
+    except Exception as e:
+        logger.error(f"Error during graceful shutdown: {str(e)}")
+        return False
+
+
+def main():
+    """Main function to run the optimization"""
+    parser = argparse.ArgumentParser(description="Parallel Wind Farm Layout Optimizer")
+    parser.add_argument("--seeds", type=int, required=True, help="Number of random seeds")
+    parser.add_argument("--output", type=str, default="layouts.h5", help="Output file")
+    parser.add_argument("--processes", type=int, default=os.cpu_count(), help="Parallel workers")
+    parser.add_argument("--grid-size", type=int, default=18, help="Smart start grid size")
+    parser.add_argument("--random-pct", type=int, default=30, help="Smart start random percentage")
+    parser.add_argument("--chunk-size", type=int, default=1, help="Chunk size for parallel processing")
+    parser.add_argument("--progress-interval", type=float, default=5.0, help="Progress bar update interval in seconds")
+    parser.add_argument("--no-hot-start", action="store_true", help="Disable hot start (ignore existing results)")
+    parser.add_argument("--recover", action="store_true", help="Attempt to recover from previous interrupted run")
+    args = parser.parse_args()
+
+    # Setup temporary storage
+    temp_dir = f"{args.output}_temp"
+    os.makedirs(temp_dir, exist_ok=True)
+
+    # Check for recovery scenario
+    if args.recover and os.path.exists(temp_dir):
+        if recover_from_previous_run(args.output, temp_dir):
+            logger.info("Recovery complete")
+            if len(glob.glob(os.path.join(temp_dir, "worker_*.h5"))) == 0:
+                try:
+                    os.rmdir(temp_dir)
+                    logger.info(f"Removed empty temporary directory: {temp_dir}")
+                except:
+                    pass
+            return
+
+    # Load farm boundaries and proceed with normal execution
+    # ... [rest of the main function as before until the Pool creation] ...
+
+    # Create pool with worker-specific files
+    pool = None
+    try:
+        pool = Pool(
+            processes=args.processes,
+            initializer=worker_init,
+            initargs=(temp_dir,),
+            maxtasksperchild=10
+        )
+        
+        # ... [remainder of the function with pool operations] ...
+    
+    except KeyboardInterrupt:
+        if pool:
+            graceful_shutdown(pool, temp_dir, args.output, configs, completed_configs, results, args)
+        sys.exit(1)
+    finally:
+        if pool:
+            pool.close()
+            pool.join()
+    
+    # Final merge of worker files
+    success, skipped, failed = merge_worker_files(
+        args.output, 
+        temp_dir, 
+        {
+            'grid_size': args.grid_size,
+            'random_pct': args.random_pct,
+            'total_configs': len(configs) + len(completed_configs),
+            'successful_configs': success_count + len(completed_configs)
+        }
+    )
+    
+    # Clean up temp directory if empty
+    try:
+        os.rmdir(temp_dir)
+        logger.info(f"Removed temporary directory: {temp_dir}")
+    except OSError:
+        logger.info(f"Temporary directory {temp_dir} is not empty and was preserved")
+    
+    logger.info(f"Results saved to {args.output}")
+
+'''
+
+## Explanation of the Improvements
+
+1. **File Validation**: Added a robust validation function that checks if HDF5 files are valid before attempting to read them. This will skip over empty or corrupted files like `worker_61817.h5`.
+
+2. **Error Handling and Retry Logic**: 
+   - Added retry mechanisms for file operations
+   - Improved error reporting with detailed logs
+   - Implemented graceful handling of keyboard interrupts
+
+3. **Worker File Management**:
+   - Better initialization of worker files with flush operations to ensure data is written to disk
+   - Moved invalid files to a separate directory instead of deleting them, allowing for inspection
+
+4. **Recovery Mechanism**:
+   - Added functionality to recover from an interrupted run
+   - Implemented a separate merge function that can be used for recovery
+
+5. **Resource Cleanup**:
+   - More robust cleanup of resources
+   - Proper termination of worker processes
+
+These improvements will make the script significantly more resilient to file corruption issues and provide better mechanisms to recover from failures. The validation step is particularly important as it will prevent the script from attempting to read invalid HDF5 files, which was the root cause of the original error.
+
+The script would also benefit from better progress tracking and more frequent intermediate saves to minimize data loss in case of interruptions.

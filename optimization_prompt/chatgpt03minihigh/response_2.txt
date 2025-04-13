@@ -1,0 +1,67 @@
+The error
+
+    OSError: Unable to synchronously open file (file signature not found)
+
+typically means that one of the HDF5 files you’re trying to open isn’t valid—often because it’s empty or corrupted. In your setup, each worker writes its own temporary file, and as seen in your logs (for example, worker_61817.h5 is 0 bytes), at least one file isn’t written properly. When the main process tries to merge these files, attempting to open a corrupted or empty file triggers this error.
+
+Below are some strategies and a concrete modification to detect the problem early and exit the process cleanly:
+1. Detect Invalid Worker Files Early
+
+Before merging the worker files into your final output file, you can verify each file’s validity using the helper function h5py.is_hdf5. This function returns False if the file is not a valid HDF5 file (for example, if it’s empty or missing the correct file signature).
+2. Abort Merging if an Invalid File is Found
+
+If an invalid file is detected, you can log an error message and then stop the process immediately (for instance, using sys.exit(1)). This prevents the merging loop from attempting to open a broken file and ensures that your script ends in a controlled manner.
+3. Modified Merging Block Example
+
+Below is an example of how you can modify the merging section of your main() function. In this version, before opening each worker file, the script checks whether it’s a valid HDF5 file:
+
+    # Merge worker files into final output
+    if not args.no_hot_start and os.path.exists(args.output):
+        mode = 'a'
+    else:
+        mode = 'w'
+    
+    with h5py.File(args.output, mode) as h5_out:
+        # Add metadata
+        h5_out.attrs['grid_size'] = args.grid_size
+        h5_out.attrs['random_pct'] = args.random_pct
+        h5_out.attrs['total_configs'] = len(configs) + len(completed_configs)
+        h5_out.attrs['successful_configs'] = success_count + len(completed_configs)
+        
+        # Copy data from worker files after verifying their integrity
+        worker_files = glob.glob(os.path.join(temp_dir, "worker_*.h5"))
+        for worker_file in worker_files:
+            # Check if the file is a valid HDF5 file
+            if not h5py.is_hdf5(worker_file):
+                logger.error(f"Worker file {worker_file} is invalid. Aborting merging process.")
+                sys.exit(1)  # Stop the process cleanly if an invalid file is found
+            
+            try:
+                with h5py.File(worker_file, 'r') as h5_in:
+                    for key in h5_in:
+                        # Skip the initial test dataset and avoid duplicate keys
+                        if key != 'init' and key not in h5_out:
+                            h5_out.copy(h5_in[key], key)
+            except Exception as e:
+                logger.error(f"Error processing worker file {worker_file}: {e}")
+                sys.exit(1)  # Stop if there is any error opening the file
+            
+            # Remove the worker file after processing
+            os.remove(worker_file)
+
+4. Additional Considerations
+
+    Worker-Level Validation:
+    In your worker_init function, you already try to create a minimal valid HDF5 file by writing a test dataset. You might extend this to check after optimization that a file isn’t empty before proceeding with further writes. This might allow you to catch worker failures closer to where they occur.
+
+    Inter-Process Communication:
+    If you prefer to have the entire optimization run stop immediately (rather than trying to merge partial results) when a worker fails, consider setting up a shared error flag (using, for example, a multiprocessing Event). Each worker would set this flag if an error occurs, and the main loop could periodically check it to decide whether to continue or abort.
+
+    Logging and Cleanup:
+    Ensure that detailed error messages are logged when a file is found to be invalid. This helps you diagnose whether the problem is due to a disk write issue, a premature worker termination, or some other root cause.
+
+Summary
+
+The key modification is to check each worker file with h5py.is_hdf5 before trying to open it in the merging loop. Detecting an invalid file early allows you to stop the process in a controlled manner and avoids cryptic errors like “file signature not found” during the HDF5 file open operation.
+
+By incorporating these changes, the script will reliably detect an invalid worker file and halt further processing—ensuring that you don’t end up with a partially merged or corrupted final output.

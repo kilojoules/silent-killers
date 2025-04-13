@@ -1,0 +1,47 @@
+Diagnose this issue. How can the script be modified to ensure this error is detected reliably and stops the process cleanly if any worker file is invalid?
+
+INFO:mp_main:Successfully optimized farm 9, type 4, seed 24
+Optimizing layouts: 100%|█████████▉| 2986/3000 [9:21:36<05:29, 23.56s/it]INFO:mp_main:Successfully optimized farm 9, type 5, seed 49
+Optimizing layouts: 100%|█████████▉| 2991/3000 [9:22:13<02:49, 18.89s/it]INFO:mp_main:Successfully optimized farm 9, type 5, seed 39
+130 possible points, 50 wt, 2.6 points pr wt, 80(62%) unused points
+Optimizing layouts: 100%|██████████| 3000/3000 [9:23:34<00:00, 11.27s/it]
+130 possible points, 50 wt, 2.6 points pr wt, 80(62%) unused points
+130 possible points, 50 wt, 2.6 points pr wt, 80(62%) unused points
+130 possible points, 50 wt, 2.6 points pr wt, 80(62%) unused points
+130 possible points, 50 wt, 2.6 points pr wt, 80(62%) unused points
+130 possible points, 50 wt, 2.6 points pr wt, 80(62%) unused points
+130 possible points, 50 wt, 2.6 points pr wt, 80(62%) unused points
+130 possible points, 50 wt, 2.6 points pr wt, 80(62%) unused points
+130 possible points, 50 wt, 2.6 points pr wt, 80(62%) unused points
+130 possible points, 50 wt, 2.6 points pr wt, 80(62%) unused points
+130 possible points, 50 wt, 2.6 points pr wt, 80(62%) unused points
+130 possible points, 50 wt, 2.6 points pr wt, 80(62%) unused points
+130 possible points, 50 wt, 2.6 points pr wt, 80(62%) unused points
+130 possible points, 50 wt, 2.6 points pr wt, 80(62%) unused points
+130 possible points, 50 wt, 2.6 points pr wt, 80(62%) unused points
+130 possible points, 50 wt, 2.6 points pr wt, 80(62%) unused points
+INFO:main:Completed 2999/3000 optimizations successfully
+Traceback (most recent call last):
+  File "/work/users/juqu/ocdtuct_repo/precompute_farm_layouts.py", line 463, in <module>
+    main()
+  File "/work/users/juqu/ocdtuct_repo/precompute_farm_layouts.py", line 448, in main
+    with h5py.File(worker_file, 'r') as h5_in:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/juqu/miniconda3/envs/niwe/lib/python3.11/site-packages/h5py/_hl/files.py", line 561, in init
+    fid = make_fid(name, mode, userblock_size, fapl, fcpl, swmr=swmr)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/juqu/miniconda3/envs/niwe/lib/python3.11/site-packages/h5py/_hl/files.py", line 235, in make_fid
+    fid = h5f.open(name, flags, fapl=fapl)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "h5py/_objects.pyx", line 54, in h5py._objects.with_phil.wrapper
+  File "h5py/_objects.pyx", line 55, in h5py._objects.with_phil.wrapper
+  File "h5py/h5f.pyx", line 102, in h5py.h5f.open
+OSError: Unable to synchronously open file (file signature not found)
+
+
+I was hoping to run for 50 seeds.... 
+
+
+I have these files... Maybe they can help us recover the missing data?
+
+It looks like the joining operation is what killed us?

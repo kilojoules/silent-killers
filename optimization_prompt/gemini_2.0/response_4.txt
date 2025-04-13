@@ -1,0 +1,93 @@
+    Query successful
+
+The issue is that the script fails during the merging of worker files due to an OSError: Unable to synchronously open file (file signature not found). This error indicates that one or more of the worker's HDF5 files are corrupted or incomplete. Based on the file sizes in context_3.txt, some worker files have only 0 or 1KB, which likely indicates that the optimization process did not complete successfully for those workers or that the files were not written correctly.  
+
+To handle this error reliably and stop the process cleanly, the script should be modified to:
+
+    Validate worker files before merging:
+        Before attempting to open each worker file in the main process, add a check to ensure the file exists and has a reasonable size.
+        Implement a function to verify the HDF5 file's integrity by attempting to open it and read a known dataset or attribute.
+    Handle file errors gracefully:
+        Use a try-except block when opening and reading worker files to catch OSError or h5py.File exceptions.
+        If a file is invalid, log an error message with the filename and skip the file.
+        Set a flag or counter to indicate the number of invalid files.
+    Cleanly stop the merging process if necessary:
+        After attempting to merge all worker files, check if there were any invalid files.
+        If the number of invalid files exceeds a threshold or if a critical worker file is missing, log a critical error and exit the merging process.
+        Provide an option to retry merging the valid files or to clean up all temporary worker files.
+    Robust worker file initialization:
+        Ensure that each worker process properly initializes its HDF5 file. The current worker_init function creates a small dataset named ‘init.’ Add more comprehensive checks, such as verifying that essential attributes can be written and read.
+        Log any errors during worker file initialization so that issues can be diagnosed early.
+    Logging and monitoring:
+        Enhance logging to provide more detailed information about worker file processing, including any errors encountered and files skipped.
+        Consider integrating the monitoring script (monitor.py) more tightly into the main script to provide real-time feedback on worker progress and file integrity.   
+
+Modified Code Snippets
+
+Here are some code snippets to illustrate the suggested modifications:
+Python
+
+ import os
+ import glob
+ import h5py
+ import logging
+ 
+
+ def is_valid_h5_file(filepath):
+  """
+  Check if an HDF5 file is valid.
+  """
+  if not os.path.exists(filepath) or os.path.getsize(filepath) < 100:  # Arbitrary minimum size
+  return False
+  try:
+  with h5py.File(filepath, 'r') as f:
+  # Check for the 'init' dataset or any other known dataset/attribute
+  if 'init' in f:  
+  return True
+  else:
+  return False
+  except OSError:
+  return False
+ 
+
+ def merge_worker_files(output_file, temp_dir, args):
+  """
+  Merge worker files into the final output file, with validation.
+  """
+  invalid_file_count = 0
+  with h5py.File(output_file, 'w') as h5_out:  # Or 'a' for append mode if needed
+  h5_out.attrs['grid_size'] = args.grid_size
+  h5_out.attrs['random_pct'] = args.random_pct
+  
+  for worker_file in glob.glob(os.path.join(temp_dir, "worker_*.h5")):
+  if not is_valid_h5_file(worker_file):
+  logging.error(f"Invalid worker file: {worker_file}, skipping.")
+  invalid_file_count += 1
+  continue
+  
+  try:
+  with h5py.File(worker_file, 'r') as h5_in:
+  for key in h5_in:
+  if key != 'init' and key not in h5_out:
+  h5_out.copy(h5_in[key], key)
+  except OSError as e:
+  logging.error(f"Error processing worker file {worker_file}: {e}")
+  invalid_file_count += 1
+  
+  if invalid_file_count > 0:
+  logging.critical(f"Detected {invalid_file_count} invalid worker files. Merge aborted.")
+  # Optionally, clean up or retry
+  return False
+  return True
+ 
+
+ def main():
+  # ... [Your existing main function code]
+  
+  if merge_worker_files(args.output, temp_dir, args):
+  logging.info(f"Successfully merged worker files into {args.output}")
+  else:
+  logging.error("Failed to merge worker files.")
+  # ... [Rest of your main function]
+
+These changes will make the script more robust in handling corrupted or incomplete worker files, ensuring that the merging process either completes successfully or terminates cleanly with informative error messages.

@@ -1,0 +1,100 @@
+To resolve the issue where corrupted worker files cause the merge process to fail, modify the script as follows:
+
+**1. Add HDF5 File Validation Function**
+```python
+def is_valid_hdf5(file_path):
+    """Check if a file is a valid HDF5 file"""
+    try:
+        with h5py.File(file_path, 'r') as f:
+            return True
+    except (OSError, IOError):
+        return False
+```
+
+**2. Enhance the Merge Process with Robust Handling**
+```python
+# In the main() function, replace the merge section with:
+
+with h5py.File(args.output, mode) as h5_out:
+    # Add metadata (existing code)
+    
+    # Copy data from worker files with validation
+    for worker_file in glob.glob(os.path.join(temp_dir, "worker_*.h5")):
+        if not is_valid_hdf5(worker_file):
+            logger.error(f"Skipping invalid/corrupted worker file: {worker_file}")
+            os.remove(worker_file)
+            continue
+            
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                for key in h5_in:
+                    if key == 'init':
+                        continue
+                    if key in h5_out:
+                        logger.warning(f"Duplicate key {key} found, skipping")
+                        continue
+                    h5_out.copy(h5_in[key], key)
+        except Exception as e:
+            logger.error(f"Failed to process {worker_file}: {str(e)}")
+        finally:
+            os.remove(worker_file)
+```
+
+**3. Improve Worker File Initialization**
+```python
+# Modify worker_init to ensure proper file closure
+def worker_init(output_dir):
+    # ... existing code ...
+    try:
+        # Use context manager to ensure file is closed
+        with h5py.File(worker_file, 'w') as f:
+            f.create_dataset('init', data=np.array([1]))
+            logger.info(f"Worker {worker_id}: Successfully initialized HDF5 file")
+    except Exception as e:
+        logger.error(f"Worker {worker_id}: Failed to create HDF5 file: {str(e)}")
+        current_process().worker_file = None  # Mark as invalid
+```
+
+**4. Add Emergency Save on KeyboardInterrupt**
+```python
+# In the main() function, enhance the KeyboardInterrupt handler
+except KeyboardInterrupt:
+    logger.warning("Keyboard interrupt detected, trying to save partial results...")
+    # Force-merge all valid worker files immediately
+    merge_worker_files(temp_dir, args.output, mode='a')
+    sys.exit(1)
+```
+
+**5. Final Script Adjustments**
+```python
+# Add a dedicated merge function
+def merge_worker_files(temp_dir, output_file, mode='a'):
+    with h5py.File(output_file, mode) as h5_out:
+        for worker_file in glob.glob(os.path.join(temp_dir, "worker_*.h5")):
+            if not is_valid_hdf5(worker_file):
+                continue
+            try:
+                with h5py.File(worker_file, 'r') as h5_in:
+                    for key in h5_in:
+                        if key not in h5_out and key != 'init':
+                            h5_out.copy(h5_in[key], key)
+                os.remove(worker_file)
+            except Exception as e:
+                logger.error(f"Merge failed for {worker_file}: {str(e)}")
+```
+
+**Key Improvements:**
+1. **Validation Before Merge**: Skips corrupted files instead of crashing
+2. **Graceful Error Handling**: Logs errors but continues processing
+3. **Atomic Writes**: Workers now use context managers (`with` blocks) to ensure files are properly closed
+4. **Emergency Recovery**: Saves progress even on Ctrl+C
+
+**To Recover Existing Data:**
+1. Manually validate worker files:
+   ```bash
+   find layouts.h5_temp -name "worker_*.h5" -exec h5check {} \; 2> corrupted_files.txt
+   ```
+2. Delete corrupted files listed in `corrupted_files.txt`
+3. Re-run with `--no-hot-start` to recompute missing configurations
+
+This ensures the process completes cleanly even if some worker files are invalid, while preserving successfully computed data.

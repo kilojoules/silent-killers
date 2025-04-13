@@ -1,0 +1,107 @@
+Okay, let's break down this issue.
+
+Diagnosis of the Error
+
+    The Error: The script crashes with an OSError: Unable to synchronously open file (file signature not found). This happens inside the main process after the parallel optimization tasks seem to have largely completed (2999/3000 optimizations reported successful just before the crash).   
+
+The Location: The error occurs specifically when the script tries to open one of the temporary worker files (worker_file) using h5py.File(worker_file, 'r') in the final merging step (around line 448 in precompute_farm_layouts.py).  
+The Cause: An "HDF5 file signature not found" error almost always means the HDF5 file being opened is corrupted, incomplete (perhaps due to an abrupt process termination), or not an HDF5 file at all.
+The Culprit: Looking at the contents of the temporary directory layouts.h5_temp, we can see a file named worker_61817.h5 with a size of 0 bytes. This empty file cannot be a valid HDF5 file, and attempting to open it with h5py.File will cause exactly the error you observed. The main script fails when it iterates through all worker_*.h5 files and encounters this invalid one.  
+
+How to Modify the Script for Reliable Error Detection
+
+The current script fails during the final aggregation step because it assumes all worker files are valid. To make it robust against corrupted or invalid worker files, you should modify the merging part of the main function:
+
+    Add Error Handling: Wrap the file opening and copying logic within a try...except block to catch potential OSError or other h5py exceptions that might occur if a file is invalid.
+    Log and Skip: If an error occurs while processing a specific worker file, log a warning message indicating the problematic file and skip it, allowing the script to continue merging the results from the valid files.
+
+Here's how you can modify the merging loop (around line 445 in precompute_farm_layouts.py):
+Python
+
+# Original code [cite: 45]
+#        # Copy data from worker files
+#        for worker_file in glob.glob(os.path.join(temp_dir, "worker_*.h5")):
+#            with h5py.File(worker_file, 'r') as h5_in:
+#                for key in h5_in:
+#                    if key != 'init' and key not in h5_out:  # Skip 'init' dataset and avoid duplicates
+#                        h5_out.copy(h5_in[key], key)
+#            # Clean up worker file
+#            os.remove(worker_file)
+
+# Modified code for robustness
+        successfully_merged_count = 0
+        failed_files = []
+        worker_files = glob.glob(os.path.join(temp_dir, "worker_*.h5"))
+        logger.info(f"Found {len(worker_files)} worker files to merge.")
+
+        for worker_file in worker_files:
+            try:
+                with h5py.File(worker_file, 'r') as h5_in:
+                    copied_keys = 0
+                    # Ensure the file is not empty and has groups other than 'init'
+                    keys_to_copy = [k for k in h5_in if k != 'init']
+                    if not keys_to_copy:
+                         logger.warning(f"Worker file {worker_file} is empty or contains only 'init'. Skipping.")
+                         failed_files.append(worker_file)
+                         continue # Skip to the next file
+
+                    for key in keys_to_copy:
+                        if key not in h5_out:  # Avoid duplicates if merging into existing file
+                            h5_out.copy(h5_in[key], key)
+                            copied_keys += 1
+                        else:
+                            logger.warning(f"Key {key} from {worker_file} already exists in output. Skipping.")
+                # Only increment if keys were actually copied
+                if copied_keys > 0:
+                     successfully_merged_count += 1
+                logger.debug(f"Successfully processed {copied_keys} keys from {worker_file}")
+                # Clean up successful worker file immediately
+                os.remove(worker_file)
+
+            except OSError as e:
+                logger.error(f"Failed to open or read HDF5 file {worker_file}: {e}. Skipping this file.")
+                failed_files.append(worker_file)
+                # Do NOT remove the failed file yet, maybe keep for inspection
+            except Exception as e:
+                logger.error(f"An unexpected error occurred processing {worker_file}: {e}. Skipping this file.")
+                failed_files.append(worker_file)
+                # Do NOT remove the failed file yet
+
+        # Update final metadata
+        # Note: This assumes total_configs was correctly set initially.
+        # Adjust successful_configs based on actual merges.
+        final_successful_count = len(h5_out.keys()) # Count groups in the output file
+        h5_out.attrs['successful_configs'] = final_successful_count # Update based on actual merged groups
+        logger.info(f"Merged data from {successfully_merged_count} worker files successfully.")
+        if failed_files:
+            logger.warning(f"Failed to process or skipped {len(failed_files)} worker files: {failed_files}")
+        else:
+             logger.info("All worker files processed successfully.")
+
+
+    # Clean up temp directory (only if it's empty or only contains failed files)
+    remaining_items = os.listdir(temp_dir)
+    if not remaining_items or all(os.path.join(temp_dir, item) in failed_files for item in remaining_items):
+        try:
+            # If keeping failed files, remove them first if desired, otherwise clean dir
+            # for f in failed_files: os.remove(f)
+            os.rmdir(temp_dir)
+            logger.info(f"Cleaned up temporary directory {temp_dir}")
+        except OSError as e:
+             logger.error(f"Could not remove temporary directory {temp_dir}: {e}")
+    else:
+         logger.warning(f"Temporary directory {temp_dir} not removed as it contains unexpected files: {remaining_items}")
+
+This modification ensures that even if one worker file is corrupted, the script will log the error, skip that file, and continue merging the results from the others, preventing a complete crash.  
+
+Recovering Missing Data
+
+    The log indicates Completed 2999/3000 optimizations successfully, suggesting only one result is missing or corrupted.   
+
+The corrupted file is worker_61817.h5.  
+Recovery Steps:
+
+    Apply the code modification above to make the merging process robust.
+    Delete the 0-byte file: rm layouts.h5_temp/worker_61817.h5
+    Re-run the script without the --no-hot-start flag. It should detect the existing layouts.h5 file (if it was partially created) or start fresh but use the results from the valid temporary worker files. The modified merging logic will now skip the (now deleted or previously problematic) file and successfully merge the other 2999 results.
+    If you need all 3000 results, you would need to identify which specific configuration (farm index, type index, seed) failed (this might require adding more logging to associate worker PIDs with configurations) and re-run just that single configuration. However, merging the existing 2999 results might be sufficient.

@@ -1,0 +1,117 @@
+To resolve the issue where invalid worker files cause the merge process to fail, modify the script with the following steps:
+
+1. Enhance Worker File Initialization Validation
+python
+Copy
+
+def worker_init(output_dir):
+    """Initialize per-worker temporary HDF5 file with validation checks"""
+    # ... (existing imports)
+    worker_file = os.path.join(output_dir, f"worker_{current_process().pid}.h5")
+    
+    # Attempt to create and validate the HDF5 file
+    try:
+        with h5py.File(worker_file, 'w') as f:
+            f.create_dataset('init', data=np.array([1]))
+            f.flush()  # Force write to disk
+        # Verify the file was created correctly
+        with h5py.File(worker_file, 'r') as f:
+            if 'init' not in f:
+                raise RuntimeError("Worker file initialization failed")
+        logger.info(f"Worker {worker_id}: HDF5 file validated")
+    except Exception as e:
+        logger.error(f"Worker {worker_id}: CRITICAL - Failed to create valid HDF5 file: {str(e)}")
+        raise  # Propagate error to halt the process
+    # ... (rest of the function)
+
+2. Add Robust File Checking During Merge
+python
+Copy
+
+# In the main() function, replace the merging block with:
+def main():
+    # ... (existing code)
+    
+    # Merge worker files into final output
+    valid_worker_files = []
+    corrupted_files = []
+    for worker_file in glob.glob(os.path.join(temp_dir, "worker_*.h5")):
+        try:
+            # Quick validation check
+            with h5py.File(worker_file, 'r') as h5_in:
+                if 'init' not in h5_in:
+                    raise ValueError("Missing init dataset")
+                for key in h5_in:
+                    if key != 'init' and isinstance(h5_in[key], h5py.Group):
+                        if 'layout' not in h5_in[key] or 'aep' not in h5_in[key]:
+                            raise ValueError(f"Incomplete group {key}")
+            valid_worker_files.append(worker_file)
+        except Exception as e:
+            logger.error(f"Corrupted worker file detected: {worker_file} - {str(e)}")
+            corrupted_files.append(worker_file)
+    
+    if corrupted_files:
+        logger.error(f"Found {len(corrupted_files)} corrupted worker files. Aborting merge.")
+        sys.exit(1)  # Halt execution
+    
+    with h5py.File(args.output, mode) as h5_out:
+        for worker_file in valid_worker_files:
+            try:
+                with h5py.File(worker_file, 'r') as h5_in:
+                    for key in h5_in:
+                        if key != 'init' and key not in h5_out:
+                            h5_out.copy(h5_in[key], key)
+            except Exception as e:
+                logger.error(f"Failed to merge {worker_file}: {str(e)}")
+                os.remove(worker_file)  # Clean up corrupted file
+                raise  # Stop merging on critical error
+    # ... (rest of the code)
+
+3. Add Graceful Shutdown on Critical Errors
+python
+Copy
+
+# Modify the main loop to check for critical errors
+def main():
+    # ... (existing code)
+    
+    # Add error state tracking
+    critical_error = Value('i', 0)
+    def error_callback(result):
+        if not result:
+            critical_error.value += 1
+
+    # In the optimization loop:
+    with tqdm(...) as pbar:
+        while True:
+            try:
+                result = iterator.__next__()
+                if not result:
+                    critical_error.value += 1
+                # Abort if too many failures
+                if critical_error.value > 10:
+                    logger.error("Too many failures detected. Aborting!")
+                    pool.terminate()
+                    break
+                # ... rest of progress handling
+
+4. Key Improvements
+
+    File Validation: Each worker file is checked for structural integrity before merging
+
+    Early Failure Detection: Workers now validate their HDF5 files at creation time
+
+    Controlled Merge: Corrupted files are detected and skipped before merging
+
+    Process Halting: The script will stop immediately if fundamental file issues are detected
+
+Recovery Suggestion for Existing Data
+bash
+Copy
+
+# Manually recover valid worker files using:
+h5check worker_*.h5  # Use h5check tool to identify valid files
+# Then merge manually with:
+python -c "import h5py; [h5py.File(f).copy('grp', h5py.File('recovered.h5','a')) for f in glob.glob('worker_*.h5')]"
+
+This modified script will now reliably detect invalid worker files during both creation and merging phases, preventing silent corruption and ensuring a clean shutdown when critical errors occur.
