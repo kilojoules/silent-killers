@@ -1,7 +1,8 @@
 import os
 import re
 import csv
-import ast # Import the AST module
+import ast 
+import sys
 
 # Models list remains the same
 models = ['gemini_2.0', 'gemini_2.5', "chatgpt40", "claude_3.7", "claude_3.7_thinking", "deepseek_R1", "chatgpt03minihigh", "deepseek_V3"]
@@ -266,9 +267,10 @@ def analyze_codes_ast(base_dir, models, output_csv='llm_code_metrics.csv'):
 
 # --- Main Execution Block ---
 if __name__ == '__main__':
-    base_directory = './calibration_prompt'
-    output_response_csv = 'llm_response_metrics.csv'
-    output_code_csv = 'llm_code_metrics.csv' # Keep original name for code metrics
+    DIR = sys.argv[1]
+    base_directory = f'{DIR}'
+    output_response_csv = f'{DIR}/llm_response_metrics.csv'
+    output_code_csv = f'{DIR}/llm_code_metrics.csv' # Keep original name for code metrics
 
     print(f"Starting analysis...")
     print(f"Base Directory: {os.path.abspath(base_directory)}")
