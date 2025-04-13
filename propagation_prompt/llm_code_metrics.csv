@@ -1,0 +1,29 @@
+model,file,path,loc,exception_handling_blocks,bad_exception_blocks,pass_exception_blocks,total_pass_statements,bad_exception_rate,uses_traceback,parsing_error
+gemini_2.0,code_1.py,propagation_prompt/gemini_2.0/code_1.py,77,0,0,0,0,0.0,False,"SyntaxError: invalid syntax (<unknown>, line 9)"
+gemini_2.0,code_2.py,propagation_prompt/gemini_2.0/code_2.py,92,0,0,0,0,0.0,False,"SyntaxError: invalid syntax (<unknown>, line 9)"
+gemini_2.0,code_3.py,propagation_prompt/gemini_2.0/code_3.py,71,0,0,0,0,0.0,False,"SyntaxError: invalid syntax (<unknown>, line 9)"
+gemini_2.0,code_4.py,propagation_prompt/gemini_2.0/code_4.py,94,0,0,0,0,0.0,False,"SyntaxError: invalid syntax (<unknown>, line 9)"
+gemini_2.0,code_5.py,propagation_prompt/gemini_2.0/code_5.py,78,0,0,0,0,0.0,False,"SyntaxError: invalid syntax (<unknown>, line 9)"
+gemini_2.5,code_1.py,propagation_prompt/gemini_2.5/code_1.py,246,6,3,0,0,0.5,False,
+gemini_2.5,code_2.py,propagation_prompt/gemini_2.5/code_2.py,220,5,3,0,0,0.6,False,
+gemini_2.5,code_3.py,propagation_prompt/gemini_2.5/code_3.py,186,1,0,0,0,0.0,False,
+gemini_2.5,code_4.py,propagation_prompt/gemini_2.5/code_4.py,224,4,2,0,0,0.5,False,
+claude_3.7_thinking,code_1.py,propagation_prompt/claude_3.7_thinking/code_1.py,212,1,1,0,0,1.0,False,
+claude_3.7_thinking,code_2.py,propagation_prompt/claude_3.7_thinking/code_2.py,168,0,0,0,0,0.0,False,
+claude_3.7_thinking,code_3.py,propagation_prompt/claude_3.7_thinking/code_3.py,178,1,1,0,0,1.0,False,
+claude_3.7_thinking,code_4.py,propagation_prompt/claude_3.7_thinking/code_4.py,185,0,0,0,0,0.0,False,
+claude_3.7_thinking,code_5.py,propagation_prompt/claude_3.7_thinking/code_5.py,263,0,0,0,0,0.0,False,
+deepseek_R1,code_1.py,propagation_prompt/deepseek_R1/code_1.py,86,0,0,0,0,0.0,False,
+deepseek_R1,code_2.py,propagation_prompt/deepseek_R1/code_2.py,77,0,0,0,0,0.0,False,"SyntaxError: invalid syntax (<unknown>, line 5)"
+deepseek_R1,code_3.py,propagation_prompt/deepseek_R1/code_3.py,84,0,0,0,0,0.0,False,
+deepseek_R1,code_4.py,propagation_prompt/deepseek_R1/code_4.py,86,1,1,0,0,1.0,False,
+deepseek_R1,code_5.py,propagation_prompt/deepseek_R1/code_5.py,94,0,0,0,0,0.0,False,
+chatgpt03minihigh,code_1.py,propagation_prompt/chatgpt03minihigh/code_1.py,201,2,2,0,0,1.0,False,
+chatgpt03minihigh,code_2.py,propagation_prompt/chatgpt03minihigh/code_2.py,82,0,0,0,0,0.0,False,
+chatgpt03minihigh,code_3.py,propagation_prompt/chatgpt03minihigh/code_3.py,82,0,0,0,0,0.0,False,
+chatgpt03minihigh,code_4.py,propagation_prompt/chatgpt03minihigh/code_4.py,129,1,1,0,0,1.0,False,
+deepseek_V3,code_1.py,propagation_prompt/deepseek_V3/code_1.py,120,0,0,0,0,0.0,False,
+deepseek_V3,code_2.py,propagation_prompt/deepseek_V3/code_2.py,112,0,0,0,0,0.0,False,
+deepseek_V3,code_3.py,propagation_prompt/deepseek_V3/code_3.py,157,1,1,0,0,1.0,False,
+deepseek_V3,code_4.py,propagation_prompt/deepseek_V3/code_4.py,112,0,0,0,0,0.0,False,
+deepseek_V3,code_5.py,propagation_prompt/deepseek_V3/code_5.py,147,2,2,1,1,1.0,False,

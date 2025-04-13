@@ -1,0 +1,245 @@
+Okay, I can help you outline a Python script to achieve this.
+
+Based on the provided PyWake documentationand additional search results, PyWake itself doesn't have a built-in function to directly compute the Sobol sensitivity of a flow field (WS_eff map) considering input uncertainties over time. However, you can achieve this by combining PyWake with a dedicated sensitivity analysis library like SALib.
+
+The process involves running PyWake multiple times with varying inputs sampled according to their uncertainty distributions and then analyzing the resulting flow maps using SALib.
+
+Here's a conceptual outline and code snippets:
+
+1. Setup and Dependencies
+
+You'll need py_wake, numpy, matplotlib, and SALib.
+Python
+
+# Install libraries if needed
+# !pip install py_wake SALib numpy matplotlib xarray
+
+import numpy as np
+import matplotlib.pyplot as plt
+import xarray as xr
+from SALib.sample import saltelli
+from SALib.analyze import sobol
+
+# Import PyWake components (adjust based on your specific needs)
+from py_wake.examples.data.hornsrev1 import Hornsrev1Site, V80
+from py_wake.literature.gaussian_models import Bastankhah_PorteAgel_2014
+from py_wake import HorizontalGrid
+
+print("Libraries imported.")
+
+2. Define Uncertain Parameters and SALib Problem
+
+Define which input parameters have uncertainty (e.g., wind speed, wind direction, turbulence intensity) and their probability distributions. For Sobol analysis, you need to define bounds for each parameter.
+Python
+
+# Define the problem for SALib
+# Example: Uncertainty in Wind Speed (ws), Wind Direction (wd), Turbulence Intensity (ti)
+problem = {
+    'num_vars': 3,
+    'names': ['ws', 'wd', 'ti'],
+    'bounds': [[5.0, 15.0],  # Min/Max for Wind Speed (m/s)
+               [260.0, 280.0], # Min/Max for Wind Direction (deg)
+               [0.05, 0.15]]  # Min/Max for Turbulence Intensity (-)
+}
+
+# Generate samples using SALib's Saltelli sampler
+# N is the base number of samples (must be power of 2).
+# Total runs = N * (D + 2), where D is num_vars. Choose N carefully!
+N = 1024 # Example value, adjust based on desired accuracy and computational cost
+param_values = saltelli.sample(problem, N, calc_second_order=False) # shape (N*(D+2), D)
+
+print(f"Generated {param_values.shape[0]} parameter sets for {problem['num_vars']} variables.")
+
+3. Define PyWake Model and Wrapper Function
+
+Set up your PyWake wind farm model. Create a wrapper function that takes a single sample of input parameters (from param_values), runs the PyWake simulation (potentially for a specific time step or a steady-state case representing a time), calculates the WS_eff flow map, and returns the flattened WS_eff values.
+Python
+
+# --- PyWake Model Setup ---
+# (Using example from documentation)
+site = Hornsrev1Site() # Or your custom site
+x_wt, y_wt = site.initial_position.T
+windTurbines = V80() # Or your custom turbines
+wf_model = Bastankhah_PorteAgel_2014(site, windTurbines, k=0.0324555) # Or your chosen model
+
+# --- Define Flow Map Grid ---
+# (Adjust resolution and extent as needed)
+grid = HorizontalGrid(resolution=100, extend=0.5) # Lower resolution for faster testing
+
+# --- Wrapper Function for SALib ---
+def evaluate_pywake_flowmap(params):
+    """
+    Runs PyWake for a given parameter set and returns the flattened WS_eff flow map.
+    params: A numpy array [ws, wd, ti]
+    """
+    ws_sample, wd_sample, ti_sample = params
+
+    # Run PyWake simulation for the specific condition
+    # Note: For time series, you might loop through param_values for each time step
+    # or pass time-varying parameters if your uncertainty includes time dependency.
+    # This example assumes steady state for the sampled ws, wd, ti.
+    sim_res = wf_model(x_wt, y_wt,
+                       ws=ws_sample,
+                       wd=wd_sample,
+                       TI=ti_sample)
+
+    # Calculate the flow map
+    try:
+        # Use the defined grid
+        flow_map = sim_res.flow_map(grid=grid, ws=ws_sample, wd=wd_sample)
+        # Extract WS_eff and flatten for SALib
+        # Ensure flow_map['WS_eff'] exists and handle potential NaNs
+        ws_eff_map = flow_map['WS_eff'].data.flatten()
+        # Replace NaNs if necessary, e.g., with mean or a specific value,
+        # though this might affect sensitivity results. Consider grid bounds.
+        ws_eff_map = np.nan_to_num(ws_eff_map, nan=np.nanmean(ws_eff_map))
+        return ws_eff_map
+    except Exception as e:
+        print(f"Error calculating flow map for params {params}: {e}")
+        # Return an array of NaNs or zeros of the expected size if calculation fails
+        # Determine expected size (rows*cols of the grid)
+        # This needs refinement based on how grid points are determined
+        # Example placeholder: assume 100x100 grid from resolution=100
+        # A better approach gets size from a dummy successful run if possible
+        dummy_map = wf_model(x_wt, y_wt, ws=10, wd=270).flow_map(grid=grid)
+        expected_size = dummy_map['WS_eff'].data.flatten().shape[0]
+        return np.full(expected_size, np.nan) # Or np.zeros
+
+print("PyWake model and wrapper function defined.")
+
+4. Run Simulations
+
+Loop through the parameter samples generated by SALib and run the PyWake wrapper function for each. Store the results (the flattened WS_eff maps). This is the most time-consuming part.
+Python
+
+# Run the model for each parameter set
+# Determine the output array size from a sample run first
+sample_output = evaluate_pywake_flowmap(param_values[0, :])
+output_size = sample_output.shape[0]
+num_runs = param_values.shape[0]
+
+# Initialize output array (consider memory for large grids/samples)
+Y = np.full((num_runs, output_size), np.nan) # Use NaN for robustness
+
+print(f"Running {num_runs} simulations...")
+for i, p in enumerate(param_values):
+    if i % 100 == 0: # Progress indicator
+        print(f"  Simulation {i+1}/{num_runs}")
+    Y[i, :] = evaluate_pywake_flowmap(p)
+
+# Check for failed runs (all NaNs)
+failed_runs = np.all(np.isnan(Y), axis=1).sum()
+if failed_runs > 0:
+    print(f"Warning: {failed_runs} simulations failed to produce valid flow maps.")
+    # Consider strategies: remove failed runs, impute values (carefully)
+    # For now, SALib might handle NaNs depending on analysis, or error out.
+    # Let's replace full NaN rows with zeros for analysis, but this is a simplification.
+    nan_rows = np.all(np.isnan(Y), axis=1)
+    if np.any(nan_rows):
+         print(f"Replacing {np.sum(nan_rows)} full NaN rows with zeros for analysis.")
+         Y[nan_rows, :] = 0 # Or use mean of successful runs column-wise
+
+
+print("Simulations complete.")
+
+5. Perform Sobol Analysis
+
+Use SALib's sobol.analyze function on the results array Y. This calculates the first-order (S1) and total-order (ST) Sobol indices for each point in the flattened flow map.
+Python
+
+print("Performing Sobol analysis...")
+# Analyze the results - This computes indices for each point in the flattened map
+# Note: This assumes Y does not contain problematic NaN patterns after the cleanup above.
+Si = sobol.analyze(problem, Y, calc_second_order=False, print_to_console=False)
+print("Sobol analysis complete.")
+
+# Si is a dictionary containing S1, ST, S1_conf, ST_conf (if N is sufficient)
+# Each value (e.g., Si['S1']) will have shape (output_size, num_vars)
+# We need to transpose to get (num_vars, output_size) for reshaping
+S1_flat = Si['S1'].T # Shape (num_vars, output_size)
+ST_flat = Si['ST'].T # Shape (num_vars, output_size)
+
+6. Reshape and Visualize Sensitivity Maps
+
+Reshape the resulting Sobol indices back into the original 2D grid dimensions of the flow map. Plot these sensitivity maps (one for each input parameter's S1 and ST index) using matplotlib.
+Python
+
+# --- Get grid shape from a sample flow map ---
+# Run one simulation just to get the flow map object and its coordinates
+print("Getting grid shape...")
+ref_ws, ref_wd = 10.0, 270.0 # Reference conditions
+sim_res_ref = wf_model(x_wt, y_wt, ws=ref_ws, wd=ref_wd)
+flow_map_ref = sim_res_ref.flow_map(grid=grid, ws=ref_ws, wd=ref_wd)
+
+# Extract coordinates and shape
+X_grid = flow_map_ref.x.data
+Y_grid = flow_map_ref.y.data
+map_shape = flow_map_ref['WS_eff'].shape # (y_dim, x_dim) typically
+print(f"Flow map grid shape: {map_shape}")
+
+
+# --- Reshape and Plot Sensitivity Maps ---
+print("Generating sensitivity maps...")
+num_vars = problem['num_vars']
+param_names = problem['names']
+# Create a directory to save images
+import os
+if not os.path.exists('sensitivity_maps'):
+    os.makedirs('sensitivity_maps')
+
+
+for i in range(num_vars):
+    # Reshape S1 and ST for this variable
+    S1_map = S1_flat[i, :].reshape(map_shape)
+    ST_map = ST_flat[i, :].reshape(map_shape)
+
+    # --- Plot S1 Map ---
+    plt.figure(figsize=(12, 5))
+    plt.suptitle(f'Sobol Sensitivity of WS_eff (Time Step/Case X)') # Adjust title for time
+
+    plt.subplot(1, 2, 1)
+    cf1 = plt.contourf(X_grid, Y_grid, S1_map, levels=50, cmap='viridis')
+    # Add wind turbines using plot_wake_map utility for context if desired
+    flow_map_ref.plot_windturbines(ax=plt.gca())
+    plt.colorbar(cf1, label='S1 Index')
+    plt.title(f'First-Order Index (S1) for {param_names[i]}')
+    plt.xlabel('x [m]')
+    plt.ylabel('y [m]')
+    plt.axis('equal')
+
+    # --- Plot ST Map ---
+    plt.subplot(1, 2, 2)
+    cf2 = plt.contourf(X_grid, Y_grid, ST_map, levels=50, cmap='viridis')
+    flow_map_ref.plot_windturbines(ax=plt.gca()) # Add turbines for context
+    plt.colorbar(cf2, label='ST Index')
+    plt.title(f'Total-Order Index (ST) for {param_names[i]}')
+    plt.xlabel('x [m]')
+    plt.ylabel('y [m]')
+    plt.axis('equal')
+
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95]) # Adjust layout to prevent title overlap
+    # Save the figure
+    figname = f"sensitivity_maps/sobol_sensitivity_WS_eff_{param_names[i]}.png"
+    plt.savefig(figname)
+    print(f"Saved map: {figname}")
+    plt.close() # Close figure to avoid displaying inline if not needed
+
+print("Visualization complete. Maps saved in 'sensitivity_maps' directory.")
+
+Integrating Time:
+
+The example above calculates sensitivity for one set of conditions. For time series:
+
+    Define Time Steps: Identify the specific time points or intervals you want to analyze.
+    Loop Over Time: Place the simulation loop (Step 4) and analysis loop (Step 5) inside an outer loop that iterates through your chosen time steps.
+    Time-Dependent Inputs: If your uncertain parameters themselves change over time (e.g., mean wind speed follows a time series, but has uncertainty around that mean at each step), you'll need to adjust the problem definition and potentially the evaluate_pywake_flowmap function for each time step. PyWake can handle time-series inputs for wd, ws, ti, etc..
+    Save Time-Stamped Images: Modify the saving step (Step 6) to include the time step in the filename (e.g., sobol_sensitivity_WS_eff_{param_names[i]}_t{time_step}.png).
+
+Important Considerations:
+
+    Computational Cost: Sobol analysis requires many model runs (N * (D + 2)). For high-resolution flow maps, many parameters (D), or many time steps, this can become extremely computationally expensive. Consider reducing grid resolution, the number of parameters, or the number of time steps for initial tests. Use PyWake's chunking/parallelization features if possible within the wrapper function, although the overhead might be significant for single flow map calculations.
+    Parameter Distributions: The choice of parameter ranges (bounds in the problem) significantly impacts the results. Use realistic uncertainty bounds based on measurement data or literature. Sobol assumes uniform distributions within these bounds unless integrated with methods like Polynomial Chaos Expansion (PCE), which is more advanced.
+    NaN Handling: Flow map calculations might produce NaNs outside the main flow area. The evaluate_pywake_flowmap function needs robust handling of these NaNs before returning the flattened array for SALib. Simply replacing with zero or mean might slightly distort sensitivity results in those regions.
+    Interpretation: Sobol indices quantify the contribution of each input parameter's variance to the output (WS_eff at each point) variance. S1 represents the direct contribution, while ST includes interactions with other parameters. High ST and low S1 indicates strong interaction effects.
+
+This script provides a framework. You will need to adapt the specific PyWake model setup, uncertain parameters, bounds, grid definition, and time integration logic to your exact requirements.

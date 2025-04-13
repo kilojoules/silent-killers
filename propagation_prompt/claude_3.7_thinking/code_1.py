@@ -1,0 +1,212 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import xarray as xr
+from SALib.sample import saltelli
+from SALib.analyze import sobol
+from tqdm import tqdm
+import os
+import time
+from py_wake.examples.data.hornsrev1 import Hornsrev1Site, V80
+from py_wake.literature.gaussian_models import Bastankhah_PorteAgel_2014
+from py_wake import HorizontalGrid
+
+# Create output directory
+os.makedirs('sensitivity_images', exist_ok=True)
+
+# Set up base wind farm model
+print("Setting up wind farm model...")
+site = Hornsrev1Site()
+x, y = site.initial_position.T
+windTurbines = V80()
+wf_model = Bastankhah_PorteAgel_2014(site, windTurbines, k=0.0324555)
+
+# Define uncertain parameters and their ranges based on realistic measurement uncertainties
+problem = {
+    'num_vars': 3,
+    'names': ['wind_speed', 'wind_direction', 'turbulence_intensity'],
+    'bounds': [
+        [8.0, 10.0],      # Wind speed: base ± 1 m/s
+        [265.0, 275.0],   # Wind direction: base ± 5 degrees
+        [0.08, 0.12]      # Turbulence intensity: base ± 0.02
+    ]
+}
+
+# Generate Sobol sequence samples
+n_samples = 64  # Reduced for computational efficiency 
+param_values = saltelli.sample(problem, n_samples)
+total_samples = param_values.shape[0]
+
+# Create a grid for flow map
+grid = HorizontalGrid(resolution=50, extend=0.5)
+
+# Define time points representing different times of day
+times = np.array([0, 6, 12, 18])  # hours
+
+# Store flow maps for each parameter set and time
+all_flow_maps = {}
+for t in times:
+    all_flow_maps[t] = []
+
+# Run simulations
+print(f"Running {total_samples} simulations across {len(times)} time points...")
+start_time = time.time()
+
+for i, params in enumerate(tqdm(param_values)):
+    ws_base, wd_base, ti_base = params
+    
+    # Create time-varying parameters with realistic diurnal patterns
+    ws_series = ws_base + np.sin(times/24 * 2*np.pi) * 0.5  # Daily wind speed cycle with 0.5 m/s amplitude
+    wd_series = wd_base + np.sin(times/24 * 2*np.pi + np.pi/4) * 2  # Daily wind direction cycle with 2° amplitude, phase shifted
+    ti_series = ti_base * (1 + 0.1 * np.cos(times/24 * 2*np.pi))  # TI varies slightly throughout the day
+    
+    # Run simulation for each time point
+    for t_idx, t in enumerate(times):
+        sim_res = wf_model(x, y, wd=wd_series[t_idx], ws=ws_series[t_idx], TI=ti_series[t_idx])
+        flow_map = sim_res.flow_map(grid=grid)
+        all_flow_maps[t].append(flow_map)
+
+sim_time = time.time() - start_time
+print(f"Simulations completed in {sim_time:.2f} seconds")
+
+# Analyze sensitivity at each time point
+print("Calculating Sobol sensitivity indices...")
+
+# For each time point, analyze sensitivity
+for t in times:
+    print(f"Analyzing time point {t} hours...")
+    
+    # Extract WS_eff values for this time from all simulations
+    ws_eff_values = np.array([fm.WS_eff.values for fm in all_flow_maps[t]])
+    
+    # Get grid dimensions
+    grid_shape = ws_eff_values.shape[1:]
+    
+    # Initialize sensitivity arrays
+    S1 = np.zeros((3, *grid_shape))  # First-order indices
+    ST = np.zeros((3, *grid_shape))  # Total indices
+    
+    # Create mask for valid grid points (not NaN and not constant)
+    valid_mask = ~np.isnan(ws_eff_values).any(axis=0)
+    
+    # Also exclude points where values are almost constant
+    for y in range(grid_shape[0]):
+        for x in range(grid_shape[1]):
+            if valid_mask[y, x]:
+                values = ws_eff_values[:, y, x]
+                if np.max(values) - np.min(values) < 1e-6:
+                    valid_mask[y, x] = False
+    
+    # Calculate sensitivity indices for each valid grid point
+    for y in range(grid_shape[0]):
+        for x in range(grid_shape[1]):
+            if valid_mask[y, x]:
+                # Get WS_eff values for this grid point across all simulations
+                Y = ws_eff_values[:, y, x]
+                
+                try:
+                    # Calculate Sobol indices
+                    Si = sobol.analyze(problem, Y, calc_second_order=False)
+                    S1[:, y, x] = Si['S1']
+                    ST[:, y, x] = Si['ST']
+                except Exception as e:
+                    # If analysis fails, set indices to NaN
+                    S1[:, y, x] = np.nan
+                    ST[:, y, x] = np.nan
+                    valid_mask[y, x] = False
+    
+    # Get X, Y coordinates from the first flow map
+    X, Y = all_flow_maps[t][0].X, all_flow_maps[t][0].Y
+    
+    # Plot sensitivity maps
+    param_names = ['Wind Speed', 'Wind Direction', 'Turbulence Intensity']
+    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+    
+    # Plot first-order indices
+    for i, param in enumerate(param_names):
+        # Create masked array for plotting
+        masked_S1 = np.ma.array(S1[i], mask=~valid_mask)
+        
+        im = axes[0, i].contourf(X, Y, masked_S1, levels=np.linspace(0, 1, 11), cmap='viridis', extend='both')
+        axes[0, i].set_title(f'First-order Sensitivity: {param}')
+        axes[0, i].set_xlabel('x [m]')
+        axes[0, i].set_ylabel('y [m]')
+        plt.colorbar(im, ax=axes[0, i])
+        
+        # Plot turbine locations
+        axes[0, i].plot(x, y, 'ko', markersize=3)
+        axes[0, i].set_aspect('equal')
+        
+    # Plot total-order indices
+    for i, param in enumerate(param_names):
+        # Create masked array for plotting
+        masked_ST = np.ma.array(ST[i], mask=~valid_mask)
+        
+        im = axes[1, i].contourf(X, Y, masked_ST, levels=np.linspace(0, 1, 11), cmap='viridis', extend='both')
+        axes[1, i].set_title(f'Total-order Sensitivity: {param}')
+        axes[1, i].set_xlabel('x [m]')
+        axes[1, i].set_ylabel('y [m]')
+        plt.colorbar(im, ax=axes[1, i])
+        
+        # Plot turbine locations
+        axes[1, i].plot(x, y, 'ko', markersize=3)
+        axes[1, i].set_aspect('equal')
+    
+    plt.suptitle(f'Sobol Sensitivity for Effective Wind Speed - Time: {t} hours', fontsize=16)
+    plt.tight_layout(rect=[0, 0, 1, 0.97])
+    plt.savefig(f'sensitivity_images/sensitivity_time_{t:02d}h.png', dpi=300)
+    plt.close()
+    
+    # Also save the raw sensitivity data
+    np.savez(f'sensitivity_images/sensitivity_data_time_{t:02d}h.npz', 
+             S1=S1, ST=ST, X=X, Y=Y, valid_mask=valid_mask, 
+             parameters=param_names)
+
+# Generate a combined plot showing temporal evolution
+print("Generating temporal evolution plot...")
+fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+param_idx = 0  # Focus on wind speed sensitivity for the temporal evolution
+
+for t_idx, t in enumerate(times):
+    data = np.load(f'sensitivity_images/sensitivity_data_time_{t:02d}h.npz')
+    S1 = data['S1']
+    X = data['X']
+    Y = data['Y']
+    valid_mask = data['valid_mask']
+    
+    # Plot with different color for each time
+    color = plt.cm.viridis(t_idx/len(times))
+    
+    # Use transparency to show time evolution
+    alpha = 0.3 + 0.7 * (t_idx+1)/len(times)
+    
+    # Plot at different z-levels to ensure visibility
+    zorder = t_idx + 1
+    
+    for i, param in enumerate(problem['names']):
+        if i >= 3:  # Only show first 3 parameters
+            continue
+            
+        masked_S1 = np.ma.array(S1[i], mask=~valid_mask)
+        
+        # Create contour plot
+        cs = axes[i].contour(X, Y, masked_S1, levels=[0.3, 0.5, 0.7], 
+                         colors=[color], alpha=alpha, zorder=zorder,
+                         linewidths=2)
+        
+        # Add time label to contours
+        axes[i].clabel(cs, [0.5], fmt=f'{t}h', colors=[color], fontsize=10)
+        
+        # Plot turbines
+        if t_idx == 0:  # Only add turbines once
+            axes[i].plot(x, y, 'ko', markersize=3, alpha=0.5)
+            axes[i].set_title(f'Sensitivity Evolution: {param}')
+            axes[i].set_xlabel('x [m]')
+            axes[i].set_ylabel('y [m]')
+            axes[i].set_aspect('equal')
+
+plt.suptitle('Temporal Evolution of First-order Sobol Sensitivity Indices', fontsize=16)
+plt.tight_layout(rect=[0, 0, 1, 0.97])
+plt.savefig('sensitivity_images/sensitivity_temporal_evolution.png', dpi=300)
+plt.close()
+
+print("Analysis complete. Images saved to 'sensitivity_images' directory.")

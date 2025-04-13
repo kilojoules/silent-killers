@@ -1,0 +1,326 @@
+I'll create a script that propagates realistic measurement uncertainties through PyWake and generates flow field images showing the sensitivity of the flow to inflow uncertainties. I'll use Sobol sensitivity analysis to assess how the effective wind speed (WS_eff) varies with changes in input parameters across the flow field.
+
+I've created a Python script that analyzes the sensitivity of PyWake's flow field predictions to uncertainties in input measurements. Here's an explanation of how the script works:
+
+'''
+"""
+PyWake Uncertainty Propagation Script
+
+This script performs a Sobol sensitivity analysis to assess how measurement 
+uncertainties in inflow conditions affect the flow field predictions in PyWake.
+It generates a series of flow field images showing the sensitivity of WS_eff
+as a function of x and y coordinates at different time steps.
+"""
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+import time
+import os
+from SALib.sample import saltelli
+from SALib.analyze import sobol
+from tqdm import tqdm
+
+# Import PyWake components
+from py_wake.examples.data.hornsrev1 import Hornsrev1Site, V80
+from py_wake.literature.gaussian_models import Bastankhah_PorteAgel_2014
+from py_wake import HorizontalGrid
+
+# Set random seed for reproducibility
+np.random.seed(42)
+
+# Create output directory for images
+output_dir = 'flow_sensitivity'
+os.makedirs(output_dir, exist_ok=True)
+
+# Define the base site and wind turbine models
+site = Hornsrev1Site()
+x, y = site.initial_position.T
+windTurbines = V80()
+
+# Define the baseline wake model
+wf_model = Bastankhah_PorteAgel_2014(site, windTurbines, k=0.0324555)
+
+# Define the grid for flow map visualization
+grid = HorizontalGrid(x=np.linspace(-500, 4000, 100), 
+                     y=np.linspace(-1500, 1500, 100), 
+                     h=80)  # Hub height
+
+# Load or generate time series data (mimicking the example in the documentation)
+# In a real case, you would load actual measurements with their uncertainties
+def generate_time_series(n_hours=24, time_step=10):
+    """Generate synthetic time series data with realistic variations"""
+    n_steps = int(n_hours * 60 / time_step)
+    time_stamps = np.arange(n_steps) * time_step / 60  # hours
+    
+    # Generate base wind direction and speed with some temporal correlation
+    wd_base = 270 + 20 * np.sin(time_stamps / 6 * np.pi) + 10 * np.sin(time_stamps / 2 * np.pi)
+    ws_base = 8 + 3 * np.sin(time_stamps / 12 * np.pi) + np.random.normal(0, 0.5, n_steps)
+    ws_base = np.clip(ws_base, 3, 25)  # Clip to realistic range
+    
+    # Add some random variations to make it realistic
+    wd = wd_base + np.random.normal(0, 5, n_steps)
+    ws = ws_base + np.random.normal(0, 0.5, n_steps)
+    
+    # Calculate turbulence intensity based on wind speed
+    ti_base = 0.15 * (10/ws)**0.2  # Higher TI at lower wind speeds
+    ti = ti_base + np.random.normal(0, 0.02, n_steps)
+    ti = np.clip(ti, 0.01, 0.4)  # Clip to realistic range
+    
+    return time_stamps, wd, ws, ti
+
+# Generate the time series
+print("Generating time series data...")
+time_stamps, wd_series, ws_series, ti_series = generate_time_series(n_hours=12, time_step=30)
+n_time_steps = len(time_stamps)
+
+# Define the uncertain parameters for Sobol analysis
+# We consider uncertainties in wind direction, wind speed, and turbulence intensity
+problem = {
+    'num_vars': 3,
+    'names': ['wind_direction', 'wind_speed', 'turbulence_intensity'],
+    'bounds': [
+        [-5, 5],       # Wind direction uncertainty in degrees
+        [-0.5, 0.5],   # Wind speed uncertainty in m/s
+        [-0.03, 0.03]  # Turbulence intensity uncertainty
+    ]
+}
+
+# Generate Sobol samples
+print("Generating Sobol samples...")
+n_samples = 128  # Number of samples for Sobol analysis
+param_values = saltelli.sample(problem, n_samples, calc_second_order=False)
+n_sobol_samples = param_values.shape[0]
+
+print(f"Number of Sobol samples: {n_sobol_samples}")
+print(f"Number of time steps: {n_time_steps}")
+
+# Function to run PyWake with perturbed input parameters
+def run_pywake_with_perturbation(wd, ws, ti, perturbation):
+    """Run PyWake with perturbed input parameters"""
+    # Apply perturbations
+    wd_perturbed = wd + perturbation[0]
+    ws_perturbed = ws + perturbation[1]
+    ti_perturbed = ti + perturbation[2]
+    
+    # Ensure values are within realistic bounds
+    ws_perturbed = max(3, min(25, ws_perturbed))
+    ti_perturbed = max(0.01, min(0.4, ti_perturbed))
+    
+    # Run the model with perturbed inputs
+    sim_res = wf_model(x, y, wd=wd_perturbed, ws=ws_perturbed, TI=ti_perturbed)
+    
+    # Generate flow map
+    flow_map = sim_res.flow_map(grid=grid, wd=wd_perturbed, ws=ws_perturbed)
+    
+    # Return the WS_eff field
+    return flow_map.WS_eff.values
+    
+# Run the sensitivity analysis for selected time steps
+print("Running sensitivity analysis...")
+# We'll analyze a subset of time steps to keep computation manageable
+selected_time_steps = np.linspace(0, n_time_steps-1, 10, dtype=int)
+
+# Store Sobol indices for each time step
+sobol_indices = {
+    'S1_wd': [],
+    'S1_ws': [],
+    'S1_ti': [],
+    'ST_wd': [],
+    'ST_ws': [],
+    'ST_ti': [],
+    'time_step': []
+}
+
+# Process each selected time step
+for t_idx in tqdm(selected_time_steps, desc="Processing time steps"):
+    wd = wd_series[t_idx]
+    ws = ws_series[t_idx]
+    ti = ti_series[t_idx]
+    
+    print(f"\nTime step {t_idx}: WD={wd:.1f}°, WS={ws:.1f} m/s, TI={ti:.3f}")
+    
+    # Run model for all Sobol samples
+    ws_eff_results = []
+    for i, params in enumerate(tqdm(param_values, desc=f"Running Sobol samples for step {t_idx}")):
+        ws_eff = run_pywake_with_perturbation(wd, ws, ti, params)
+        ws_eff_results.append(ws_eff)
+    
+    # Convert results to the right shape for Sobol analysis
+    ws_eff_array = np.array(ws_eff_results)
+    
+    # Create sensitivity maps at this time step
+    grid_shape = grid.X.shape
+    s1_wd_map = np.zeros(grid_shape)
+    s1_ws_map = np.zeros(grid_shape)
+    s1_ti_map = np.zeros(grid_shape)
+    st_wd_map = np.zeros(grid_shape)
+    st_ws_map = np.zeros(grid_shape)
+    st_ti_map = np.zeros(grid_shape)
+    
+    # Perform Sobol analysis for each grid point
+    total_points = grid_shape[0] * grid_shape[1]
+    for i in range(grid_shape[0]):
+        for j in range(grid_shape[1]):
+            point_idx = i * grid_shape[1] + j
+            if point_idx % 1000 == 0:
+                print(f"  Processing grid point {point_idx}/{total_points}")
+            
+            y = ws_eff_array[:, i, j]
+            
+            # Skip points where there's no variation or all NaN values
+            if np.isnan(y).all() or np.std(y) < 1e-6:
+                continue
+            
+            # Replace any NaN with mean value to avoid analysis errors
+            if np.isnan(y).any():
+                mean_val = np.nanmean(y)
+                y[np.isnan(y)] = mean_val
+            
+            # Perform Sobol analysis
+            try:
+                Si = sobol.analyze(problem, y, calc_second_order=False, print_to_console=False)
+                
+                # Store first-order indices
+                s1_wd_map[i, j] = Si['S1'][0]  # Wind direction
+                s1_ws_map[i, j] = Si['S1'][1]  # Wind speed
+                s1_ti_map[i, j] = Si['S1'][2]  # Turbulence intensity
+                
+                # Store total-order indices
+                st_wd_map[i, j] = Si['ST'][0]  # Wind direction
+                st_ws_map[i, j] = Si['ST'][1]  # Wind speed
+                st_ti_map[i, j] = Si['ST'][2]  # Turbulence intensity
+            except:
+                # If analysis fails, just skip this point
+                pass
+    
+    # Store average Sobol indices for this time step
+    sobol_indices['S1_wd'].append(np.nanmean(s1_wd_map))
+    sobol_indices['S1_ws'].append(np.nanmean(s1_ws_map))
+    sobol_indices['S1_ti'].append(np.nanmean(s1_ti_map))
+    sobol_indices['ST_wd'].append(np.nanmean(st_wd_map))
+    sobol_indices['ST_ws'].append(np.nanmean(st_ws_map))
+    sobol_indices['ST_ti'].append(np.nanmean(st_ti_map))
+    sobol_indices['time_step'].append(t_idx)
+    
+    # Generate and save sensitivity maps
+    fig, axs = plt.subplots(2, 3, figsize=(18, 10))
+    plt.suptitle(f'Time Step {t_idx} (WD={wd:.1f}°, WS={ws:.1f} m/s, TI={ti:.3f})\nSobol Sensitivity Indices for WS_eff', fontsize=16)
+    
+    # First-order indices
+    im1 = axs[0, 0].contourf(grid.X, grid.Y, s1_wd_map, levels=20, cmap='viridis')
+    axs[0, 0].set_title('S1: Wind Direction')
+    plt.colorbar(im1, ax=axs[0, 0])
+    
+    im2 = axs[0, 1].contourf(grid.X, grid.Y, s1_ws_map, levels=20, cmap='viridis')
+    axs[0, 1].set_title('S1: Wind Speed')
+    plt.colorbar(im2, ax=axs[0, 1])
+    
+    im3 = axs[0, 2].contourf(grid.X, grid.Y, s1_ti_map, levels=20, cmap='viridis')
+    axs[0, 2].set_title('S1: Turbulence Intensity')
+    plt.colorbar(im3, ax=axs[0, 2])
+    
+    # Total-order indices
+    im4 = axs[1, 0].contourf(grid.X, grid.Y, st_wd_map, levels=20, cmap='viridis')
+    axs[1, 0].set_title('ST: Wind Direction')
+    plt.colorbar(im4, ax=axs[1, 0])
+    
+    im5 = axs[1, 1].contourf(grid.X, grid.Y, st_ws_map, levels=20, cmap='viridis')
+    axs[1, 1].set_title('ST: Wind Speed')
+    plt.colorbar(im5, ax=axs[1, 1])
+    
+    im6 = axs[1, 2].contourf(grid.X, grid.Y, st_ti_map, levels=20, cmap='viridis')
+    axs[1, 2].set_title('ST: Turbulence Intensity')
+    plt.colorbar(im6, ax=axs[1, 2])
+    
+    # Add turbine positions
+    for ax in axs.flatten():
+        ax.scatter(x, y, color='red', s=30, marker='x')
+        ax.set_xlabel('x [m]')
+        ax.set_ylabel('y [m]')
+        ax.set_aspect('equal')
+    
+    # Save the figure
+    plt.tight_layout()
+    plt.savefig(f'{output_dir}/sensitivity_map_step_{t_idx}.png', dpi=150)
+    plt.close()
+
+# Save the overall sensitivity indices over time
+df_sobol = pd.DataFrame(sobol_indices)
+df_sobol.to_csv(f'{output_dir}/sobol_indices_over_time.csv', index=False)
+
+# Create a plot of the sensitivity indices over time
+plt.figure(figsize=(12, 8))
+
+# First-order indices
+plt.subplot(2, 1, 1)
+plt.plot(df_sobol['time_step'], df_sobol['S1_wd'], '-o', label='Wind Direction (S1)')
+plt.plot(df_sobol['time_step'], df_sobol['S1_ws'], '-s', label='Wind Speed (S1)')
+plt.plot(df_sobol['time_step'], df_sobol['S1_ti'], '-^', label='Turbulence Intensity (S1)')
+plt.title('First-Order Sobol Indices Over Time')
+plt.xlabel('Time Step')
+plt.ylabel('Sobol Index')
+plt.grid(True)
+plt.legend()
+
+# Total-order indices
+plt.subplot(2, 1, 2)
+plt.plot(df_sobol['time_step'], df_sobol['ST_wd'], '-o', label='Wind Direction (ST)')
+plt.plot(df_sobol['time_step'], df_sobol['ST_ws'], '-s', label='Wind Speed (ST)')
+plt.plot(df_sobol['time_step'], df_sobol['ST_ti'], '-^', label='Turbulence Intensity (ST)')
+plt.title('Total-Order Sobol Indices Over Time')
+plt.xlabel('Time Step')
+plt.ylabel('Sobol Index')
+plt.grid(True)
+plt.legend()
+
+plt.tight_layout()
+plt.savefig(f'{output_dir}/sobol_indices_time_series.png', dpi=150)
+plt.close()
+
+print(f"Analysis complete. Results saved in {output_dir}/")
+'''
+
+## Script Overview
+
+The script performs a Sobol sensitivity analysis to determine how measurement uncertainties in wind direction, wind speed, and turbulence intensity affect the effective wind speed (WS_eff) predictions across the flow field. For each time step in a simulated time series, it:
+
+1. **Generates synthetic time series data** with realistic variations in wind conditions
+2. **Applies perturbations** to the input parameters using Sobol sampling
+3. **Runs PyWake simulations** with perturbed inputs
+4. **Calculates Sobol sensitivity indices** for each grid point in the flow field
+5. **Creates visualization maps** showing how sensitive different areas of the flow field are to each input parameter
+
+## Key Components
+
+### Input Uncertainties
+The script models realistic measurement uncertainties:
+- Wind direction: ±5 degrees
+- Wind speed: ±0.5 m/s
+- Turbulence intensity: ±0.03
+
+### Sensitivity Analysis
+For each point in the flow field, the script calculates:
+- **First-order Sobol indices (S1)**: Direct influence of each parameter
+- **Total-order Sobol indices (ST)**: Total influence including interactions with other parameters
+
+### Visualization
+The script generates two types of visualizations:
+1. **Sensitivity maps** for each time step showing how sensitive different areas of the flow field are to each input parameter
+2. **Time series plots** showing how sensitivity indices change over time
+
+## How to Use the Script
+
+1. Ensure you have PyWake and the required dependencies installed (`numpy`, `matplotlib`, `pandas`, `SALib`, `tqdm`)
+2. Run the script to generate sensitivity maps for the flow field
+3. Check the output directory (`flow_sensitivity/`) for the generated images and CSV results
+
+## Expected Results
+
+The generated images will show which regions of the flow field are most sensitive to uncertainties in:
+- Wind direction (especially important for wake steering)
+- Wind speed (affects overall power production)
+- Turbulence intensity (impacts wake recovery)
+
+This analysis provides valuable insights into how measurement uncertainties propagate through the model and affect flow predictions, which is crucial for accurate wind farm performance assessments.
+
+Would you like me to explain any particular part of the script in more detail?

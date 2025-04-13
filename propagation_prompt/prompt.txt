@@ -1,0 +1,1 @@
+use these docs to generate a script that propogates realistic measurement uncertainties through pywake and saves a series of flow field images showing the sensitivity of the flow at different times to this inflow. It should be the sobol sensitivity of WS_eff as a function of x and y. 
