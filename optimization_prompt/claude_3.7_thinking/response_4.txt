@@ -21,6 +21,8 @@ There's an **empty worker file** with 0 bytes. When the merge process tries to o
 
 Let's modify the code to make it more robust against corrupted or invalid worker files. Here's how we can fix the issue in the main function:
 
+```
+
 def validate_worker_file(worker_file):
     """
     Validate if a worker file is a valid HDF5 file
@@ -131,11 +133,14 @@ def main():
     
     logger.info(f"Results saved to {args.output}")
 
+```
+
 ## Additional Improvements
 
 We should also enhance the worker initialization and file writing to prevent the creation of invalid files in the first place:
 
 
+```
 def worker_init(output_dir):
     """Initialize per-worker temporary HDF5 file"""
     import os  # Import at the beginning of the function
@@ -237,11 +242,14 @@ def optimize_layout(config, farm_boundaries, grid_size=18, random_pct=30, update
         # Clean up memory
         gc.collect()
 
+```
+
 ## Graceful Termination and Recovery Mechanism
 
 We should also add functionality to handle keyboard interrupts and provide a recovery mechanism:
 
 
+```
 def merge_worker_files(output_file, temp_dir, metadata=None, force=False):
     """
     Merge worker files into the main output file
@@ -483,7 +491,7 @@ def main():
     
     logger.info(f"Results saved to {args.output}")
 
-'''
+```
 
 ## Explanation of the Improvements
 

@@ -18,7 +18,7 @@ The script fails catastrophically when it encounters an invalid HDF5 file during
 
 Here's how to make the script more robust:
 
-'''
+```
 def validate_hdf5_file(file_path):
     """
     Validate if a file is a valid HDF5 file
@@ -170,9 +170,9 @@ def merge_worker_files(output_file, temp_dir, grid_size, random_pct, configs,
         import traceback
         logger.critical(traceback.format_exc())
         return 0, len(worker_files)
-'''
 
-'''
+
+
 def worker_init(output_dir):
     """Initialize per-worker temporary HDF5 file"""
     import os
@@ -310,9 +310,7 @@ def optimize_layout(config, farm_boundaries, grid_size=18, random_pct=30, update
     finally:
         # Clean up memory
         gc.collect()
-'''
 
-'''
 def main():
     """Main function to run the optimization"""
     parser = argparse.ArgumentParser(description="Parallel Wind Farm Layout Optimizer")
@@ -567,9 +565,9 @@ if __name__ == "__main__":
         import traceback
         logger.critical(traceback.format_exc())
         sys.exit(1)
-'''
+```
 
-'''
+```
 #!/usr/bin/env python
 """
 HDF5 Recovery Tool for Wind Farm Layout Optimization
@@ -783,7 +781,7 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-'''
+```
 
 ## Key Improvements
 

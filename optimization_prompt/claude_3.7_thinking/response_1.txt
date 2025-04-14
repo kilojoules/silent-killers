@@ -33,7 +33,7 @@ for worker_file in glob.glob(os.path.join(temp_dir, "worker_*.h5")):
 
 Here's a robust solution:
 
-'''
+```
 # Modify the worker_init function to add validation
 def worker_init(output_dir):
     """Initialize per-worker temporary HDF5 file"""
@@ -176,7 +176,7 @@ def main():
             logger.warning(f"Failed to remove temp directory: {str(e)}")
     
     logger.info(f"Results saved to {args.output}")
-'''
+```
 
 ## Key Improvements in the Solution
 

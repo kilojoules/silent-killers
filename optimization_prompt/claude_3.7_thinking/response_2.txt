@@ -20,7 +20,7 @@ This is the root cause: when a worker process fails to write any data to its HDF
 
 The code needs to be modified to safely handle invalid or corrupted worker files. Here's how to improve the file merging section in the `main()` function:
 
-'''
+```
 def main():
     """Main function to run the optimization"""
     # ... existing code ...
@@ -105,7 +105,7 @@ def main():
         logger.error(f"Failed to remove temporary directory {temp_dir}: {e}")
     
     logger.info(f"Results saved to {args.output}")
-'''
+```
 
 
 ## Additional Improvements to Consider
@@ -113,7 +113,7 @@ def main():
 To make the worker process more robust, we should also modify the worker initialization to better handle failures:
 
 
-'''
+```
 def worker_init(output_dir):
     """Initialize per-worker temporary HDF5 file"""
     import os
@@ -167,13 +167,13 @@ def worker_init(output_dir):
         logger.info(f"Worker {worker_id} assigned to CPU {worker_idx % os.cpu_count()}")
     except Exception as e:
         logger.warning(f"Worker {worker_id}: CPU affinity setup failed: {str(e)}")
-'''
+```
 
 ## Enhanced Layout Optimization Function
 
 We should also improve the `optimize_layout` function to handle failures better and ensure it always properly closes the HDF5 file:
 
-'''
+```
 def optimize_layout(config, farm_boundaries, grid_size=18, random_pct=30, update_interval=None):
     """Run optimization and save to worker-specific temp file
     
@@ -281,13 +281,13 @@ def optimize_layout(config, farm_boundaries, grid_size=18, random_pct=30, update
         
         # Clean up memory
         gc.collect()
-'''
+```
 
 ## Progress Monitoring Enhancements
 
 Finally, since the issue reveals the script was running for 9+ hours and only detected the problem at the end, we should add progressive file validation:
 
-'''
+```
 def validate_worker_files(temp_dir, check_interval=60):
     """Periodically validate worker files in a background thread
     
@@ -378,7 +378,7 @@ monitor_thread = validate_worker_files(temp_dir)
 if 'monitor_thread' in locals():
     monitor_thread.stop_flag = True
     # No need to join as it's a daemon thread
-'''
+```
 
 ## Implementation Summary
 
