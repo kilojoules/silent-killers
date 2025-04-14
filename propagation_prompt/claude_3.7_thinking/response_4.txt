@@ -11,7 +11,7 @@ Let me first break down what we need to do:
 
 Here's the script:
 
-'''
+```
 import numpy as np
 import matplotlib.pyplot as plt
 import xarray as xr
@@ -197,7 +197,7 @@ plt.grid(True)
 plt.savefig('sobol_results/sensitivity_time_evolution.png')
 
 print("\nAnalysis complete. Results saved in 'sobol_results' directory.")
-'''
+```
 
 This script performs a comprehensive sensitivity analysis to show how measurement uncertainties in wind speed, wind direction, and turbulence intensity affect the flow field in a wind farm. Here's a breakdown of how it works:
 

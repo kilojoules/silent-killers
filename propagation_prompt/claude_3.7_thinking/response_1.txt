@@ -2,7 +2,7 @@
 
 I'll create a script that propagates realistic measurement uncertainties through PyWake and generates flow field sensitivity images showing how uncertainties in inflow conditions affect the effective wind speed (WS_eff) at different times.
 
-'''
+```
 import numpy as np
 import matplotlib.pyplot as plt
 import xarray as xr
@@ -215,7 +215,7 @@ plt.savefig('sensitivity_images/sensitivity_temporal_evolution.png', dpi=300)
 plt.close()
 
 print("Analysis complete. Images saved to 'sensitivity_images' directory.")
-'''
+```
 
 ## What This Script Does
 

@@ -2,7 +2,7 @@ I'll create a script that propagates realistic measurement uncertainties through
 
 I've created a Python script that analyzes the sensitivity of PyWake's flow field predictions to uncertainties in input measurements. Here's an explanation of how the script works:
 
-'''
+```
 """
 PyWake Uncertainty Propagation Script
 
@@ -278,7 +278,7 @@ plt.savefig(f'{output_dir}/sobol_indices_time_series.png', dpi=150)
 plt.close()
 
 print(f"Analysis complete. Results saved in {output_dir}/")
-'''
+```
 
 ## Script Overview
 

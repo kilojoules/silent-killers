@@ -2,7 +2,7 @@ I'll create a script that propagates realistic measurement uncertainties through
 
 I've created a comprehensive script to analyze how measurement uncertainties propagate through PyWake and affect the flow field predictions. Here's what the script does:
 
-'''
+```
 """
 PyWake Uncertainty Propagation and Sobol Sensitivity Analysis
 
@@ -361,7 +361,7 @@ with open(os.path.join(run_dir, "summary_report.txt"), "w") as f:
             f.write(f"- {problem['names'][i]}: 0.0% of domain\n")
 
 print(f"Analysis complete! Results saved to: {run_dir}")
-'''
+```
 
 ## Uncertainty Propagation Analysis Script Overview
 

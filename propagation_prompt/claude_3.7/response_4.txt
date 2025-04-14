@@ -2,7 +2,7 @@ I'll create a script that propagates realistic measurement uncertainties through
 
 I've created a script that propagates measurement uncertainties through PyWake and generates Sobol sensitivity maps to visualize how input parameter uncertainties affect wake predictions. Here's how the script works:
 
-'''
+```
 import numpy as np
 import matplotlib.pyplot as plt
 import xarray as xr
@@ -195,7 +195,7 @@ for t_idx in range(min(3, n_timesteps)):
     plt.close()
 
 print("Script execution completed successfully!")
-'''
+```
 
 ### What the Script Does:
 

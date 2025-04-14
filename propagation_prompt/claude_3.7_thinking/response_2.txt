@@ -2,7 +2,7 @@
 
 I'll create a script that propagates realistic measurement uncertainties through PyWake and generates flow field images showing the Sobol sensitivity of the effective wind speed (WS_eff) to inflow parameters at different times.
 
-'''
+```
 # Import necessary packages
 import numpy as np
 import matplotlib.pyplot as plt
@@ -171,7 +171,8 @@ for t_idx, t in enumerate(time_stamps):
              time=t)
 
 print("Sobol sensitivity analysis complete. Results saved in 'sobol_sensitivity_results' directory.")
-'''
+```
+
 ## What This Script Does
 
 This script performs a detailed Sobol sensitivity analysis of wind farm flow fields, showing how measurement uncertainties in the inflow conditions propagate through the PyWake model. Here's how it works:

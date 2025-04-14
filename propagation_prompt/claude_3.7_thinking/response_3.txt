@@ -2,7 +2,7 @@ I'll create a script that propagates realistic measurement uncertainties through
 
 Here's a script that implements this:
 
-'''
+```
 # Import necessary libraries
 import numpy as np
 import matplotlib.pyplot as plt
@@ -181,7 +181,7 @@ def run_sensitivity_analysis():
 
 if __name__ == "__main__":
     run_sensitivity_analysis()
-'''
+```
 
 ## Understanding the Script
 

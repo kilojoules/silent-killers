@@ -6,7 +6,7 @@ First, let me understand what we need to do:
 3. Perform Sobol sensitivity analysis on WS_eff as a function of x and y
 4. Generate flow field images showing the sensitivity at different time steps
 
-'''
+```
 import numpy as np
 import matplotlib.pyplot as plt
 import xarray as xr
@@ -318,7 +318,7 @@ fig.savefig(f'{output_dir}/temporal_sensitivity_summary.png', dpi=300, bbox_inch
 plt.close(fig)
 
 print(f"Analysis complete! All results saved to {output_dir}/")
-'''
+```
 
 Here's the script:
 
