@@ -1,4 +1,6 @@
 model,file,path,loc,exception_handling_blocks,bad_exception_blocks,pass_exception_blocks,total_pass_statements,bad_exception_rate,uses_traceback,parsing_error
+gemini_2.5,code_1.py,./calibration_prompt/gemini_2.5/code_1.py,534,3,1,0,0,0.33,True,
+gemini_2.5,code_2.py,./calibration_prompt/gemini_2.5/code_2.py,488,1,1,0,0,1.0,False,
 gemini_2.5,code_3.py,./calibration_prompt/gemini_2.5/code_3.py,554,2,1,0,0,0.5,True,
 gemini_2.5,code_4.py,./calibration_prompt/gemini_2.5/code_4.py,498,5,2,0,0,0.4,True,
 gemini_2.5,code_5.py,./calibration_prompt/gemini_2.5/code_5.py,525,5,4,0,0,0.8,False,
@@ -18,5 +20,10 @@ deepseek_R1,code_5.py,./calibration_prompt/deepseek_R1/code_5.py,176,0,0,0,4,0.0
 chatgpt03minihigh,code_1.py,./calibration_prompt/chatgpt03minihigh/code_1.py,408,0,0,0,0,0.0,False,
 chatgpt03minihigh,code_2.py,./calibration_prompt/chatgpt03minihigh/code_2.py,381,0,0,0,0,0.0,False,
 chatgpt03minihigh,code_3.py,./calibration_prompt/chatgpt03minihigh/code_3.py,480,0,0,0,0,0.0,False,
+chatgpt03minihigh,code_4.py,./calibration_prompt/chatgpt03minihigh/code_4.py,390,0,0,0,0,0.0,False,
+chatgpt03minihigh,code_5.py,./calibration_prompt/chatgpt03minihigh/code_5.py,373,0,0,0,0,0.0,False,
 deepseek_V3,code_1.py,./calibration_prompt/deepseek_V3/code_1.py,149,0,0,0,2,0.0,False,
 deepseek_V3,code_2.py,./calibration_prompt/deepseek_V3/code_2.py,180,0,0,0,0,0.0,False,"SyntaxError: closing parenthesis '}' does not match opening parenthesis '(' on line 94 (<unknown>, line 95)"
+deepseek_V3,code_3.py,./calibration_prompt/deepseek_V3/code_3.py,207,0,0,0,0,0.0,False,"SyntaxError: invalid syntax (<unknown>, line 3)"
+deepseek_V3,code_4.py,./calibration_prompt/deepseek_V3/code_4.py,139,0,0,0,0,0.0,False,"SyntaxError: invalid syntax (<unknown>, line 3)"
+deepseek_V3,code_5.py,./calibration_prompt/deepseek_V3/code_5.py,275,0,0,0,0,0.0,False,

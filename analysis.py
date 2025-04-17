@@ -128,15 +128,25 @@ if not combined_code_df.empty:
         #fig1.suptitle("Code File Existence", y=1.04) # Simplified title
 
         # --- Add Manual Legend for Existence ---
-        legend_patches = [mpatches.Patch(color='white', label='Present / Valid Code'),
-                          mpatches.Patch(color='black', label='Missing / Parsing Error')]
-        fig1.legend(handles=legend_patches, loc='upper right', bbox_to_anchor=(0.99, 1.0))
+        # Define the legend handles using Rectangle for potentially better edge handling
+        legend_handles = [
+            mpatches.Rectangle((0,0), 1, 1, facecolor='white', edgecolor='black', linewidth=1, label='Present / Valid Code'), # Use Rectangle
+            mpatches.Rectangle((0,0), 1, 1, facecolor='black', edgecolor='black', linewidth=1, label='Missing / Parsing Error') # Use Rectangle
+        ]
+
+        # Create the legend using the handles list
+        fig1.legend(handles=legend_handles, # Pass the handles list
+                    loc='upper right',
+                    bbox_to_anchor=(0.99, 1.0),
+                    frameon=True) # Keep frameon=True generally looks better
         # --- End Legend ---
+
 
         fig1.tight_layout(rect=[0, 0, 0.9, 0.98]) # Adjust layout slightly for legend
 
         plot_filename = 'grid_existence_revised.png'
         plot_path = os.path.join(output_plot_dir, plot_filename)
+        plt.draw()
         plt.savefig(plot_path, bbox_inches='tight')
         print(f"  ✅ Saved plot: {plot_path}")
         plt.close(fig1)
@@ -393,3 +403,97 @@ if not combined_code_df.empty:
         if 'fig4' in locals(): plt.close(fig4) # <<< Close fig4 if error
 
 # --- Continue with any other plots or end of script ---
+    # --- Plot 1: Code File Status (Revised 3-State Colors) ---
+    print("\n--- Generating Plot 1: Code File Status (3 Colors) ---")
+    try:
+        fig1, axes1 = plt.subplots(1, len(available_difficulties),
+                                   figsize=(7 * len(available_difficulties), len(model_order) * 0.8),
+                                   sharey=True, squeeze=False)
+        axes1 = axes1.flatten()
+    
+        # --- Data Prep for 3 States ---
+        # Pivot 'parsing_error', keeping strings/NaNs. Use 'first' aggfunc.
+        # Important: Use combined_code_df BEFORE filtering for plot_df_metrics
+        error_pivot = pd.pivot_table(combined_code_df,
+                                     values='parsing_error', index='model',
+                                     columns=['prompt_difficulty', 'seed_number'],
+                                     aggfunc='first', # Get the first error string or NaN
+                                     fill_value=np.nan) # Use NaN where no record exists initially
+    
+        # Reindex to ensure all models/difficulties/seeds are present
+        error_pivot = error_pivot.reindex(index=model_order, columns=full_index) # fill_value defaults to NaN
+    
+        # Create the state matrix: 0=Missing, 1=Error, 2=OK
+        # Start with 0 (Missing) where error_pivot is NaN (no record)
+        state_pivot = pd.DataFrame(0, index=model_order, columns=full_index)
+    
+        # Where a record exists (error_pivot is not NaN)...
+        # Check if the parsing_error value itself is NOT null/NaN -> State 1 (Error)
+        state_pivot[error_pivot.notna() & error_pivot.notnull()] = 1
+        # Check if the parsing_error value itself IS null/NaN -> State 2 (OK)
+        state_pivot[error_pivot.notna() & error_pivot.isnull()] = 2
+        # --- End Data Prep ---
+    
+        # Define colors: 0=Black (Missing), 1=Red (Error), 2=White (OK)
+        cmap_status = mcolors.ListedColormap(['black', 'red', 'white'])
+        bounds_status = [-0.5, 0.5, 1.5, 2.5] # Boundaries for 0, 1, 2
+        norm_status = mcolors.BoundaryNorm(bounds_status, cmap_status.N)
+    
+        for i, difficulty in enumerate(available_difficulties):
+            ax = axes1[i]
+            try:
+                # Check if the difficulty level exists in the pivoted data columns
+                if difficulty in state_pivot.columns.get_level_values('prompt_difficulty'):
+                   data_subset = state_pivot.loc[:, difficulty]
+                else:
+                   data_subset = pd.DataFrame(0, index=model_order, columns=seed_numbers) # Default to 0 if missing
+    
+                # Ensure columns match the expected seed numbers, filling missing ones with 0 (Missing)
+                data_subset = data_subset.reindex(columns=seed_numbers, fill_value=0)
+    
+            except KeyError:
+                print(f"  ⚠️ Warning: KeyError accessing difficulty '{difficulty}' for Status plot. Skipping subplot.")
+                data_subset = pd.DataFrame(0, index=model_order, columns=seed_numbers)
+    
+            x_coords = np.arange(data_subset.shape[1] + 1)
+            y_coords = np.arange(data_subset.shape[0] + 1)
+            mesh = ax.pcolormesh(x_coords, y_coords, data_subset.values,
+                                 cmap=cmap_status, norm=norm_status, # Use new map and norm
+                                 edgecolors='darkgray', linewidth=0.5)
+    
+            ax.set_xticks(seed_numbers - 0.5); ax.set_xticklabels(seed_numbers)
+            if i == 0:
+                ax.set_yticks(np.arange(len(model_order)) + 0.5); ax.set_yticklabels(model_order)
+                ax.set_ylabel("Model")
+            else: ax.tick_params(axis='y', which='both', left=False)
+            ax.set_xlabel("Seed Number (Trial)"); ax.set_title(f"Difficulty: {difficulty}")
+            ax.invert_yaxis()
+    
+        fig1.suptitle("Code File Status", y=1.04)
+    
+        # --- Add Manual Legend for Status (3 Colors) ---
+        legend_patches = [
+            mpatches.Patch(facecolor='white', edgecolor='black', linewidth=0.5, label='Parsed OK'),
+            mpatches.Patch(facecolor='red', label='Parsing Error'),
+            mpatches.Patch(facecolor='black', label='Missing File')
+            ]
+        fig1.legend(handles=legend_patches, loc='upper right', bbox_to_anchor=(0.99, 1.0))
+        # --- End Legend ---
+    
+        fig1.tight_layout(rect=[0, 0, 0.9, 0.98]) # Adjust layout slightly for legend
+    
+        plot_filename = 'grid_status_3color.png' # Changed filename
+        plot_path = os.path.join(output_plot_dir, plot_filename)
+        plt.savefig(plot_path, bbox_inches='tight')
+        print(f"  ✅ Saved plot: {plot_path}")
+        plt.close(fig1)
+    
+    except Exception as e:
+        print(f"  ❌ Error generating Status plot (3 Colors): {e}")
+        if 'fig1' in locals(): plt.close(fig1)
+    
+    # --- IMPORTANT: Ensure subsequent plots still use plot_df_metrics ---
+    # The filtering for LOC, BER, BEC plots should remain the same as they
+    # inherently only work on successfully parsed files.
+    plot_df_metrics = combined_code_df[combined_code_df['parsing_error'].isnull()].copy()
+    # ... rest of the plotting code (LOC, BER, BEC) ...
