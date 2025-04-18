@@ -1,6 +1,6 @@
 # Silent Killers  
 ### An Exploratory Audit of Exception‑Handling in LLM‑Generated Python
-![CI](https://github.com/kilojoules/llm-exception-audit/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/kilojoules/llm-exception-handling-audit/actions/workflows/ci.yml/badge.svg)
 ![license](https://img.shields.io/badge/license-MIT-blue)
 [![PyPI](https://img.shields.io/pypi/v/silent-killers.svg)](https://pypi.org/project/silent-killers/)
 
