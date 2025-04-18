@@ -7,7 +7,8 @@ identical to the original notebook implementation.
 """
 
 # ---------- imports ---------------------------------------------------------
-import argparse, os, sys
+import argparse
+import sys
 from pathlib import Path
 
 import numpy as np

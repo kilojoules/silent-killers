@@ -9,8 +9,9 @@ in that folder.
 > python -m llm_metrics.process_files --base-dir ./propagation_prompt
 """
 
-import argparse, csv, os, re, sys
-from importlib import import_module
+import argparse
+import csv
+import sys
 from pathlib import Path
 
 import silent_killers.metrics_definitions as md  # local import
