@@ -90,7 +90,6 @@ pip install silent-killers
 process_files --base-dir data/propagation_prompt
 process_files --base-dir data/calibration_prompt
 process_files --base-dir data/optimization_prompt
-process_files --base-dir data/optimization_prompt2
 ```
 
 Each run creates
