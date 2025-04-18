@@ -10,7 +10,7 @@ name = "silent_killers"
 version = "0.1.0"
 description = "Audit pipeline that detects unsafe exception handling in LLM‑generated Python code"
 authors = [
-  { name = "Your Name", email = "your.email@example.com" }
+  { name = "Julian Quick" }
 ]
 readme = "README.md"
 license = { text = "MIT" }
