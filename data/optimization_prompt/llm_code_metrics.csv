@@ -2,16 +2,16 @@ bad_exception_blocks,bad_exception_rate,exception_handling_blocks,file,loc,model
 ,,,code_2.py,0,gemini_2.0,"SyntaxError: unexpected indent (<unknown>, line 2)",,/Users/julianquick/silence/data/optimization_prompt/gemini_2.0/code_2.py,,
 ,,,code_3.py,0,gemini_2.0,"SyntaxError: invalid syntax (<unknown>, line 1)",,/Users/julianquick/silence/data/optimization_prompt/gemini_2.0/code_3.py,,
 ,,,code_4.py,0,gemini_2.0,"SyntaxError: unexpected indent (<unknown>, line 2)",,/Users/julianquick/silence/data/optimization_prompt/gemini_2.0/code_4.py,,
-2,0.67,3,code_5.py,67,gemini_2.0,,0,/Users/julianquick/silence/data/optimization_prompt/gemini_2.0/code_5.py,1,False
+1,0.33,3,code_5.py,67,gemini_2.0,,0,/Users/julianquick/silence/data/optimization_prompt/gemini_2.0/code_5.py,1,False
 ,,,code_1.py,0,gemini_2.5,"SyntaxError: unexpected indent (<unknown>, line 10)",,/Users/julianquick/silence/data/optimization_prompt/gemini_2.5/code_1.py,,
 ,,,code_2.py,0,gemini_2.5,"SyntaxError: unexpected indent (<unknown>, line 3)",,/Users/julianquick/silence/data/optimization_prompt/gemini_2.5/code_2.py,,
 2,0.4,5,code_3.py,119,gemini_2.5,,0,/Users/julianquick/silence/data/optimization_prompt/gemini_2.5/code_3.py,0,False
 ,,,code_4.py,0,gemini_2.5,"SyntaxError: unexpected indent (<unknown>, line 13)",,/Users/julianquick/silence/data/optimization_prompt/gemini_2.5/code_4.py,,
 ,,,code_5.py,0,gemini_2.5,"SyntaxError: unexpected indent (<unknown>, line 12)",,/Users/julianquick/silence/data/optimization_prompt/gemini_2.5/code_5.py,,
 1,0.33,3,code_4.py,40,chatgpt40,,0,/Users/julianquick/silence/data/optimization_prompt/chatgpt40/code_4.py,0,False
-6,1.0,6,code_1.py,142,claude_3.7_thinking,,0,/Users/julianquick/silence/data/optimization_prompt/claude_3.7_thinking/code_1.py,1,False
+5,0.83,6,code_1.py,142,claude_3.7_thinking,,0,/Users/julianquick/silence/data/optimization_prompt/claude_3.7_thinking/code_1.py,1,False
 0,0.0,4,code_2.py,84,claude_3.7_thinking,,0,/Users/julianquick/silence/data/optimization_prompt/claude_3.7_thinking/code_2.py,0,False
 ,,,code_3.py,0,claude_3.7_thinking,"SyntaxError: expected 'except' or 'finally' block (<unknown>, line 171)",,/Users/julianquick/silence/data/optimization_prompt/claude_3.7_thinking/code_3.py,,
 5,0.71,7,code_4.py,240,claude_3.7_thinking,,1,/Users/julianquick/silence/data/optimization_prompt/claude_3.7_thinking/code_4.py,1,False
 6,1.0,6,code_5.py,151,claude_3.7_thinking,,0,/Users/julianquick/silence/data/optimization_prompt/claude_3.7_thinking/code_5.py,0,True
-7,1.0,7,code_1.py,143,deepseek_V3,,2,/Users/julianquick/silence/data/optimization_prompt/deepseek_V3/code_1.py,2,False
+6,0.86,7,code_1.py,143,deepseek_V3,,2,/Users/julianquick/silence/data/optimization_prompt/deepseek_V3/code_1.py,2,False

@@ -30,20 +30,6 @@ def response_metrics(text: str) -> list[MetricResult]:
         MetricResult("pass_count_naive",    len(re.findall(r"\bpass\b",   text, re.I))),
     ]
 
-# metrics_definitions.py  (only the visitor section shown)
-
-import ast, re
-from dataclasses import dataclass
-
-@dataclass
-class MetricResult:
-    name: str
-    value: int | float | str | bool | None
-    description: str = ""
-
-# ---------------------------------------------------------------------------
-#  ↓↓↓  FULL visitor logic — identical to your working script  ↓↓↓
-# ---------------------------------------------------------------------------
 class _TracebackFinderVisitor(ast.NodeVisitor):
     def __init__(self):
         self.found_traceback = False
@@ -73,10 +59,14 @@ class _CodeMetricsVisitor(ast.NodeVisitor):
             return
         for handler in node.handlers:
             self.total_excepts += 1
-            is_bad = (
-                handler.type is None or
-                isinstance(handler.type, ast.Name) and handler.type.id == 'Exception'
-            )
+            is_bad = False
+        
+            if handler.type is None:                           # bare except
+                is_bad = True
+            elif isinstance(handler.type, ast.Name) and handler.type.id == "Exception":
+                if not _handler_reraises(handler):             # broad catch that hides error
+                    is_bad = True
+    
             if is_bad:
                 self.bad_excepts += 1
             if len(handler.body) == 1 and isinstance(handler.body[0], ast.Pass):
@@ -88,6 +78,18 @@ class _CodeMetricsVisitor(ast.NodeVisitor):
                 self.uses_traceback = True
         self.generic_visit(node)
 # ---------------------------------------------------------------------------
+
+def _handler_reraises(handler: ast.ExceptHandler) -> bool:
+    """Return True if any statement in the except block is a bare `raise` or `raise <expr>`."""
+    class RaiseFinder(ast.NodeVisitor):
+        def __init__(self): self.found = False
+        def visit_Raise(self, node): self.found = True            # any raise qualifies
+    rf = RaiseFinder()
+    for stmt in handler.body:
+        rf.visit(stmt)
+        if rf.found:
+            return True
+    return False
 
 
 def code_metrics(code: str) -> list[MetricResult]:
