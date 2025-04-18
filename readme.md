@@ -67,7 +67,7 @@ wheel.
 git clone https://github.com/your‑org/llm-exception-audit.git
 cd llm-exception-audit
 python -m pip install --upgrade pip
-pip install -e .[dev]          # runtime + pytest + ruff
+pip install -e .
 ```
 
 or using the pypi distribution
