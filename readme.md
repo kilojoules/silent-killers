@@ -36,25 +36,26 @@ The full paper is in `docs/` (LaTeX source) and the main plots live in
 ```
 repo-root/
 ├─ src/
-│   └─ llm_exception_audit/        ← **reusable package**
+│   └─ silent_killers/            ← **reusable package**
 │        ├─ __init__.py
-│        ├─ metrics.py             (AST visitors & regex metrics)
-│        └─ cli/
-│             ├─ process_files.py
-│             └─ post_processing.py
+│        └─ metrics_definitions.py     (AST visitors & regex metrics)
 │
-├─ data/                           ← study‑specific artefacts
-│   ├─ propagation_prompt/
-│   ├─ calibration_prompt/
-│   ├─ optimization_prompt{,2}/
-│   └─ figures/
+├─ scripts/                        ← analysis scripts
+│   ├─ process_files.py            (generates metrics CSVs)
+│   └─ post_processing.py          (creates plots & summary tables)
+│
+├─ data/                           ← study‑specific artifacts
+│   ├─ calibration_prompt/         (easy rewrite task)
+│   ├─ propagation_prompt/         (medium rewrite task)
+│   ├─ optimization_prompt/        (hard rewrite task)
+│   └─ figures/                    (output plots & visualizations)
 ├─ tests/
 │   └─ test_exception_labels.py
 ├─ pyproject.toml
 └─ README.md
 ```
 
-*Everything under `src/llm_exception_audit/` is published to PyPI;*
+*Everything under `src/silent_killers/` is published to PyPI;*
 `data/` stays in the repo (or Git LFS) but is not shipped inside the
 wheel.
 
