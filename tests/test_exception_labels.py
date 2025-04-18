@@ -12,7 +12,7 @@ from textwrap import dedent
 
 import pytest
 
-from metrics_definitions import code_metrics
+from selent_killers.metrics_definitions import code_metrics
 
 
 # ---------------------------------------------------------------------------
