@@ -2,6 +2,7 @@
 ### An Exploratory Audit of Exception‑Handling in LLM‑Generated Python
 ![CI](https://github.com/your‑org/llm-exception-audit/actions/workflows/ci.yml/badge.svg)
 ![license](https://img.shields.io/badge/license-MIT-blue)
+[![PyPI](https://img.shields.io/pypi/v/silent-killers.svg)](https://pypi.org/project/silent-killers/)
 
 > **tl;dr** We show that large‑language models often add `try/except`
 > blocks that *silently swallow* errors.  Our AST‑based metric pipeline
@@ -67,6 +68,13 @@ cd llm-exception-audit
 python -m pip install --upgrade pip
 pip install -e .[dev]          # runtime + pytest + ruff
 ```
+
+or using the pypi distribution
+
+```bash
+pip install silent-killers
+```
+
 
 > **Requires Python ≥ 3.9**  
 > Runtime deps: `pandas`, `numpy`, `matplotlib`
