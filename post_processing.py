@@ -232,6 +232,67 @@ def main(argv=None):
 
     print("🎉  All plots generated")
 
+    # -----------------------------------------------------------------
+    # 1.  Build file‑level helper columns
+    ok_df = code_df[code_df["parsing_error"].isna()].copy()
+    ok_df["bad_rate_file"] = ok_df["bad_exception_rate"].fillna(0)      # 0 if no try blocks
+    ok_df["has_try"]       = ok_df["exception_handling_blocks"] > 0
+    
+    # -----------------------------------------------------------------
+    # 2.  Aggregate per model × difficulty
+    summary = (
+        ok_df
+        .groupby(["model", "prompt_difficulty"])
+        .agg(
+            seeds               = ("file", "size"),
+            seeds_with_try      = ("has_try", "sum"),
+            mean_bad_rate_all   = ("bad_rate_file", "mean"),   # includes zero‑try seeds
+            mean_bad_rate_non0  = (
+                "bad_rate_file",
+                lambda s: s.loc[ok_df.loc[s.index, "has_try"]].mean()    # 👈 only seeds_with_try
+            ),
+            total_excepts       = ("exception_handling_blocks", "sum"),
+            bad_excepts         = ("bad_exception_blocks",      "sum"),
+            mean_loc            = ("loc",                       "mean"),
+        )
+        .round({"mean_bad_rate_all": 2, "mean_bad_rate_non0": 2})
+        .reset_index()
+    )
+    
+    summary.to_csv(OUTPUT_PLOT_DIR / "summary_by_model.csv", index=False)
+    print("📝  wrote summary_by_model.csv")
+    
+    # -----------------------------------------------------------------
+    # 3.  Collapse across models to get difficulty‑level view
+    diff_summary = (
+        summary
+        .groupby("prompt_difficulty")
+        .agg(
+            seeds               = ("seeds",          "sum"),
+            seeds_with_try      = ("seeds_with_try", "sum"),
+            mean_bad_rate_all   = ("mean_bad_rate_all",  "mean"),
+            mean_bad_rate_non0  = ("mean_bad_rate_non0", "mean"),
+            total_excepts       = ("total_excepts",   "sum"),
+            bad_excepts         = ("bad_excepts",     "sum"),
+            mean_loc            = ("mean_loc",        "mean"),
+        )
+        .round(2)
+        .reset_index()
+    )
+    
+    diff_summary.to_csv(OUTPUT_PLOT_DIR / "summary_by_difficulty.csv", index=False)
+    print("📝  wrote summary_by_difficulty.csv")
+    
+    # Optional console preview
+    print("\n=== Mean bad‑rate (incl. zero‑try files) ===")
+    print(summary.pivot(index="model", columns="prompt_difficulty", values="mean_bad_rate_all").fillna("—"))
+    
+    print("\n=== Mean bad‑rate (only seeds with try/except) ===")
+    print(summary.pivot(index="model", columns="prompt_difficulty", values="mean_bad_rate_non0").fillna("—"))
+    
+        
+    
+
 if __name__ == "__main__":
     main()
 
