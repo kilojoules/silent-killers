@@ -1,17 +1,17 @@
-model,file,path,loc,exception_handling_blocks,bad_exception_blocks,pass_exception_blocks,total_pass_statements,bad_exception_rate,uses_traceback,parsing_error
-gemini_2.0,code_2.py,optimization_prompt/gemini_2.0/code_2.py,54,0,0,0,0,0.0,False,"SyntaxError: unexpected indent (<unknown>, line 2)"
-gemini_2.0,code_3.py,optimization_prompt/gemini_2.0/code_3.py,65,0,0,0,0,0.0,False,"SyntaxError: invalid syntax (<unknown>, line 1)"
-gemini_2.0,code_4.py,optimization_prompt/gemini_2.0/code_4.py,62,0,0,0,0,0.0,False,"SyntaxError: unexpected indent (<unknown>, line 2)"
-gemini_2.0,code_5.py,optimization_prompt/gemini_2.0/code_5.py,67,3,2,0,1,0.67,False,
-gemini_2.5,code_1.py,optimization_prompt/gemini_2.5/code_1.py,83,0,0,0,0,0.0,False,"SyntaxError: unexpected indent (<unknown>, line 10)"
-gemini_2.5,code_2.py,optimization_prompt/gemini_2.5/code_2.py,89,0,0,0,0,0.0,False,"SyntaxError: unexpected indent (<unknown>, line 3)"
-gemini_2.5,code_3.py,optimization_prompt/gemini_2.5/code_3.py,119,5,2,0,0,0.4,False,
-gemini_2.5,code_4.py,optimization_prompt/gemini_2.5/code_4.py,55,0,0,0,0,0.0,False,"SyntaxError: unexpected indent (<unknown>, line 13)"
-gemini_2.5,code_5.py,optimization_prompt/gemini_2.5/code_5.py,73,0,0,0,0,0.0,False,"SyntaxError: unexpected indent (<unknown>, line 12)"
-chatgpt40,code_4.py,optimization_prompt/chatgpt40/code_4.py,39,3,1,0,0,0.33,False,
-claude_3.7_thinking,code_1.py,optimization_prompt/claude_3.7_thinking/code_1.py,142,6,6,0,1,1.0,False,
-claude_3.7_thinking,code_2.py,optimization_prompt/claude_3.7_thinking/code_2.py,84,4,0,0,0,0.0,False,
-claude_3.7_thinking,code_3.py,optimization_prompt/claude_3.7_thinking/code_3.py,171,0,0,0,0,0.0,False,"SyntaxError: expected 'except' or 'finally' block (<unknown>, line 171)"
-claude_3.7_thinking,code_4.py,optimization_prompt/claude_3.7_thinking/code_4.py,240,7,5,1,1,0.71,False,
-claude_3.7_thinking,code_5.py,optimization_prompt/claude_3.7_thinking/code_5.py,151,6,6,0,0,1.0,True,
-deepseek_V3,code_1.py,optimization_prompt/deepseek_V3/code_1.py,143,7,7,2,2,1.0,False,
+bad_exception_blocks,bad_exception_rate,exception_handling_blocks,file,loc,model,parsing_error,pass_exception_blocks,path,total_pass_statements,uses_traceback
+,,,code_2.py,0,gemini_2.0,"SyntaxError: unexpected indent (<unknown>, line 2)",,/Users/julianquick/silence/data/optimization_prompt/gemini_2.0/code_2.py,,
+,,,code_3.py,0,gemini_2.0,"SyntaxError: invalid syntax (<unknown>, line 1)",,/Users/julianquick/silence/data/optimization_prompt/gemini_2.0/code_3.py,,
+,,,code_4.py,0,gemini_2.0,"SyntaxError: unexpected indent (<unknown>, line 2)",,/Users/julianquick/silence/data/optimization_prompt/gemini_2.0/code_4.py,,
+2,0.67,3,code_5.py,67,gemini_2.0,,0,/Users/julianquick/silence/data/optimization_prompt/gemini_2.0/code_5.py,1,False
+,,,code_1.py,0,gemini_2.5,"SyntaxError: unexpected indent (<unknown>, line 10)",,/Users/julianquick/silence/data/optimization_prompt/gemini_2.5/code_1.py,,
+,,,code_2.py,0,gemini_2.5,"SyntaxError: unexpected indent (<unknown>, line 3)",,/Users/julianquick/silence/data/optimization_prompt/gemini_2.5/code_2.py,,
+2,0.4,5,code_3.py,119,gemini_2.5,,0,/Users/julianquick/silence/data/optimization_prompt/gemini_2.5/code_3.py,0,False
+,,,code_4.py,0,gemini_2.5,"SyntaxError: unexpected indent (<unknown>, line 13)",,/Users/julianquick/silence/data/optimization_prompt/gemini_2.5/code_4.py,,
+,,,code_5.py,0,gemini_2.5,"SyntaxError: unexpected indent (<unknown>, line 12)",,/Users/julianquick/silence/data/optimization_prompt/gemini_2.5/code_5.py,,
+1,0.33,3,code_4.py,40,chatgpt40,,0,/Users/julianquick/silence/data/optimization_prompt/chatgpt40/code_4.py,0,False
+6,1.0,6,code_1.py,142,claude_3.7_thinking,,0,/Users/julianquick/silence/data/optimization_prompt/claude_3.7_thinking/code_1.py,1,False
+0,0.0,4,code_2.py,84,claude_3.7_thinking,,0,/Users/julianquick/silence/data/optimization_prompt/claude_3.7_thinking/code_2.py,0,False
+,,,code_3.py,0,claude_3.7_thinking,"SyntaxError: expected 'except' or 'finally' block (<unknown>, line 171)",,/Users/julianquick/silence/data/optimization_prompt/claude_3.7_thinking/code_3.py,,
+5,0.71,7,code_4.py,240,claude_3.7_thinking,,1,/Users/julianquick/silence/data/optimization_prompt/claude_3.7_thinking/code_4.py,1,False
+6,1.0,6,code_5.py,151,claude_3.7_thinking,,0,/Users/julianquick/silence/data/optimization_prompt/claude_3.7_thinking/code_5.py,0,True
+7,1.0,7,code_1.py,143,deepseek_V3,,2,/Users/julianquick/silence/data/optimization_prompt/deepseek_V3/code_1.py,2,False
