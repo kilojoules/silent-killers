@@ -26,8 +26,8 @@ tasks) and asked:
 * Of those, how many are “bad” under a strict re‑raise rule?  
 * Does difficulty exacerbate the problem?
 
-The full paper is in `docs/` (LaTeX source) and the main plots live in
-[`data/figures/`](data/figures).
+The full paper is on my portfolio: 
+[https://julianquick.com/ML/llm-audit.html](https://julianquick.com/ML/llm-audit.html).
 
 ---
 
