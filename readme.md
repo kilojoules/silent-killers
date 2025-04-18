@@ -199,5 +199,4 @@ If you use the metrics or figures, please cite:
 ```
 
 *Happy auditing – don’t let silent errors slip through!*
-```
 
