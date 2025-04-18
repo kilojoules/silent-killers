@@ -38,7 +38,7 @@ jobs:
       # 5.  Run tests with coverage
       - name: Pytest
         run: |
-          pytest -q --cov=metrics_definitions test_exception_labels.py
+          pytest -q --cov=metrics_definitions tests/
 
       # 6.  Upload coverage to Codecov (optional)
       - name: Upload coverage to Codecov
