@@ -1,0 +1,71 @@
+# ------------------------------------------------------------
+#  pyproject.toml for the “LLM exception audit” project
+# ------------------------------------------------------------
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llm-exception-audit"
+version = "0.1.0"
+description = "Audit pipeline that detects unsafe exception handling in LLM‑generated Python code"
+authors = [
+  { name = "Your Name", email = "your.email@example.com" }
+]
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+
+# --- runtime dependencies -----------------------------------
+dependencies = [
+  "pandas>=2.1",
+  "numpy>=1.23",
+  "matplotlib>=3.8",
+]
+
+[project.urls]
+Homepage = "https://github.com/your-org/llm-exception-audit"
+Issues   = "https://github.com/your-org/llm-exception-audit/issues"
+
+# --- optional groups ----------------------------------------
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "coverage[toml]>=7.5",
+  "ruff>=0.4",
+]
+
+[tool.setuptools]
+packages = [
+  "metrics_definitions",
+  # add any other internal packages or sub‑packages here
+]
+
+# --- console scripts ----------------------------------------
+[project.scripts]
+process_files   = "process_files:main"
+post_processing = "post_processing:main"
+
+# ------------------------------------------------------------
+#  tooling configs kept inside pyproject to avoid clutter
+# ------------------------------------------------------------
+[tool.coverage.run]
+branch = true
+source = ["metrics_definitions", "process_files", "post_processing"]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+  "pragma: no cover",
+  "if __name__ == .__main__.:",
+]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 88
+exclude = ["plots_grid_refactored", ".venv", "dist"]
+
+
