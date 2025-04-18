@@ -177,8 +177,8 @@ CI runs on GitHub Actions across Python 3.9‑3.11 (see `.github/workflows/ci.
 ## 8  Roadmap
 
 * 🚧 dynamic execution traces (runtime errors, coverage)  
-* 🚧 extend to other unsafe patterns (weak crypto, insecure I/O)  
-* 🚧 publish TestPyPI wheel
+* 🚧 extend to other unsafe patterns
+* 🚧 support more languages than Python
 
 PRs & issues welcome!
 
