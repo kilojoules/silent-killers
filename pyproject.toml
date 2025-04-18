@@ -6,7 +6,7 @@ requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "llm-exception-audit"
+name = "silent_killers"
 version = "0.1.0"
 description = "Audit pipeline that detects unsafe exception handling in LLM‑generated Python code"
 authors = [
@@ -36,10 +36,8 @@ dev = [
 ]
 
 [tool.setuptools]
-packages = [
-  "metrics_definitions",
-  # add any other internal packages or sub‑packages here
-]
+package-dir = {"" = "src"}
+packages = ["silent_killers"]
 
 # --- console scripts ----------------------------------------
 [project.scripts]

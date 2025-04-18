@@ -13,7 +13,7 @@ import argparse, csv, os, re, sys
 from importlib import import_module
 from pathlib import Path
 
-import metrics_definitions as md  # local import
+import silent_killers.metrics_definitions as md  # local import
 
 MODELS = [
     'gemini_2.0', 'gemini_2.5', "chatgpt40", "claude_3.7",
