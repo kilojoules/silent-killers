@@ -87,9 +87,9 @@ pip install silent-killers
 ### 4.1  Generate metrics CSVs
 
 ```bash
-process_files --base-dir data/propagation_prompt
-process_files --base-dir data/calibration_prompt
-process_files --base-dir data/optimization_prompt
+python scripts/process_files.py --base-dir data/propagation_prompt
+python scripts/process_files.py --base-dir data/calibration_prompt
+python scripts/process_files.py --base-dir data/optimization_prompt
 ```
 
 Each run creates
@@ -103,7 +103,7 @@ data/<prompt_dir>/
 ### 4.2  Plots & summary tables
 
 ```bash
-post_processing --root data
+python scripts/post_processing.py --root data
 ```
 
 Creates:
@@ -131,7 +131,7 @@ plots_grid_refactored/
 ### 4.3  Library usage
 
 ```python
-from llm_exception_audit import code_metrics
+from silent_killers.metrics_definitions import code_metrics
 
 python_code = "try:\n    1/0\nexcept Exception:\n    pass"
 for metric in code_metrics(python_code):
