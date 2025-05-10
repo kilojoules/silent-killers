@@ -55,9 +55,6 @@ repo-root/
 └─ README.md
 ```
 
-*Everything under `src/silent_killers/` is published to PyPI;*
-`data/` stays in the repo (or Git LFS) but is not shipped inside the
-wheel.
 
 ---
 
