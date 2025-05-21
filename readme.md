@@ -1,6 +1,6 @@
 # Silent Killers  
 ### An Exploratory Audit of Exception‑Handling in LLM‑Generated Python
-![CI](https://github.com/kilojoules/llm-exception-handling-audit/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/kilojoules/silent-killers/actions/workflows/ci.yml/badge.svg)
 ![license](https://img.shields.io/badge/license-MIT-blue)
 [![PyPI](https://img.shields.io/pypi/v/silent-killers.svg)](https://pypi.org/project/silent-killers/)
 
@@ -61,8 +61,8 @@ repo-root/
 ## 3  Installation
 
 ```bash
-git clone https://github.com/your‑org/llm-exception-audit.git
-cd llm-exception-audit
+git clone https://github.com/kilojoules/silent-killers.git
+cd silent-killers
 python -m pip install --upgrade pip
 pip install -e .
 ```
@@ -191,7 +191,7 @@ If you use the metrics or figures, please cite:
   title  = {Silent Killers: An Exploratory Audit of Exception‑Handling in LLM‑Generated Python},
   author = {Julian Quick},
   year   = {2025},
-  url    = {https://github.com/your‑org/llm-exception-audit}
+  url    = {https://github.com/kilojoules/silent-killers}
 }
 ```
 
