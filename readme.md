@@ -74,7 +74,7 @@ pip install silent-killers
 ```
 
 
-> **Requires Python ≥ 3.9**  
+> **Requires Python ≥ 3.10**  
 > Runtime deps: `pandas`, `numpy`, `matplotlib`
 
 ---
@@ -145,7 +145,7 @@ for metric in code_metrics(python_code):
 | `bad_exception_blocks` | bare `except:` **or** `except Exception:` *without* `raise` |
 | `bad_exception_rate` | `bad / total`, 2 dp |
 | `uses_traceback` | calls `traceback.print_exc()` / `.format_exc()` |
-| … | see `src/llm_exception_audit/metrics.py` |
+| … | see `src/silent-killers/metrics.py` |
 
 ---
 
