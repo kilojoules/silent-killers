@@ -145,7 +145,7 @@ for metric in code_metrics(python_code):
 | `bad_exception_blocks` | bare `except:` **or** `except Exception:` *without* `raise` |
 | `bad_exception_rate` | `bad / total`, 2 dp |
 | `uses_traceback` | calls `traceback.print_exc()` / `.format_exc()` |
-| … | see `src/silent-killers/metrics.py` |
+| … | see `src/silent-killers/metrics_definitions.py` |
 
 ---
 
@@ -167,7 +167,7 @@ pytest                # run unit tests
 coverage run -m pytest && coverage html
 ```
 
-CI runs on GitHub Actions across Python 3.9‑3.11 (see `.github/workflows/ci.yml`).
+CI runs on GitHub Actions across Python 3.10 and 3.11 (see `.github/workflows/ci.yml`).
 
 ---
 
