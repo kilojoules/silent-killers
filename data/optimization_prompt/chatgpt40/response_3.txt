@@ -1,138 +1,51 @@
-Thanks for the detailed trace and files — this is a classic case of **partially written or corrupted worker files** causing an `OSError: file signature not found` when attempting to open them with `h5py`.
+The error message you are encountering indicates that there is an issue with opening an HDF5 file, specifically an `OSError` stating "Unable to synchronously open file (file signature not found)." This is likely due to an invalid or corrupted HDF5 file being accessed. Here's how you can modify the script to detect this error reliably and stop the process cleanly if any worker file is invalid:
 
-### 🔍 Diagnosis
-From the trace and directory listing:
-- The final crash happens during the **merge phase** of `main()`, while looping through `worker_*.h5` files.
-- One or more of these files is either:
-  - **zero bytes** (`worker_61817.h5`),
-  - **not a valid HDF5 file** (possibly due to a crash or race condition),
-  - or left in an incomplete state (e.g. due to memory pressure, SIGKILL, or filesystem limits).
+1. **Add Error Handling**: Wrap the file access code in a try-except block to handle the `OSError` and any other potential exceptions that might occur when trying to open the file.
 
-These files break the line:
-```python
-with h5py.File(worker_file, 'r') as h5_in:
-```
+2. **Log and Exit Gracefully**: If an error is detected, log the error and exit the process gracefully, ensuring that resources are cleaned up properly.
 
-### ✅ Recommended Fix: Detect invalid worker files before opening
+3. **Consider Data Validation**: Before processing, you might want to validate the files to ensure they are not corrupted.
 
-Add a **sanity check** to ensure the file is a valid HDF5 before merging:
+Here's a suggested modification to your script:
 
 ```python
 import h5py
 import logging
+import sys
 
-def is_valid_hdf5(filepath):
-    """Quick check if file is a valid HDF5 by checking the file signature."""
+def main():
+    logging.basicConfig(level=logging.INFO)
+    
     try:
-        with open(filepath, 'rb') as f:
-            signature = f.read(8)
-        return signature == b'\x89HDF\r\n\x1a\n'
+        # Assuming `worker_files` is a list of file paths you want to process
+        for worker_file in worker_files:
+            try:
+                with h5py.File(worker_file, 'r') as h5_in:
+                    # Your processing logic here
+                    pass
+            except OSError as e:
+                logging.error(f"Failed to open file {worker_file}: {e}")
+                # Exit the process if a file is invalid
+                sys.exit(1)
+            except Exception as e:
+                logging.error(f"Unexpected error with file {worker_file}: {e}")
+                # Exit the process for unexpected errors
+                sys.exit(1)
+
+        logging.info("Completed processing all worker files.")
+
     except Exception as e:
-        logger.warning(f"Error checking file signature for {filepath}: {e}")
-        return False
+        logging.error(f"An error occurred in the main process: {e}")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
 ```
 
-Use it during the merge phase in `main()`:
-```python
-for worker_file in glob.glob(os.path.join(temp_dir, "worker_*.h5")):
-    if not is_valid_hdf5(worker_file):
-        logger.error(f"Skipping invalid HDF5 file: {worker_file}")
-        continue  # Skip bad file
+### Additional Considerations
+- **Data Backup**: If feasible, keep backups of your HDF5 files so you can recover from them in case of corruption.
+- **File Validation**: Consider implementing a validation step that checks the integrity of each HDF5 file before processing.
+- **Logging**: Ensure that your logging is sufficiently detailed to track which files were processed successfully and which ones failed, along with the reasons for failure.
+- **Retry Mechanism**: Depending on your application's requirements, you might implement a retry mechanism for transient errors.
 
-    try:
-        with h5py.File(worker_file, 'r') as h5_in:
-            for key in h5_in:
-                if key != 'init' and key not in h5_out:
-                    h5_out.copy(h5_in[key], key)
-    except Exception as e:
-        logger.error(f"Failed to read from {worker_file}: {e}")
-        continue
-```
-
-### 🛑 Optional: Stop the whole process if any worker file is invalid
-If you'd rather fail loudly than skip corrupt results, replace the `continue` with:
-```python
-raise RuntimeError(f"Invalid or corrupt HDF5 worker file: {worker_file}")
-```
-
-### 💡 Optional: Add a cleanup pass
-To prevent stale `*.h5` files from crashing future runs:
-```python
-# Clean up invalid worker files
-for worker_file in glob.glob(os.path.join(temp_dir, "worker_*.h5")):
-    if not is_valid_hdf5(worker_file):
-        os.remove(worker_file)
-        logger.warning(f"Removed corrupt worker file: {worker_file}")
-```
-
-### 🧪 Bonus: Add a test harness
-Before merging, you could test all files *before* entering the merge loop:
-```python
-invalid_files = [f for f in glob.glob(os.path.join(temp_dir, "worker_*.h5")) if not is_valid_hdf5(f)]
-if invalid_files:
-    raise RuntimeError(f"The following worker files are corrupt: {invalid_files}")
-```
-
----
-
-Let me know if you'd like to implement automatic re-tries for failed configurations too (e.g. those not written to the final file), or if you'd like to track failures across seeds for re-runs.
-
-
-Great! Here's a concise version of the **fix** you can copy-paste directly into your `main()` function to **safely handle corrupt worker files** during the merge step:
-
----
-
-### ✅ **Add this helper near the top of your script (before `main()`):**
-
-```python
-def is_valid_hdf5(filepath):
-    """Check if a file starts with the HDF5 magic number."""
-    try:
-        with open(filepath, 'rb') as f:
-            return f.read(8) == b'\x89HDF\r\n\x1a\n'
-    except Exception:
-        return False
-```
-
----
-
-### 🛠️ **Modify the worker file merge block inside `main()` like so:**
-
-```python
-# Merge worker files into final output
-if not args.no_hot_start and os.path.exists(args.output):
-    mode = 'a'
-else:
-    mode = 'w'
-
-with h5py.File(args.output, mode) as h5_out:
-    h5_out.attrs['grid_size'] = args.grid_size
-    h5_out.attrs['random_pct'] = args.random_pct
-    h5_out.attrs['total_configs'] = len(configs) + len(completed_configs)
-    h5_out.attrs['successful_configs'] = success_count + len(completed_configs)
-
-    for worker_file in glob.glob(os.path.join(temp_dir, "worker_*.h5")):
-        if not is_valid_hdf5(worker_file):
-            logger.error(f"Skipping invalid HDF5 file: {worker_file}")
-            continue
-
-        try:
-            with h5py.File(worker_file, 'r') as h5_in:
-                for key in h5_in:
-                    if key != 'init' and key not in h5_out:
-                        h5_out.copy(h5_in[key], key)
-        except Exception as e:
-            logger.error(f"Error reading {worker_file}: {e}")
-            continue
-
-        os.remove(worker_file)
-```
-
----
-
-This change ensures:
-- No merge crash if a worker file is invalid.
-- Logging of problematic files.
-- Clean removal of processed worker files.
-
-Let me know if you want to *automatically retry* failed configs later or *log them to a CSV* for batch re-runs!
+By implementing these changes, you should be able to detect file-related errors early and stop your process cleanly when such errors occur.

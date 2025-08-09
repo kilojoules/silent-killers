@@ -1,117 +1,59 @@
-The crash you're seeing during the final HDF5 merging (`OSError: Unable to synchronously open file (file signature not found)`) is caused by a corrupted or invalid worker HDF5 file — likely one of the 0-byte files like `worker_61817.h5`. This breaks `h5py.File(..., 'r')`, which assumes a valid HDF5 signature at the file header.
+The error message you provided indicates that the script encountered an issue while trying to open an HDF5 file using the `h5py` library, and the specific error is "OSError: Unable to synchronously open file (file signature not found)." This typically means that the file is either corrupted, missing, or not an HDF5 file at all.
 
-To make your pipeline **robust and able to fail gracefully**, you can modify your merging script to:
+To detect this issue reliably and stop the process cleanly if any worker file is invalid, you can implement error handling around the file opening operation. Here is a strategy you can follow to modify the script:
 
-1. **Check each worker file's validity before opening it**.
-2. **Skip or log bad files**, and optionally **abort the merge process early**.
-3. **Cleanly terminate with an informative error message**.
+1. **Wrap the file opening operation with a try-except block**: This will allow you to catch the `OSError` and handle it gracefully.
 
----
+2. **Log the error and stop the process**: If an error is encountered, log the issue for debugging purposes and stop the process cleanly.
 
-### ✅ Suggested Fix in Python (to use in your `main()` or merging loop)
+3. **Consider implementing a validation function**: Before attempting to open the file, you might want to check if the file exists and perform some basic validation to ensure it is an HDF5 file.
 
-Here’s a reliable pattern to catch this:
+Here's an example of how the script can be modified to include these improvements:
 
 ```python
 import h5py
+import logging
 import os
+import sys
 
-def is_valid_hdf5(filepath):
-    """Quick check for HDF5 signature without opening via h5py."""
+def is_valid_hdf5_file(filepath):
+    """Check if a file is a valid HDF5 file."""
+    if not os.path.isfile(filepath):
+        return False
     try:
-        if os.path.getsize(filepath) == 0:
-            return False
-        with open(filepath, 'rb') as f:
-            sig = f.read(8)
-            return sig == b'\x89HDF\r\n\x1a\n'
-    except Exception as e:
-        print(f"Error checking file {filepath}: {e}")
+        with h5py.File(filepath, 'r') as _:
+            return True
+    except OSError:
         return False
 
-# Your loop for merging worker files
-for worker_file in worker_files:
-    if not is_valid_hdf5(worker_file):
-        print(f"Invalid or corrupted HDF5 file detected: {worker_file}. Skipping or aborting.")
-        # Option 1: skip and continue
-        # continue
+def main():
+    worker_file = 'path_to_worker_file'  # Replace with actual file path
 
-        # Option 2: abort early
-        raise RuntimeError(f"Aborting due to invalid HDF5 file: {worker_file}")
-    
-    with h5py.File(worker_file, 'r') as h5_in:
-        # merge logic here
+    # Check if the file is valid before opening
+    if not is_valid_hdf5_file(worker_file):
+        logging.error(f"Invalid or corrupted HDF5 file: {worker_file}")
+        sys.exit(1)  # Exit the program with a non-zero code indicating an error
+
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Process the file as needed
+            pass
+    except OSError as e:
+        logging.error(f"Failed to open HDF5 file {worker_file}: {e}")
+        sys.exit(1)  # Exit the program with a non-zero code indicating an error
+
+    # Continue with the rest of the script
+    logging.info("Completed all optimizations successfully")
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    main()
 ```
 
----
+### Key Points:
 
-### 🔍 Diagnosis Recap
+- **File Validation**: The `is_valid_hdf5_file` function checks if the file exists and attempts to open it to confirm it is a valid HDF5 file.
+- **Error Handling**: The `try-except` block around `h5py.File` captures `OSError` exceptions, logs an error message, and stops the process.
+- **Logging**: Use the `logging` module to provide informative error messages, making debugging easier.
 
-- You expected 3000 configs, but only 482 completed (from `monitor.py` output).
-- The error only hit at the **final join step**, not during individual optimizations.
-- `layouts.h5_temp` contains many suspiciously small (~800 bytes or even 0 bytes) `worker_XXXXX.h5` files.
-
-This suggests that some worker processes either:
-- Crashed or timed out before writing data.
-- Wrote empty or incomplete files (especially `worker_61817.h5` which is **0 bytes**).
-
----
-
-### ✅ Bonus: Pre-filter list of files
-
-If you're globbing or iterating over files, you can filter out broken ones like so:
-
-```python
-valid_files = [f for f in glob.glob("worker_*.h5") if is_valid_hdf5(f)]
-```
-
----
-
-Let me know if you'd like help modifying the actual merge code you're using, or automating recovery by re-running only failed seeds.
-
-
-Awesome. If you're planning to rerun or salvage missing configs, here are a couple of ideas to keep in mind:
-
----
-
-### 🧼 Clean Up Zero or Invalid Files
-
-You can clean them up ahead of merging to reduce clutter:
-
-```bash
-# Delete all 0-byte files (safe to do)
-find layouts.h5_temp -type f -size 0 -name 'worker_*.h5' -delete
-
-# Or log them first:
-find layouts.h5_temp -type f -size 0 -name 'worker_*.h5'
-```
-
----
-
-### 🛠️ Track Incomplete Work
-
-You already have a nice monitor script (`monitor.py`) that summarizes completed configs. You could extend that to **export a list of missing seeds/farms/types**, and then selectively rerun only those.
-
-For example:
-
-```python
-# Pseudocode
-expected = set((f, t, s) for f in farms for t in types for s in seeds)
-completed = set(counts.keys())
-missing = expected - completed
-```
-
-Want help building that list automatically?
-
----
-
-### 🧪 Final Merging Tip
-
-Once the bad files are filtered/skipped, your final merge logic should be much safer. Still, you might want to:
-
-- Log every file that gets merged (especially sizes).
-- Keep track of how many datasets/attributes were added from each.
-- Optionally save an audit log with a timestamped filename, like `merge_log_YYYYMMDD.txt`.
-
----
-
-Let me know how you want to handle recovery: skip, rerun, or salvage — and I’ll help you script it up.
+This approach will ensure that if any worker file is invalid, the error is detected, logged, and the process stops cleanly, preventing any further operations on invalid data.

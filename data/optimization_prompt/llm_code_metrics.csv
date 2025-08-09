@@ -1,17 +1,20 @@
-bad_exception_blocks,bad_exception_rate,exception_handling_blocks,file,loc,model,parsing_error,pass_exception_blocks,path,total_pass_statements,uses_traceback
-,,,code_2.py,0,gemini_2.0,"SyntaxError: unexpected indent (<unknown>, line 2)",,/Users/julianquick/silence/data/optimization_prompt/gemini_2.0/code_2.py,,
-,,,code_3.py,0,gemini_2.0,"SyntaxError: invalid syntax (<unknown>, line 1)",,/Users/julianquick/silence/data/optimization_prompt/gemini_2.0/code_3.py,,
-,,,code_4.py,0,gemini_2.0,"SyntaxError: unexpected indent (<unknown>, line 2)",,/Users/julianquick/silence/data/optimization_prompt/gemini_2.0/code_4.py,,
-1,0.33,3,code_5.py,67,gemini_2.0,,0,/Users/julianquick/silence/data/optimization_prompt/gemini_2.0/code_5.py,1,False
-,,,code_1.py,0,gemini_2.5,"SyntaxError: unexpected indent (<unknown>, line 10)",,/Users/julianquick/silence/data/optimization_prompt/gemini_2.5/code_1.py,,
-,,,code_2.py,0,gemini_2.5,"SyntaxError: unexpected indent (<unknown>, line 3)",,/Users/julianquick/silence/data/optimization_prompt/gemini_2.5/code_2.py,,
-2,0.4,5,code_3.py,119,gemini_2.5,,0,/Users/julianquick/silence/data/optimization_prompt/gemini_2.5/code_3.py,0,False
-,,,code_4.py,0,gemini_2.5,"SyntaxError: unexpected indent (<unknown>, line 13)",,/Users/julianquick/silence/data/optimization_prompt/gemini_2.5/code_4.py,,
-,,,code_5.py,0,gemini_2.5,"SyntaxError: unexpected indent (<unknown>, line 12)",,/Users/julianquick/silence/data/optimization_prompt/gemini_2.5/code_5.py,,
-1,0.33,3,code_4.py,40,chatgpt40,,0,/Users/julianquick/silence/data/optimization_prompt/chatgpt40/code_4.py,0,False
-5,0.83,6,code_1.py,142,claude_3.7_thinking,,0,/Users/julianquick/silence/data/optimization_prompt/claude_3.7_thinking/code_1.py,1,False
-0,0.0,4,code_2.py,84,claude_3.7_thinking,,0,/Users/julianquick/silence/data/optimization_prompt/claude_3.7_thinking/code_2.py,0,False
-,,,code_3.py,0,claude_3.7_thinking,"SyntaxError: expected 'except' or 'finally' block (<unknown>, line 171)",,/Users/julianquick/silence/data/optimization_prompt/claude_3.7_thinking/code_3.py,,
-5,0.71,7,code_4.py,240,claude_3.7_thinking,,1,/Users/julianquick/silence/data/optimization_prompt/claude_3.7_thinking/code_4.py,1,False
-6,1.0,6,code_5.py,151,claude_3.7_thinking,,0,/Users/julianquick/silence/data/optimization_prompt/claude_3.7_thinking/code_5.py,0,True
-6,0.86,7,code_1.py,143,deepseek_V3,,2,/Users/julianquick/silence/data/optimization_prompt/deepseek_V3/code_1.py,2,False
+bad_exception_blocks,bad_exception_rate,code_block_count,exception_handling_blocks,file,loc,model,parsing_error,pass_exception_blocks,path,total_pass_statements
+5.0,0.71,2,7.0,response_1.txt,240.0,claude4_sonnet,,0.0,/Users/julianquick/silent-killers/data/optimization_prompt/claude4_sonnet/response_1.txt,1.0
+0.0,0.0,7,0.0,response_2.txt,4.0,claude4_sonnet,"Block 1: invalid syntax (<unknown>, line 4); Block 3: invalid syntax (<unknown>, line 4); Block 5: invalid syntax (<unknown>, line 4); Block 6: invalid syntax (<unknown>, line 2); Block 7: invalid syntax (<unknown>, line 2)",0.0,/Users/julianquick/silent-killers/data/optimization_prompt/claude4_sonnet/response_2.txt,0.0
+5.0,0.83,3,6.0,response_3.txt,169.0,claude4_sonnet,,0.0,/Users/julianquick/silent-killers/data/optimization_prompt/claude4_sonnet/response_3.txt,0.0
+3.0,0.6,2,5.0,response_4.txt,145.0,claude4_sonnet,"Block 2: invalid syntax (<unknown>, line 2)",1.0,/Users/julianquick/silent-killers/data/optimization_prompt/claude4_sonnet/response_4.txt,1.0
+6.0,0.67,3,9.0,response_5.txt,220.0,claude4_sonnet,,0.0,/Users/julianquick/silent-killers/data/optimization_prompt/claude4_sonnet/response_5.txt,0.0
+0.0,0.0,1,1.0,response_1.txt,26.0,chatgpt4o-mini,,0.0,/Users/julianquick/silent-killers/data/optimization_prompt/chatgpt4o-mini/response_1.txt,1.0
+0.0,0.0,2,0.0,response_2.txt,,chatgpt4o-mini,"Block 1: invalid syntax (<unknown>, line 1); Block 2: unexpected indent (<unknown>, line 1)",,/Users/julianquick/silent-killers/data/optimization_prompt/chatgpt4o-mini/response_2.txt,
+0.0,0.0,1,1.0,response_4.txt,29.0,chatgpt4o-mini,,0.0,/Users/julianquick/silent-killers/data/optimization_prompt/chatgpt4o-mini/response_4.txt,1.0
+0.0,0.0,3,2.0,response_5.txt,32.0,chatgpt4o-mini,,0.0,/Users/julianquick/silent-killers/data/optimization_prompt/chatgpt4o-mini/response_5.txt,1.0
+0.0,0.0,1,1.0,response_1.txt,23.0,chatgpt40,,0.0,/Users/julianquick/silent-killers/data/optimization_prompt/chatgpt40/response_1.txt,1.0
+0.0,0.0,1,1.0,response_2.txt,18.0,chatgpt40,,0.0,/Users/julianquick/silent-killers/data/optimization_prompt/chatgpt40/response_2.txt,1.0
+2.0,0.67,1,3.0,response_3.txt,31.0,chatgpt40,,0.0,/Users/julianquick/silent-killers/data/optimization_prompt/chatgpt40/response_3.txt,1.0
+0.0,0.0,1,1.0,response_4.txt,16.0,chatgpt40,,0.0,/Users/julianquick/silent-killers/data/optimization_prompt/chatgpt40/response_4.txt,1.0
+0.0,0.0,1,2.0,response_5.txt,37.0,chatgpt40,,0.0,/Users/julianquick/silent-killers/data/optimization_prompt/chatgpt40/response_5.txt,1.0
+1.0,0.5,1,2.0,response_1.txt,45.0,gemini_1.5_flash,,0.0,/Users/julianquick/silent-killers/data/optimization_prompt/gemini_1.5_flash/response_1.txt,1.0
+0.0,0.0,3,0.0,response_2.txt,,gemini_1.5_flash,"Block 1: expected an indented block after 'with' statement on line 6 (<unknown>, line 8); Block 2: expected an indented block after 'with' statement on line 10 (<unknown>, line 12); Block 3: expected an indented block after 'with' statement on line 9 (<unknown>, line 11)",,/Users/julianquick/silent-killers/data/optimization_prompt/gemini_1.5_flash/response_2.txt,
+1.0,0.5,1,2.0,response_3.txt,45.0,gemini_1.5_flash,,0.0,/Users/julianquick/silent-killers/data/optimization_prompt/gemini_1.5_flash/response_3.txt,1.0
+1.0,0.5,1,2.0,response_4.txt,48.0,gemini_1.5_flash,,0.0,/Users/julianquick/silent-killers/data/optimization_prompt/gemini_1.5_flash/response_4.txt,0.0
+0.0,0.0,2,1.0,response_5.txt,51.0,gemini_1.5_flash,,0.0,/Users/julianquick/silent-killers/data/optimization_prompt/gemini_1.5_flash/response_5.txt,0.0

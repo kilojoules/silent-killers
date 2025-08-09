@@ -1,230 +1,116 @@
-You're doing a solid job here—this is a well-thought-out pipeline that integrates PyWake models with Bayesian optimization, time-resolved flow map comparisons, and decent diagnostics. You've clearly put effort into building flexibility in with the MODEL and DOWNWIND logic.
+Your code for optimizing the wind farm model using Bayesian optimization appears to be quite comprehensive and structured. However, there are a few areas where improvements can be made, particularly in modularizing the code and improving the flow field plots. I'll provide some suggestions and a partial rewrite to demonstrate how you can make these improvements.
 
-That said, I agree with your assessment: this could benefit from a refactor to improve modularity, clarity, and plotting/reporting structure. Let me address each of your main points and then give you a suggestion for the rewrite structure.
-🔍 What you're doing right:
+### Suggestions:
 
-    You're correctly mapping PyWake’s wake model results to your reference deficit data.
+1. **Modularization**:
+   - Break down the code into smaller, reusable functions. This will make it easier to understand, debug, and maintain.
+   - Consider creating a separate function for each major task: loading data, setting up the model, running the optimization, and plotting results.
 
-    You've modularized the modeling logic based on MODEL and DOWNWIND.
+2. **Flow Field Plots**:
+   - Consider using more descriptive titles and labels for your plots. This will make them easier to interpret.
+   - Use consistent color scales across different plots to better compare observed and predicted deficits.
 
-    You're using Bayesian optimization with reasonable priors and defaults.
+3. **Error Reporting**:
+   - In addition to RMSE, consider reporting other error metrics such as MAE (Mean Absolute Error) or MAPE (Mean Absolute Percentage Error) for a more comprehensive evaluation.
+   - Calculating and reporting the average and p90 errors, as you've mentioned, is a good idea to understand the distribution of errors better.
 
-    Animation and visualization are well-constructed to trace optimization history.
+4. **Code Readability**:
+   - Use consistent naming conventions and comment the code to explain complex logic.
+   - Avoid hardcoding values where possible; instead, use configuration variables or constants.
 
-🔄 What needs refinement or improvement:
-1. Flow field plots (RMSE visual diagnostics):
+### Partial Code Rewrite
 
-    Current plots are fine but could benefit from summary metrics like:
+Here is a partial refactor focusing on modularization and improving the flow field plots:
 
-        Mean and P90 of absolute errors or RMSE.
+```python
+import numpy as np
+import xarray as xr
+import matplotlib.pyplot as plt
+from py_wake import HorizontalGrid
+from py_wake.examples.data.hornsrev1 import Hornsrev1Site
+from py_wake.wind_farm_models import All2AllIterative
+from py_wake.superposition_models import LinearSum
+from py_wake.turbulence_models import CrespoHernandez
+from py_wake.deficit_models.gaussian import TurboGaussianDeficit, BlondelSuperGaussianDeficit2020
+from py_wake.deficit_models import SelfSimilarityDeficit2020
+from py_wake.ground_models import Mirror
+from py_wake.rotor_avg_models.gaussian_overlap_model import GaussianOverlapAvgModel
+from bayes_opt import BayesianOptimization
 
-        Spatial maps of mean error or stddev across time.
+def load_data(file_path, turbine_diameter):
+    dat = xr.load_dataset(file_path)
+    dat = dat.assign_coords(x=dat.x * turbine_diameter, y=dat.y * turbine_diameter)
+    return dat
 
-    The difference plots are useful but lack standardization (e.g. symmetric color limits for residuals, percentile contours?).
-
-    You’re reusing flow_map.WS_eff outside of the evaluation loop (this could mismatch with the final WFM outputs).
-
-2. Code structure:
-
-    Logic for instantiating WFM (wind farm model) is duplicated throughout (evaluate_rmse, final eval, etc.)
-
-    The evaluate_rmse is doing too much:
-
-        Building the model
-
-        Running simulations
-
-        Generating predictions
-
-        Comparing with observations
-
-    Rewriting with proper modular structure would be a game-changer.
-
-✅ Suggested Rewrite Plan (high-level modular structure)
-
-Let’s split the code into logical components:
-def create_wfm(model_params: dict, model: int, downwind: bool) -> WindFarmModelResult:
-
-    Encapsulate all logic related to constructing the WFM based on MODEL and DOWNWIND.
-
-    Accept only cleaned params (defaults or from optimizer).
-
-    Returns a fully configured wfm.
-
-def run_simulation(wfm, ws, ti) -> SimulationResult:
-
-    Use consistent site, turbine, and wd.
-
-    Returns sim_res.
-
-def compute_prediction(sim_res, target_x, target_y, time_idx) -> predicted_deficit:
-
-    Uses flow_map.WS_eff to get predicted velocities and compute predicted deficit.
-
-def compute_error(predicted_deficit, observed_deficit) -> float or xr.DataArray:
-
-    Flexible to return RMSE, MAE, or spatial error maps.
-
-    Can also include p90, mean, max, etc.
-
-def evaluate_rmse(**kwargs) -> float:
-
-    Just orchestration of the above steps.
-
-    Keeps the objective function tight and focused.
-
-def plot_flow_error(pred, obs, diff, time_idx):
-
-    More standardized plotting, clean subplots.
-
-    Add optional p90/mean error overlay.
-
-🧠 About changing flow_map.WS_eff vs reference deficit
-
-You're on point here:
-
-    flow_map.WS_eff is absolute velocity, while flow_roi.deficits is deficit.
-
-So when comparing, your derived pred = (WS - WS_eff)/WS is correct and elegant—this normalizes into a deficit prediction. You just want to make sure you're doing this with the correct flow_map output, ideally recomputed after model changes.
-
-To reduce ambiguity:
-
-    Add a helper def compute_deficit_from_ws(ws_eff, ws_freestream): to clarify this step.
-
-✨ Additional Suggestions:
-
-    Add a toggle to use different error metrics (rmse, mae, p90_abs_err) for evaluation.
-
-    Log results (params + metrics) to CSV or DataFrame for post-analysis.
-
-    Optional: move plotting outside of main script into a small dashboard/report generator.
-
-    Think about caching flow maps or simulations for speed—your re-runs could be expensive.
-
-✅ Next Step?
-
-Would you like me to sketch out the rewritten modular version of the evaluate_rmse and model instantiation parts? That’d be a great starting point, and we can layer in plotting changes after that.
-
-Let me know how modular or "production-ready" you want it to be.
-You said:
-OK
-ChatGPT said:
-
-Great! Here's a clean modular rewrite of the key parts of your code: instantiating the model, running simulations, computing deficits, and evaluating RMSE. This version separates responsibilities, reduces duplication, and sets you up to plug in plotting/reporting cleanly.
-📦 1. Model Instantiation (create_wfm)
-
-def create_wfm(params: dict, model: int, downwind: bool):
-    from py_wake.superposition_models import LinearSum
-    from py_wake.turbulence_models import CrespoHernandez
-    from py_wake.deficit_models.gaussian import TurboGaussianDeficit, BlondelSuperGaussianDeficit2020
-    from py_wake.deficit_models import SelfSimilarityDeficit2020
-    from py_wake.ground_models import Mirror
-    from py_wake.rotor_avg_models.gaussian_overlap_model import GaussianOverlapAvgModel
-
-    # Required shared inputs
-    turbine = DTU10MW()
-    site = Hornsrev1Site()
-
+def setup_simulation(site, turbine, model, downwind, params):
     if downwind:
-        if model == 1:
-            wake_deficitModel = BlondelSuperGaussianDeficit2020(
-                a_s=params['a_s'], b_s=params['b_s'], c_s=params['c_s'],
-                b_f=params['b_f'], c_f=params['c_f']
-            )
-        else:
-            wake_deficitModel = TurboGaussianDeficit(
-                A=params['A'],
-                cTI=[params['cti1'], params['cti2']],
-                ctlim=params['ctlim'],
-                ceps=params['ceps'],
-                ct2a=ct2a_mom1d,
-                groundModel=Mirror(),
-                rotorAvgModel=GaussianOverlapAvgModel()
-            )
-            wake_deficitModel.WS_key = 'WS_jlk'
-
-        turbulenceModel = CrespoHernandez(c=np.array([
-            params['ch1'], params['ch2'], params['ch3'], params['ch4']
-        ]))
-        blockage_deficitModel = SelfSimilarityDeficit2020()  # Placeholder (non-downwind doesn't use it?)
-
+        wake_deficitModel = BlondelSuperGaussianDeficit2020(**params['def_args'])
     else:
-        wake_deficitModel = BlondelSuperGaussianDeficit2020()
-        turbulenceModel = CrespoHernandez()  # No params
-        blockage_deficitModel = SelfSimilarityDeficit2020(
-            ss_alpha=params['ss_alpha'], ss_beta=params['ss_beta'],
-            r12p=np.array([params['rp1'], params['rp2']]),
-            ngp=np.array([params['ng1'], params['ng2'], params['ng3'], params['ng4']]),
-            groundModel=Mirror() if model == 2 else None
-        )
+        wake_deficitModel = TurboGaussianDeficit(**params['def_args'], groundModel=Mirror(), rotorAvgModel=GaussianOverlapAvgModel())
 
-    wfm = All2AllIterative(
-        site=site,
-        windTurbines=turbine,
-        wake_deficitModel=wake_deficitModel,
-        superpositionModel=LinearSum(),
-        deflectionModel=None,
-        turbulenceModel=turbulenceModel,
-        blockage_deficitModel=blockage_deficitModel
+    return All2AllIterative(
+        site, turbine, wake_deficitModel=wake_deficitModel,
+        superpositionModel=LinearSum(), deflectionModel=None,
+        turbulenceModel=CrespoHernandez(**params['turb_args']),
+        blockage_deficitModel=SelfSimilarityDeficit2020(**params['blockage_args'])
     )
-    return wfm
 
-🚀 2. Simulation Runner
+def plot_flow_fields(target_x, target_y, observed, predicted, diff, time_step):
+    fig, ax = plt.subplots(3, 1, figsize=(5, 15))
+    titles = ['Observed', 'Predicted', 'Difference']
+    data = [observed, predicted, diff]
+    
+    for i in range(3):
+        c = ax[i].contourf(target_x, target_y, data[i])
+        fig.colorbar(c, ax=ax[i])
+        ax[i].set_title(titles[i])
+    
+    plt.tight_layout()
+    plt.savefig(f'figs/downsream_err_{time_step}')
+    plt.clf()
 
-def run_simulation(wfm, ws, ti, wd=270):
-    return wfm([0], [0], ws=ws, TI=ti, wd=[wd]*len(ws), time=True)
+def evaluate_rmse(params, site, turbine, full_ws, full_ti, flow_roi, all_obs, downwind, model):
+    wfm = setup_simulation(site, turbine, model, downwind, params)
+    sim_res = wfm([0], [0], ws=full_ws, TI=full_ti, wd=[270] * full_ti.size, time=True)
+    
+    flow_map = None
+    for tt in range(full_ws.size):
+        fm = sim_res.flow_map(HorizontalGrid(x=target_x, y=target_y), time=[tt])['WS_eff']
+        if flow_map is None:
+            flow_map = fm
+        else:
+            flow_map = xr.concat([flow_map, fm], dim='time')
 
-📉 3. Deficit Prediction Extractor
+    pred = (sim_res.WS - flow_map.isel(h=0)) / sim_res.WS
+    rmse = float(np.sqrt(((all_obs - pred) ** 2).mean(['x', 'y'])).mean('time'))
+    
+    return -rmse if not np.isnan(rmse) else -0.5
 
-def compute_predicted_deficit(sim_res, x_coords, y_coords, time_index):
-    flow_map = sim_res.flow_map(HorizontalGrid(x=x_coords, y=y_coords), time=[time_index])
-    ws_eff = flow_map.WS_eff.isel(h=0)
-    freestream_ws = sim_res.WS[time_index]
-    deficit = (freestream_ws - ws_eff) / freestream_ws
-    return deficit
+# Main execution
+dat = load_data('./DTU10MW.nc', DTU10MW().diameter())
+site = Hornsrev1Site()
 
-📏 4. Error Calculation
+# Define parameters, bounds, and defaults here...
 
-def compute_rmse(observed_deficit, predicted_deficit):
-    diff = observed_deficit - predicted_deficit
-    return float(np.sqrt((diff**2).mean()))
+optimizer = BayesianOptimization(
+    f=lambda **kwargs: evaluate_rmse(kwargs, site, turbine, full_ws, full_ti, flow_roi, all_obs, DOWNWIND, MODEL),
+    pbounds=pbounds,
+    random_state=1
+)
 
-🧪 5. RMSE Evaluator (Objective Function)
+optimizer.probe(params=defaults, lazy=True)
+optimizer.maximize(init_points=50, n_iter=200)
 
-def evaluate_rmse_modular(**params):
-    try:
-        wfm = create_wfm(params, model=MODEL, downwind=DOWNWIND)
-        sim_res = run_simulation(wfm, full_ws, full_ti)
+# Extract best parameters and plot results
+best_params = optimizer.max['params']
+# More code to visualize and save the results...
 
-        all_pred = []
-        for t in range(len(full_ws)):
-            pred_deficit = compute_predicted_deficit(sim_res, target_x, target_y, time_index=t)
-            all_pred.append(pred_deficit)
-        
-        pred_stack = xr.concat(all_pred, dim='time')
-        rmse = compute_rmse(all_obs, pred_stack)
-        
-        return -rmse if not np.isnan(rmse) else -0.5
-    except Exception as e:
-        print(f"Eval error: {e}")
-        return -0.5
+```
 
-🎯 What's next?
+### Key Changes:
 
-With this modular base in place, we can:
+- Modularized the code by creating separate functions for data loading, simulation setup, RMSE evaluation, and plotting.
+- Improved the plot function to be more descriptive and consistent.
+- Used lambda functions to simplify passing parameters to `BayesianOptimization`.
 
-    Plug it back into the BayesianOptimization(...) call
-
-    Clean up the reporting and plots (update_plot, plot_flow_error, etc.)
-
-    Add advanced summaries like p90, mean error maps, or time-aggregated RMSEs
-
-Would you like the plotting part modularized next? I can help structure a plot reporting function that includes:
-
-    Contour maps
-
-    RMSE per time step
-
-    Optional percentiles or error thresholds
-
-Or do you want to first plug in this modular evaluation function into your optimizer and test it?
+These changes make the code more readable, easier to maintain, and potentially more efficient. You can expand on this to fully modularize the remaining parts of the code.
