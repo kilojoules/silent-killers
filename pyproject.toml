@@ -41,8 +41,7 @@ packages = ["silent_killers"]
 
 # --- console scripts ----------------------------------------
 [project.scripts]
-process_files   = "process_files:main"
-post_processing = "post_processing:main"
+silent-killers-audit = "silent_killers.cli.audit:main"
 
 # ------------------------------------------------------------
 #  tooling configs kept inside pyproject to avoid clutter
