@@ -11,6 +11,9 @@ from silent_killers.llm_api import OpenAIProvider, AnthropicProvider, GoogleProv
 # Load environment variables from a .env file for API keys
 load_dotenv() 
 
+# global max tokens, can be overwritten in models confi
+DEFAULT_MAX_TOKENS = 4096 * 4
+
 PROVIDER_MAP = {
     "openai": OpenAIProvider,
     "anthropic": AnthropicProvider,
@@ -30,6 +33,7 @@ def run_single_experiment(prompt: str, model_config: dict, seeds: int, output_di
     
     model_output_dir = output_dir / model_config["alias"]
     model_output_dir.mkdir(parents=True, exist_ok=True)
+    max_tokens_for_run = model_config.get("max_tokens", DEFAULT_MAX_TOKENS)
     
     print(f"  ▶️  Running Model: {model_config['alias']}")
     for i in range(1, seeds + 1):
@@ -43,7 +47,7 @@ def run_single_experiment(prompt: str, model_config: dict, seeds: int, output_di
         print(f"    - Seed {i}/{seeds}: 📞 Calling API...")
         try:
             # Get the response from the LLM
-            response_text = llm.get_completion(prompt)
+            response_text = llm.get_completion(prompt, max_tokens=max_tokens_for_run)
             
             # Immediately save the response to disk
             output_path.write_text(response_text, encoding="utf-8")
