@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "silent_killers"
-version = "0.1.1"
+version = "0.1.2"
 description = "Audit pipeline that detects unsafe exception handling in LLM‑generated Python code"
 authors = [
   { name = "Julian Quick" }
