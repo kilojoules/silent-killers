@@ -1,0 +1,6 @@
+- id: silent-killers-audit
+  name: silent-killers-audit
+  entry: silent-killers-audit
+  language: python
+  types: [python]
+
