@@ -34,9 +34,11 @@ The full paper is on my portfolio:
 ## 2 Quick start
 
 ```
-# generate example scripts to analyze
-echo "try: print(10 / 0) ; except: pass" > example.py
-silent-killers-audit example.py
+$ # generate example scripts to analyze
+$ printf "try:\n    print(10 / 0)\nexcept:\n    pass\n" > example.py
+$ silent-killers-audit example.py
+
+❌ example.py: 1 bad exception block(s)
 
 ```
 
