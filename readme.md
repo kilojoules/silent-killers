@@ -31,57 +31,17 @@ The full paper is on my portfolio:
 
 ---
 
-## 2  Repository layout
+## 2 Quick start
 
 ```
-repo-root/
-├─ src/
-│   └─ silent_killers/            ← **reusable package**
-│        ├─ __init__.py
-│        └─ metrics_definitions.py     (AST visitors & regex metrics)
-│
-├─ scripts/                        ← analysis scripts
-│   ├─ process_files.py            (generates metrics CSVs)
-│   └─ post_processing.py          (creates plots & summary tables)
-│
-├─ data/                           ← study‑specific artifacts
-│   ├─ calibration_prompt/         (easy rewrite task)
-│   ├─ propagation_prompt/         (medium rewrite task)
-│   ├─ optimization_prompt/        (hard rewrite task)
-│   └─ figures/                    (output plots & visualizations)
-├─ tests/
-│   └─ test_exception_labels.py
-├─ pyproject.toml
-└─ README.md
+# generate example scripts to analyze
+echo "try: print(10 / 0) ; except: pass" > example.py
+silent-killers-audit example.py
+
 ```
 
 
----
-
-## 3  Installation
-
-```bash
-git clone https://github.com/kilojoules/silent-killers.git
-cd silent-killers
-python -m pip install --upgrade pip
-pip install -e .
-```
-
-or using the pypi distribution
-
-```bash
-pip install silent-killers
-```
-
-
-> **Requires Python ≥ 3.10**  
-> Runtime deps: `pandas`, `numpy`, `matplotlib`
-
----
-
-## 4  Quick start
-
-### 4.1  Generate metrics CSVs
+### 2.1  Generate metrics CSVs
 
 ```bash
 python scripts/process_files.py --base-dir data/propagation_prompt
@@ -97,7 +57,7 @@ data/<prompt_dir>/
     llm_response_metrics.csv
 ```
 
-### 4.2  Plots & summary tables
+### 2.2  Plots & summary tables
 
 ```bash
 python scripts/post_processing.py --root data
@@ -125,7 +85,7 @@ plots_grid_refactored/
 
 </details>
 
-### 4.3  Library usage
+### 2.3  Library usage
 
 ```python
 from silent_killers.metrics_definitions import code_metrics
@@ -134,6 +94,69 @@ python_code = "try:\n    1/0\nexcept Exception:\n    pass"
 for metric in code_metrics(python_code):
     print(metric.name, metric.value)
 ```
+
+### 2.4  Use in pre-commit
+```
+- repo: https://github.com/kilojoules/silent-killers
+  rev: v0.1.3 # Use the appropriate tag
+  hooks:
+    - id: silent-killers-audit
+
+```
+
+---
+
+
+## 3  Repository layout
+
+```
+repo-root/
+├─ src/
+│   └─ silent_killers/            ← reusable package
+│        ├─ __init__.py
+│        └─ metrics_definitions.py     (AST visitors & regex metrics)
+│        └─ llm_api.py                 (interface analysis with different LLM APIs)
+
+├─ tests/                          ← reusable package unit tests
+│   └─ test_exception_labels.py
+│
+├─ scripts/                        ← analysis scripts
+│   ├─ process_files.py            (generates metrics CSVs)
+│   └─ post_processing.py          (creates plots & summary tables)
+│   └─ run_experiments.py          (runs the 3 prompts using the models in models.yaml)
+│
+├─ data/                           ← study‑specific artifacts
+│   ├─ calibration_prompt/         (easy rewrite task)
+│   ├─ propagation_prompt/         (medium rewrite task)
+│   ├─ optimization_prompt/        (hard rewrite task)
+│   └─ figures/                    (output plots & visualizations)
+│ 
+├─ pyproject.toml
+|
+└─ README.md
+```
+
+
+---
+
+## 4  Installation
+
+```bash
+git clone https://github.com/kilojoules/silent-killers.git
+cd silent-killers
+python -m pip install --upgrade pip
+pip install -e .
+```
+
+or using the pypi distribution
+
+```bash
+pip install silent-killers
+```
+
+
+> **Requires Python ≥ 3.10**  
+> Runtime deps: `pandas`, `numpy`, `matplotlib`
 
 ---
 
@@ -156,6 +179,8 @@ for metric in code_metrics(python_code):
 > Inclusive bad‑rates look tame (0 – 0.6) but conditional bad‑rates
 > (`only_with_try`) spike to **1.0** for several models on simple
 > prompts.
+
+> For these reasons, we recoomend using the silent-killers-audit tool in pre-commit workflows. 
 
 ---
 
