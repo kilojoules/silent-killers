@@ -35,9 +35,9 @@ dev = [
   "ruff>=0.4",
 ]
 
-[tool.setuptools]
-package-dir = {"" = "src"}
-packages = ["silent_killers"]
+[tool.setuptools.packages.find]
+where = ["src"]
+
 
 # --- console scripts ----------------------------------------
 [project.scripts]
