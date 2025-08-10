@@ -16,11 +16,17 @@ def main(argv=None):
             code = f.read()
 
         metrics = {m.name: m.value for m in code_metrics(code)}
-        if metrics["bad_exception_blocks"] > 0:
+        if metrics.get("parsing_error"):
+            bad_found = True
+            # Let the user know the file couldn't be parsed
+            print(f"❌ {file_path}: Could not parse file. {metrics['parsing_error']}") 
+        # Or, use .get() with a default value of 0 for the check
+        elif metrics.get("bad_exception_blocks", 0) > 0:
             bad_found = True
             print(f"❌ {file_path}: {metrics['bad_exception_blocks']} bad exception block(s)")
         else:
             print(f"✅ {file_path}: no unsafe exception handling found")
+
 
     sys.exit(1 if bad_found else 0)
 
