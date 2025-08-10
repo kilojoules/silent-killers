@@ -25,7 +25,7 @@ PROMPT_CONFIG = {
     'optimization_prompt2': 'Hard',
 }
 CODE_METRICS_FILE   = "llm_code_metrics.csv"
-OUTPUT_PLOT_DIR     = Path("plots_grid_refactored")
+OUTPUT_PLOT_DIR     = Path("plots")
 OUTPUT_PLOT_DIR.mkdir(exist_ok=True)
 
 # ---------- data loading ----------------------------------------------------
