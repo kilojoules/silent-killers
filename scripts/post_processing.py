@@ -13,6 +13,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import seaborn as sns 
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import matplotlib.patches as mpatches
@@ -164,6 +165,88 @@ def plot_metric_grid(pivot, *, title, cmap, filename_suffix,
     plt.close(fig)
     print(f"  ✅ saved {out}")
 
+def plot_statistical_analysis(df: pd.DataFrame):
+    """
+    Generates box plots to show the distribution of bad_exception_rate
+    for each model, faceted by prompt difficulty.
+    
+    Also overlays the mean and standard error of the mean (SEM).
+    """
+    print("\n--- Generating Statistical Box Plots ---")
+    
+    # Use only successfully parsed runs that contained at least one try/except block
+    # This makes the "bad rate" statistic more meaningful.
+    plot_df = df[(df["has_try"] == True)].copy()
+
+    # Get the order of difficulties
+    difficulty_order = ["Easy", "Medium", "Hard"]
+    
+    for difficulty in difficulty_order:
+        if difficulty not in plot_df["prompt_difficulty"].unique():
+            continue
+
+        subset_df = plot_df[plot_df["prompt_difficulty"] == difficulty]
+
+        # --- Create the Plot ---
+        plt.style.use('seaborn-v0_8-whitegrid') # Use a nice style
+        fig, ax = plt.subplots(figsize=(12, 7))
+
+        # 1. Create the box plots
+        sns.boxplot(
+            data=subset_df,
+            x="model",
+            y="bad_exception_rate",
+            ax=ax,
+            boxprops={'alpha': 0.6}
+        )
+        
+        # 2. Overlay a stripplot to show individual data points
+        sns.stripplot(
+            data=subset_df,
+            x="model",
+            y="bad_exception_rate",
+            ax=ax,
+            jitter=0.2,
+            alpha=0.7,
+            color='dodgerblue'
+        )
+
+        # 3. Calculate and overlay the mean + standard error bars
+        stats = subset_df.groupby('model')['bad_exception_rate'].agg(['mean', 'sem']).reset_index()
+        
+        # Get model order from the plot to ensure stats align with boxes
+        model_order = [tick.get_text() for tick in ax.get_xticklabels()]
+        stats = stats.set_index('model').reindex(model_order).reset_index()
+        
+        ax.errorbar(
+            x=stats.index, 
+            y=stats['mean'], 
+            yerr=stats['sem'],
+            fmt='o',         # Format for the mean point
+            color='black',
+            capsize=5,       # Width of the error bar caps
+            label='Mean ± SEM',
+            markersize=8,
+            elinewidth=2
+        )
+
+        # --- Final Touches ---
+        ax.set_title(f"Bad Exception Rate Distribution (Difficulty: {difficulty})", fontsize=16, pad=20)
+        ax.set_ylabel("Bad Exception Rate", fontsize=12)
+        ax.set_xlabel("Model", fontsize=12)
+        ax.tick_params(axis='x', rotation=45, labelsize=10)
+        ax.set_ylim(-0.05, 1.05) # Rate is between 0 and 1
+        ax.legend()
+        
+        plt.tight_layout()
+        
+        # Save the figure
+        filename = f"boxplot_bad_rate_{difficulty.lower()}.png"
+        out_path = OUTPUT_PLOT_DIR / filename
+        plt.savefig(out_path, dpi=150)
+        plt.close(fig)
+        print(f"  ✅ saved {out_path}")
+
 # ---------- main ------------------------------------------------------------
 def main(argv=None):
     ap = argparse.ArgumentParser()
@@ -231,13 +314,15 @@ def main(argv=None):
     plt.close(fig)
     print(f"  ✅ saved {out}")
 
-    print("🎉  All plots generated")
 
     # -----------------------------------------------------------------
     # 1.  Build file‑level helper columns
     ok_df = code_df[code_df["parsing_error"].isna()].copy()
     ok_df["bad_rate_file"] = ok_df["bad_exception_rate"].fillna(0)      # 0 if no try blocks
     ok_df["has_try"]       = ok_df["exception_handling_blocks"] > 0
+
+    plot_statistical_analysis(ok_df)
+    print("🎉  All plots generated")
     
     # -----------------------------------------------------------------
     # 2.  Aggregate per model × difficulty
