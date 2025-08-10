@@ -1,0 +1,94 @@
+Your code represents a complex wind farm modeling and optimization approach. It leverages the PyWake library to simulate wind turbine wakes and evaluate the performance of different models. Below are some observations and suggestions regarding your approach, particularly with respect to modularization and enhancements you mentioned:
+
+### Modularization
+1. **Function Organization**: Consider breaking down large sections of your code into smaller, self-contained functions. For instance, you can create functions for:
+   - Data loading and preprocessing
+   - Model initialization
+   - Simulation execution
+   - RMSE evaluation
+   - Plotting and visualization
+
+2. **Parameter Handling**: Instead of defining parameters globally, consider using parameter classes or dictionaries to encapsulate the parameters for each model. This will improve clarity and make it easier to manage parameters when switching between models.
+
+3. **Deficit Model Selection**: You can create a factory function or a class that encapsulates the logic for selecting the deficit model based on the `MODEL` and `DOWNWIND` flags. This would reduce repetitive code and improve readability.
+
+### Flow Field Plots
+1. **Error Metrics**: You mentioned wanting to report the average and 90th percentile (P90) of errors. After you compute the `pred` and `observed_deficit`, you can compute these metrics easily using `numpy` functions:
+   ```python
+   average_error = np.mean(diff)
+   p90_error = np.percentile(diff, 90)
+   ```
+   You can incorporate these calculations into your plotting functions to visualize how the errors change over time and across different simulations.
+
+2. **Visualization**: Instead of three separate subplots for observed, predicted, and difference, consider combining them into a single plot with additional metrics in the title or using interactive visualizations if possible. This can provide clearer insights into how well the model is performing.
+
+### Suggested Code Rewrite
+Here's a refactored skeleton of your code that incorporates some of these suggestions. Note that this is not a full rewrite but focuses on structuring and modularizing the approach:
+
+```python
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import xarray as xr
+from py_wake import HorizontalGrid
+from py_wake.examples.data.dtu10mw._dtu10mw import DTU10MW
+from py_wake.examples.data.hornsrev1 import Hornsrev1Site
+from py_wake.deficit_models import BlondelSuperGaussianDeficit2020, TurboGaussianDeficit
+from py_wake.wind_farm_models import All2AllIterative
+from bayes_opt import BayesianOptimization
+
+def load_data(filepath):
+    # Load and preprocess data
+    dat = xr.load_dataset(filepath)
+    turbine = DTU10MW()
+    D = turbine.diameter()
+    dat = dat.assign_coords(x=dat.x * D, y=dat.y * D)
+    return dat, turbine
+
+def create_wake_deficit_model(model, params):
+    if model == 1:
+        return BlondelSuperGaussianDeficit2020(**params)
+    else:
+        return TurboGaussianDeficit(A=params['A'], cTI=[params['cti1'], params['cti2']],
+                                    ctlim=params['ctlim'], ceps=params['ceps'])
+
+def run_simulation(site, turbine, deficit_model, full_ws, full_ti):
+    wfm = All2AllIterative(site, turbine, wake_deficitModel=deficit_model)
+    sim_res = wfm([0], [0], ws=full_ws, TI=full_ti, wd=[270] * full_ti.size, time=True)
+    return sim_res
+
+def evaluate_rmse(sim_res, observed_deficit):
+    pred = (sim_res.WS - observed_deficit) / sim_res.WS
+    rmse = np.sqrt(np.mean((observed_deficit - pred) ** 2))
+    return rmse
+
+def plot_results(target_x, target_y, observed_deficit, pred, diff):
+    fig, ax = plt.subplots(3, 1, figsize=(5, 15))
+    ax[0].contourf(target_x, target_y, observed_deficit.T)
+    ax[1].contourf(target_x, target_y, pred)
+    ax[2].contourf(target_x, target_y, diff)
+    plt.tight_layout()
+    plt.show()
+
+# Main function to orchestrate the workflow
+def main():
+    dat, turbine = load_data('./DTU10MW.nc')
+    site = Hornsrev1Site()
+    
+    # Define parameters and models
+    # Here, you can set your MODEL and DOWNWIND flags
+    MODEL = 1
+    DOWNWIND = True
+    
+    # Define full_ws and full_ti
+    # Call create_wake_deficit_model based on MODEL and DOWNWIND logic
+    # Run the simulation
+    # Compute RMSE
+    # Plot results
+
+if __name__ == "__main__":
+    main()
+```
+
+### Conclusion
+Refactoring the code into modular functions will help you maintain and expand it more easily. Additionally, including better metrics for error evaluation and visualization will enhance your analysis. By following these suggestions, you should be able to create a more robust and understandable codebase for your wind farm modeling and optimization tasks.

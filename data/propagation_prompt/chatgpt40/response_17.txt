@@ -1,0 +1,84 @@
+To generate a script that propagates realistic measurement uncertainties through PyWake and saves a series of flow field images showing the sensitivity of the flow at different times, you can follow these steps. The script will focus on using the Sobol sensitivity analysis for the effective wind speed (`WS_eff`) as a function of `x` and `y`. Please note that this script assumes you have PyWake and other necessary packages installed.
+
+Here's a basic outline of how the script might look:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from py_wake import WindFarmModel
+from py_wake.examples.data.hornsrev1 import HornsrevV80, HornsrevSite
+from py_wake.wind_farm_models.engineering_models import NOJ
+from py_wake.deficit_models.gaussian import IEA37SimpleBastankhahGaussian
+from py_wake.wind_turbines import WindTurbines
+from SALib.sample import saltelli
+from SALib.analyze import sobol
+from py_wake.utils.grid_interpolator import GridInterpolator
+
+# Define your site and wind turbine model
+site = HornsrevSite()
+windTurbines = HornsrevV80()
+
+# Define the wind farm model
+wf_model = NOJ(site, windTurbines, IEA37SimpleBastankhahGaussian())
+
+# Parameter setup for Sobol sensitivity analysis
+problem = {
+    'num_vars': 1,
+    'names': ['wind_speed'],
+    'bounds': [[5, 15]]  # Define realistic bounds for wind speed
+}
+
+# Generate samples
+param_values = saltelli.sample(problem, 1000)
+
+# Define grid for sensitivity analysis
+x = np.arange(-500, 500, 20)
+y = np.arange(-500, 500, 20)
+grid = np.array(np.meshgrid(x, y)).T.reshape(-1, 2)
+
+# Run simulation and perform sensitivity analysis
+results = []
+for params in param_values:
+    wind_speed = params[0]
+    sim_res = wf_model(x, y, wd=[270], ws=[wind_speed])  # Example wind direction
+    WS_eff = sim_res.WS_eff.sel(wt=0).values.flatten()
+    results.append(WS_eff)
+
+# Convert results to a numpy array
+results = np.array(results)
+
+# Perform Sobol sensitivity analysis
+sobol_indices = []
+for i in range(len(grid)):
+    sobol_indices.append(sobol.analyze(problem, results[:, i]))
+
+# Plot and save sensitivity maps
+for i, (s, (xi, yi)) in enumerate(zip(sobol_indices, grid)):
+    Si = s['S1']
+    
+    plt.figure(figsize=(8, 6))
+    
+    # Reshape Si to match grid
+    Si_grid = Si.reshape(len(x), len(y))
+    
+    plt.contourf(x, y, Si_grid.T, levels=np.linspace(0, 1, 11))
+    plt.colorbar(label='Sobol Index')
+    plt.title(f'Sobol Sensitivity of WS_eff at x={xi}, y={yi}')
+    plt.xlabel('x [m]')
+    plt.ylabel('y [m]')
+    
+    plt.savefig(f'flow_sensitivity_x{xi}_y{yi}.png')
+    plt.close()
+
+print("Sensitivity analysis completed and images saved.")
+```
+
+### Explanation:
+- **Wind Farm Model Setup**: The script uses the Hornsrev site and V80 turbines with a simple Gaussian deficit model for wind farm modeling.
+- **Sobol Sensitivity Analysis**: The script uses the Sobol method to analyze sensitivity. You need to define the parameter bounds and generate samples using Saltelli’s sampling method.
+- **Grid Setup**: A grid is defined over which the sensitivity analysis will be performed.
+- **Simulation Loop**: For each parameter set, the wind farm model is run, and the effective wind speed is extracted.
+- **Sensitivity Indices**: Sobol indices are calculated, and the first-order indices are used for visualization.
+- **Plotting and Saving**: A contour plot of the Sobol indices is created and saved for each grid point of interest.
+
+Ensure you have the required libraries installed (`PyWake`, `SALib`, `matplotlib`, etc.). Additionally, adapt paths, parameters, and models as necessary to fit your specific setup and data.

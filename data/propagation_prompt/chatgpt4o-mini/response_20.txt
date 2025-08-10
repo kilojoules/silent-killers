@@ -1,0 +1,96 @@
+To generate a script that propagates realistic measurement uncertainties through PyWake and saves a series of flow field images showing the Sobol sensitivity of `WS_eff` (effective wind speed) as a function of x and y, you'll need to follow these steps:
+
+1. **Set Up the Environment**: Ensure you have PyWake and its dependencies installed. You can use pip to install PyWake if you haven't done so already.
+
+2. **Define the Measurement Uncertainties**: Specify the uncertainties in your measurements. This can be done using a normal distribution or other distributions depending on the nature of your measurements.
+
+3. **Create the Simulation Loop**: Run a loop to generate multiple realizations of the inflow conditions with the defined uncertainties.
+
+4. **Compute Sobol Sensitivity**: Use the Sobol method to compute sensitivity indices of `WS_eff` with respect to the input parameters.
+
+5. **Save Flow Field Images**: Finally, visualize and save the flow field images showing the sensitivity.
+
+Here’s a Python script that demonstrates this process:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from py_wake import PyWake
+from py_wake.utils import get_sobol_indices
+from py_wake.site import Site
+from py_wake.flow_map import FlowMap
+from py_wake.wind_farm import WindFarm
+
+# Set up the site and wind farm parameters
+site = Site(
+    wind_speed=8.0,  # Average wind speed in m/s
+    turbulence_intensity=0.1  # Example turbulence intensity
+)
+
+# Define the wind farm layout
+wind_farm = WindFarm(
+    layout=[(0, 0), (500, 0), (250, 500)],  # Example turbine positions
+    rotor_diameter=126  # Example rotor diameter in meters
+)
+
+# Define the number of simulations and uncertainties
+n_simulations = 100
+uncertainty_parameters = {
+    'wind_speed': 0.1,  # Uncertainty in wind speed (10%)
+    'turbulence_intensity': 0.02  # Uncertainty in turbulence intensity (2%)
+}
+
+# Generate Sobol sensitivity indices
+inputs = np.random.normal(loc=[site.wind_speed, site.turbulence_intensity], 
+                          scale=[uncertainty_parameters['wind_speed'], 
+                                 uncertainty_parameters['turbulence_intensity']],
+                          size=(n_simulations, 2))
+
+# Initialize a list to store WS_eff results
+ws_eff_results = []
+
+for i in range(n_simulations):
+    wind_speed = inputs[i, 0]
+    turbulence_intensity = inputs[i, 1]
+    
+    # Update the site wind conditions
+    site.wind_speed = wind_speed
+    site.turbulence_intensity = turbulence_intensity
+    
+    # Create a PyWake simulation
+    wake_model = PyWake(site, wind_farm)
+    flow_map = FlowMap(wake_model)
+    
+    # Calculate effective wind speed at the farm
+    ws_eff = flow_map.get_ws_eff()
+    ws_eff_results.append(ws_eff)
+
+# Compute Sobol indices for WS_eff
+sobol_indices = get_sobol_indices(ws_eff_results, np.array(inputs))
+
+# Save flow field images showing the sensitivity of WS_eff
+x = np.linspace(-1000, 1000, 100)  # x-coordinates for flow field
+y = np.linspace(-1000, 1000, 100)  # y-coordinates for flow field
+X, Y = np.meshgrid(x, y)
+
+for j in range(len(sobol_indices)):
+    plt.figure()
+    plt.contourf(X, Y, sobol_indices[j].reshape(X.shape), levels=20, cmap='viridis')
+    plt.colorbar(label='Sobol Index')
+    plt.title(f'Sobol Sensitivity of WS_eff - Component {j+1}')
+    plt.xlabel('X Coordinate (m)')
+    plt.ylabel('Y Coordinate (m)')
+    plt.savefig(f'sobol_sensitivity_ws_eff_component_{j+1}.png')
+    plt.close()
+```
+
+### Explanation:
+- This script sets up a simple wind farm simulation using PyWake. 
+- It propagates uncertainties through the model by sampling from a normal distribution defined by mean values and standard deviations.
+- It calculates effective wind speed (`WS_eff`) for each simulation and computes Sobol indices.
+- Finally, it saves contour plots of the Sobol sensitivity indices for each component, which gives insight into how changes in inputs affect `WS_eff`.
+
+### Important Notes:
+- Adjust the turbine positions, rotor diameter, and other parameters according to your specific requirements.
+- Ensure that the dimensions and parameter ranges are appropriate for your simulation.
+- Make sure to handle any missing functions or utilities in your PyWake installation if they differ from the assumed API.

@@ -1,0 +1,83 @@
+To generate a script that propagates realistic measurement uncertainties through PyWake and saves a series of flow field images showing the sensitivity of the flow at different times, we need to consider the following steps:
+
+1. **Set up the environment**: Import necessary libraries and set up the PyWake framework.
+2. **Define the inflow conditions**: Create a base inflow field and introduce uncertainties.
+3. **Run simulations**: Propagate these uncertainties through the PyWake model.
+4. **Calculate Sobol sensitivity indices**: Analyze the results to compute Sobol sensitivity of the effective wind speed (WS_eff) as a function of x and y.
+5. **Save flow field images**: Visualize and save the results.
+
+Here’s a sample Python script that follows these steps:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from py_wake import PWake
+from py_wake.site import Site
+from py_wake.fluid_models import IBL
+from py_wake.visualization import Visualization
+from SALib.sample import saltelli
+from SALib.analyze import sobol
+
+# Step 1: Set up the environment
+# Define the parameters for the Sobol sensitivity analysis
+problem = {
+    'num_vars': 3,
+    'names': ['u_mean', 'u_std', 'v_mean'],
+    'bounds': [[8, 12], [0.5, 1.5], [0, 2]]
+}
+
+# Generate samples using the Saltelli method
+param_values = saltelli.sample(problem, 1000)
+
+# Initialize PyWake
+site = Site(x=0, y=0, z=90)  # Define the site
+wake_model = IBL()  # Choose an appropriate fluid model
+p_wake = PWake(site, wake_model)
+
+# Step 2: Define the inflow conditions with uncertainties
+def generate_inflow(u_mean, u_std, v_mean):
+    # Simulate the inflow field; here we use a simple Gaussian distribution
+    x = np.linspace(-500, 500, 100)  # x coordinates
+    y = np.linspace(-500, 500, 100)  # y coordinates
+    X, Y = np.meshgrid(x, y)
+    U = np.random.normal(u_mean, u_std, X.shape)  # Wind speed in the x-direction
+    V = np.random.normal(v_mean, 0.5, X.shape)    # Wind speed in the y-direction
+    return U, V, X, Y
+
+# Step 3: Run simulations and collect results
+results = []
+for params in param_values:
+    U, V, X, Y = generate_inflow(*params)
+    # Run the PyWake simulation
+    ws_eff = p_wake.calculate_wake(U, V)  # Calculate effective wind speed
+    results.append(ws_eff)
+
+results = np.array(results)
+
+# Step 4: Calculate Sobol sensitivity indices
+Si = sobol.analyze(problem, results, print_to_console=True)
+
+# Step 5: Save flow field images
+for i, params in enumerate(param_values):
+    U, V, X, Y = generate_inflow(*params)
+    ws_eff = p_wake.calculate_wake(U, V)
+    
+    plt.figure(figsize=(10, 8))
+    plt.contourf(X, Y, ws_eff, levels=20, cmap='viridis')
+    plt.colorbar(label='Effective Wind Speed (m/s)')
+    plt.title(f'Effective Wind Speed Field\nu_mean: {params[0]:.2f}, u_std: {params[1]:.2f}, v_mean: {params[2]:.2f}')
+    plt.xlabel('X (m)')
+    plt.ylabel('Y (m)')
+    plt.savefig(f'flow_field_{i}.png')
+    plt.close()
+
+print("Flow field images saved.")
+```
+
+### Notes:
+- Adjust the parameters in the `problem` dictionary based on your specific application and the number of variables.
+- The `generate_inflow` function creates a wind field with uncertainty by using a normal distribution.
+- The visualization aspect uses contour plots to display the effective wind speed fields.
+- Make sure that the PyWake library and any other necessary dependencies are properly installed in your Python environment.
+
+This script provides a basic framework. You may need to adapt it to your specific requirements or data structure. Adjust parameters, outputs, and visualization settings as necessary for your application.

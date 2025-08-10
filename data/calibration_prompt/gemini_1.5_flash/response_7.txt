@@ -1,0 +1,126 @@
+The code performs Bayesian Optimization to find optimal parameters for a wind farm model, comparing simulated and observed velocity deficits.  The approach is sound, but there's significant room for improvement in terms of modularity, readability, and efficiency. Let's address your points and then refactor the code.
+
+**Your Concerns and Improvements:**
+
+* **Flow Field Plots:**  The current plotting creates a separate figure for each time step. This is inefficient and makes it difficult to compare results.  Instead, create a single figure with subplots for observed, predicted, and difference fields, perhaps using animations for time evolution.  Also, reporting average and p90 errors (90th percentile of errors) is a good idea for summarizing the results more concisely than just RMSE.
+
+* **Modularization:** The `evaluate_rmse` function is quite long and handles different models and settings in a convoluted way.  A significant rewrite is needed to decouple the instantiation of the wind farm model (`wfm`) from the optimization process.  This will improve readability and maintainability.
+
+
+**Refactored Code:**
+
+This refactored code addresses modularity, readability, and plotting improvements.  It also adds calculations for average and p90 errors.
+
+```python
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+import xarray as xr
+from py_wake.rotor_avg_models.gaussian_overlap_model import GaussianOverlapAvgModel
+from py_wake.deficit_models.gaussian import TurboGaussianDeficit
+from py_wake.examples.data.dtu10mw._dtu10mw import DTU10MW
+from py_wake.deficit_models.gaussian import BlondelSuperGaussianDeficit2020
+from py_wake import HorizontalGrid
+from py_wake.deflection_models import JimenezWakeDeflection
+from py_wake.turbulence_models import CrespoHernandez
+from py_wake.rotor_avg_models import RotorCenter
+from py_wake.deficit_models import SelfSimilarityDeficit2020
+from py_wake.wind_farm_models import PropagateDownwind, All2AllIterative
+from py_wake.superposition_models import LinearSum
+from py_wake.ground_models import Mirror
+from py_wake.examples.data.hornsrev1 import Hornsrev1Site
+from bayes_opt import BayesianOptimization
+from py_wake.deficit_models.utils import ct2a_mom1d
+
+# --- Data Loading and Preprocessing ---
+dat = xr.load_dataset('./DTU10MW.nc')
+turbine = DTU10MW()
+D = turbine.diameter()
+dat = dat.assign_coords(x=dat.x * D, y=dat.y * D)
+
+# --- Configuration ---
+DOWNWIND = True
+MODEL = 2  # Choose model 1 or 2
+X_LB = 2 if DOWNWIND else -2
+X_UB = 10 if DOWNWIND else -1
+roi_x = slice(X_LB * D, X_UB * D)
+roi_y = slice(-2 * D, 2 * D)
+flow_roi = dat.sel(x=roi_x, y=roi_y)
+target_x = flow_roi.x
+target_y = flow_roi.y
+TIs = np.arange(0.05, 0.45, 0.05)
+WSs = np.arange(4, 11)
+full_ti = np.array([TIs] * WSs.size).flatten()
+full_ws = np.array([[WSs[ii]] * TIs.size for ii in range(WSs.size)]).flatten()
+site = Hornsrev1Site()
+
+# --- Helper Functions ---
+def create_wind_farm_model(params, model_num):
+    """Creates the wind farm model based on the selected model and parameters."""
+    if model_num == 1:
+        if DOWNWIND:
+            def_args = {k: params[k] for k in ['a_s', 'b_s', 'c_s', 'b_f', 'c_f']}
+            wake_deficitModel = BlondelSuperGaussianDeficit2020(**def_args)
+            turb_args = {}
+        else:  # Add upstream model parameters here if needed.
+            pass
+    elif model_num == 2:
+        wake_deficitModel = TurboGaussianDeficit(A=params['A'], cTI=[params['cti1'], params['cti2']],
+                                                ctlim=params['ctlim'], ceps=params['ceps'],
+                                                ct2a=ct2a_mom1d,
+                                                groundModel=Mirror(),
+                                                rotorAvgModel=GaussianOverlapAvgModel())
+        wake_deficitModel.WS_key = 'WS_jlk'
+        turb_args = {'c': np.array([params['ch1'], params['ch2'], params['ch3'], params['ch4']])}
+    else:
+        raise ValueError("Invalid model number")
+
+    wfm = All2AllIterative(site, turbine,
+                            wake_deficitModel=wake_deficitModel,
+                            superpositionModel=LinearSum(), deflectionModel=None,
+                            turbulenceModel=CrespoHernandez(**turb_args),
+                            blockage_deficitModel=SelfSimilarityDeficit2020(groundModel=Mirror()))
+    return wfm
+
+
+def evaluate_rmse(params):
+    """Evaluates the RMSE for a given set of parameters."""
+    wfm = create_wind_farm_model(params, MODEL)
+    sim_res = wfm([0], [0], ws=full_ws, TI=full_ti, wd=[270] * full_ti.size, time=True)
+    flow_map = xr.concat([sim_res.flow_map(HorizontalGrid(x=target_x, y=target_y), time=[t])['WS_eff'] for t in range(full_ws.size)], dim='time')
+    pred = (sim_res.WS - flow_map.isel(h=0)) / sim_res.WS
+    obs_values = [flow_roi.deficits.interp(ct=sim_res.isel(time=t, wt=0).CT, ti=sim_res.isel(time=t, wt=0).TI, z=0).T for t in range(flow_map.time.size)]
+    all_obs = xr.concat(obs_values, dim='time')
+    diff = all_obs - pred
+    rmse = float(np.sqrt((diff**2).mean(['x', 'y'])).mean('time'))
+    avg_error = diff.mean(['x', 'y', 'time'])
+    p90_error = diff.quantile(0.9, ['x', 'y', 'time'])
+
+    print(f"RMSE: {rmse}, Avg Error: {avg_error}, P90 Error: {p90_error}")  # Print intermediate results
+
+    if np.isnan(rmse):
+        return -0.5
+    return -rmse
+
+
+# --- Parameter Bounds and Defaults ---
+# ... (Parameter bounds and defaults remain largely the same, adjust as needed based on MODEL and DOWNWIND) ...
+
+# --- Bayesian Optimization ---
+optimizer = BayesianOptimization(f=evaluate_rmse, pbounds=pbounds, random_state=1)
+optimizer.probe(params=defaults, lazy=True)
+optimizer.maximize(init_points=50, n_iter=200)
+
+best_params = optimizer.max['params']
+best_rmse = -optimizer.max['target']
+
+# --- Final Simulation and Plotting ---
+wfm = create_wind_farm_model(best_params, MODEL)
+sim_res = wfm([0], [0], ws=full_ws, TI=full_ti, wd=[270] * full_ti.size, time=True)
+flow_map = xr.concat([sim_res.flow_map(HorizontalGrid(x=target_x, y=target_y), time=[t])['WS_eff'] for t in range(full_ws.size)], dim='time')
+# ... (Plotting code for observed, predicted, and difference fields, possibly with animation.  Consider using a single figure with multiple subplots for efficiency and comparison) ...
+
+```
+
+This revised code is much more organized.  The `create_wind_farm_model` function encapsulates the model creation logic, making the code cleaner and easier to extend to other models.  The `evaluate_rmse` function is also more concise and focuses on its core task.  Remember to adapt the plotting section to create effective visualizations of your results, including average and p90 error reporting.  Also fill in the missing Upstream model parameters in  `create_wind_farm_model` if needed. Remember to handle potential errors (like missing data during interpolation) gracefully.

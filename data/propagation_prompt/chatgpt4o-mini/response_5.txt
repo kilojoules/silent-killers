@@ -1,0 +1,104 @@
+To create a script that propagates realistic measurement uncertainties through PyWake and generates flow field images showing the Sobol sensitivity of the effective wind speed (`WS_eff`) as a function of x and y, you will need to follow these steps:
+
+1. **Set Up the Environment**: Ensure that you have PyWake and any necessary libraries installed (e.g., NumPy, Matplotlib).
+
+2. **Define the Inputs**: Specify the inflow conditions and the uncertainties you want to propagate.
+
+3. **Run the Simulations**: Use PyWake to simulate the flow field for different realizations of the inflow conditions.
+
+4. **Compute Sobol Sensitivity**: Calculate the Sobol sensitivity indices for `WS_eff` based on the generated flow fields.
+
+5. **Save Flow Field Images**: Visualize and save the flow fields at different time steps.
+
+Here's a sample script that illustrates how you might implement the above steps:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake import PyWake
+from scipy.stats import norm
+from SALib import Sensitivity
+
+# Define your wind farm layout and inflow conditions
+wind_farm_layout = ...  # Define your wind farm layout
+inflow_conditions = {
+    'mean_ws': 8.0,  # Mean wind speed [m/s]
+    'std_ws': 1.0,   # Standard deviation of wind speed [m/s]
+    'mean_dir': 270, # Mean wind direction [degrees]
+    'std_dir': 10    # Standard deviation of wind direction [degrees]
+}
+
+# Generate Sobol sampling for inflow uncertainties
+def generate_samples(n_samples):
+    mean_ws = inflow_conditions['mean_ws']
+    std_ws = inflow_conditions['std_ws']
+    mean_dir = inflow_conditions['mean_dir']
+    std_dir = inflow_conditions['std_dir']
+    
+    # Generate samples
+    samples_ws = norm.rvs(loc=mean_ws, scale=std_ws, size=n_samples)
+    samples_dir = norm.rvs(loc=mean_dir, scale=std_dir, size=n_samples)
+    
+    return samples_ws, samples_dir
+
+# Run the flow simulations
+def run_flow_simulations(samples_ws, samples_dir, wind_farm_layout):
+    flow_fields = []
+    for ws, wd in zip(samples_ws, samples_dir):
+        # Run PyWake simulation
+        model = PyWake(wind_farm_layout, ws, wd)
+        flow_field = model.calculate_flow_field()  # Adjust according to PyWake API
+        flow_fields.append(flow_field)
+    return flow_fields
+
+# Compute Sobol sensitivity indices
+def compute_sobol_sensitivity(flow_fields):
+    # Assuming flow_fields is a 2D array where each element corresponds to a flow field
+    # Here you would need to calculate WS_eff for each flow field
+    WS_eff = np.array([np.mean(flow_field) for flow_field in flow_fields])  # Placeholder
+    
+    # Define problem for SALib
+    problem = {
+        'num_vars': 2,
+        'names': ['wind_speed', 'wind_direction'],
+        'bounds': [[inflow_conditions['mean_ws'] - inflow_conditions['std_ws'],
+                    inflow_conditions['mean_ws'] + inflow_conditions['std_ws']],
+                   [inflow_conditions['mean_dir'] - inflow_conditions['std_dir'],
+                    inflow_conditions['mean_dir'] + inflow_conditions['std_dir']]]
+    }
+    
+    # Calculate Sobol sensitivity indices
+    sobol_indices = Sensitivity.analyze(problem, WS_eff)
+    return sobol_indices
+
+# Save flow field images
+def save_flow_field_images(flow_fields):
+    for i, flow_field in enumerate(flow_fields):
+        plt.imshow(flow_field, extent=[0, 100, 0, 100])  # Adjust extent according to your setup
+        plt.colorbar(label='WS_eff [m/s]')
+        plt.title(f'Flow Field Image {i+1}')
+        plt.savefig(f'flow_field_image_{i+1}.png')
+        plt.close()
+
+# Main function
+def main():
+    n_samples = 100  # Number of samples for Sobol analysis
+    samples_ws, samples_dir = generate_samples(n_samples)
+    flow_fields = run_flow_simulations(samples_ws, samples_dir, wind_farm_layout)
+    sobol_indices = compute_sobol_sensitivity(flow_fields)
+    print("Sobol Sensitivity Indices:", sobol_indices)
+    save_flow_field_images(flow_fields)
+
+if __name__ == "__main__":
+    main()
+```
+
+### Notes:
+- You will need to adjust the implementation based on the actual API and functionalities provided by PyWake.
+- The `generate_samples` function uses a normal distribution for inflow uncertainties; you can modify this based on the nature of your uncertainties.
+- The `run_flow_simulations` function should be adapted to fit the specific simulation calls of PyWake.
+- Make sure to handle the output of the flow fields appropriately to visualize and analyze the `WS_eff`.
+- The script assumes that the flow fields can be represented as 2D arrays, so adjust the visualization accordingly.
+- The calculation of `WS_eff` in `compute_sobol_sensitivity` is a placeholder; ensure it's computed based on your specific requirements.
+
+This script provides a basic structure. Depending on your specific use case and the PyWake library's capabilities, additional adjustments may be necessary.

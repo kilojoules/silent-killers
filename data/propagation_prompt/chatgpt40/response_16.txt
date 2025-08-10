@@ -1,0 +1,76 @@
+To create a script that propagates realistic measurement uncertainties through PyWake and generates a series of flow field images showing the sensitivity of the flow at different times, you will need to follow these steps:
+
+1. **Set Up Your Environment**: Ensure that you have PyWake and any other necessary libraries installed. You may also need to install a sensitivity analysis library, such as SALib, which can perform Sobol sensitivity analysis.
+
+2. **Define the Problem**: Identify the parameters influencing the effective wind speed (WS_eff) and their uncertainties.
+
+3. **Perform Sensitivity Analysis**: Use Sobol sensitivity analysis to determine the sensitivity of WS_eff to these parameters.
+
+4. **Propagate Uncertainties**: Generate flow fields by propagating the uncertainties through the wind farm model at different times.
+
+5. **Visualize Results**: Save the flow field images to illustrate sensitivity as a function of \( x \) and \( y \).
+
+Here's a Python script outline for these steps:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from py_wake import WindFarmModel
+from py_wake.deficit_models.gaussian import IEA37SimpleBastankhahGaussian
+from py_wake.examples.data.hornsrev1 import Hornsrev1Site, HornsrevV80
+from SALib.sample import saltelli
+from SALib.analyze import sobol
+
+# Step 1: Set up the wind farm model
+site = Hornsrev1Site()
+windTurbines = HornsrevV80()
+wf_model = WindFarmModel(site, windTurbines, IEA37SimpleBastankhahGaussian())
+
+# Define the parameter space and their uncertainties
+problem = {
+    'num_vars': 3,
+    'names': ['wind_speed', 'wind_direction', 'turbulence_intensity'],
+    'bounds': [[8, 12], [0, 360], [0.05, 0.15]]
+}
+
+# Step 2: Generate samples using Saltelli's method
+param_values = saltelli.sample(problem, 1000)
+
+# Step 3: Run the model and collect results
+def model_evaluation(params):
+    wind_speed, wind_direction, turbulence_intensity = params
+    flow_field = wf_model(wd=wind_direction, ws=wind_speed, TI=turbulence_intensity)
+    WS_eff = flow_field.WS_eff
+    return WS_eff.mean()
+
+Y = np.array([model_evaluation(params) for params in param_values])
+
+# Step 4: Perform Sobol sensitivity analysis
+Si = sobol.analyze(problem, Y)
+
+# Step 5: Visualize the sensitivity
+x = np.linspace(0, 10000, 100)  # Define x range
+y = np.linspace(0, 10000, 100)  # Define y range
+X, Y = np.meshgrid(x, y)
+
+# For each time step or condition
+for i in range(len(Si['S1'])):
+    plt.figure(figsize=(10, 8))
+    plt.contourf(X, Y, Si['S1'][i].reshape(X.shape), cmap='viridis')
+    plt.colorbar(label='Sobol Sensitivity Index')
+    plt.title(f'Sobol Sensitivity of WS_eff at time step {i}')
+    plt.xlabel('x (m)')
+    plt.ylabel('y (m)')
+    plt.savefig(f'flow_field_sensitivity_{i}.png')
+    plt.close()
+
+print("Flow field sensitivity images saved.")
+```
+
+### Key Considerations:
+- **Parameter Selection**: Ensure that the parameters selected for the sensitivity analysis are those with significant uncertainty and impact on the model output.
+- **Sampling Size**: Adjust the sample size (`N` in Saltelli sampling) to balance computational load with result accuracy.
+- **Visualization**: Customize the visualization to suit your specific needs, such as adjusting color maps or adding more descriptive labels.
+- **Performance**: Depending on the size of the wind farm and the complexity of the model, computations can be resource-intensive. Consider using parallel processing or a high-performance computing environment for large simulations.
+
+This script provides a framework to perform sensitivity analysis and visualize the effects of input uncertainties on wind farm performance using PyWake. Adjust the parameters and model specifics to match your exact scenario.

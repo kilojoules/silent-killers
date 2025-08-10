@@ -1,0 +1,54 @@
+The error you're encountering is likely due to an issue with one of the HDF5 files (`worker_file`) that your script is trying to open. The error message "Unable to synchronously open file (file signature not found)" typically indicates that the file is either corrupted, missing, or not in the expected format.
+
+To handle this situation more gracefully and ensure that the process stops cleanly if any worker file is invalid, you can modify your script in the following ways:
+
+1. **Validation Before Opening**: Before attempting to open each `worker_file`, you can add a check to ensure the file exists and is not empty. This won't catch all possible issues, but it's a good start.
+
+2. **Exception Handling**: Use a try-except block around the file-opening operation to catch any `OSError` or other exceptions that occur when trying to open a file.
+
+3. **Logging and Termination**: If an exception is caught, log an error message and terminate the process cleanly.
+
+Here’s how you might implement these suggestions:
+
+```python
+import os
+import h5py
+import logging
+import sys
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def main():
+    worker_files = [...]  # Assuming this is a list of worker file paths
+
+    for worker_file in worker_files:
+        try:
+            # Check file existence and size
+            if not os.path.exists(worker_file) or os.path.getsize(worker_file) == 0:
+                logger.error(f"Worker file {worker_file} is missing or empty.")
+                sys.exit(1)
+
+            # Attempt to open the HDF5 file
+            with h5py.File(worker_file, 'r') as h5_in:
+                # Perform operations on the file
+                pass
+
+        except OSError as e:
+            logger.error(f"Failed to open worker file {worker_file}: {e}")
+            sys.exit(1)
+
+    # Continue with the rest of your script
+    logger.info("Completed all optimizations successfully")
+
+if __name__ == "__main__":
+    main()
+```
+
+**Explanation**:
+- **Validation**: Before opening the file, check if it exists and is not empty using `os.path.exists()` and `os.path.getsize()`.
+- **Exception Handling**: Wrap the file-opening code in a try-except block to catch `OSError` and handle it by logging the error and exiting the script.
+- **Logging**: Use Python's logging module to log informative error messages. This helps in debugging and maintaining a clean process termination.
+
+This approach ensures that if any worker file is invalid, the script will detect it, log an appropriate error message, and stop the process cleanly.

@@ -1,0 +1,60 @@
+Based on the provided error log, it seems that your script is attempting to open a file with the `h5py` library, but it encounters an `OSError` because the file does not have a valid HDF5 file signature. This typically means that the file is either corrupted, not an HDF5 file at all, or possibly missing.
+
+### Diagnosis:
+
+1. **Corrupted or Invalid Files**: The error message indicates that one of the worker files being accessed is invalid or corrupted. This could happen if the file was not created properly or if it was altered in some way after creation.
+
+2. **Insufficient Error Handling**: The current script does not seem to have mechanisms in place to handle the case where a file cannot be opened. This leads to crashing without a clean exit, which is not ideal, especially when running multiple optimizations.
+
+3. **Repetitive Log Messages**: The repetitive log messages about "130 possible points, 50 wt, 2.6 points pr wt, 80(62%) unused points" suggest that the script might be stuck in a loop or in a state where it is repeatedly trying to process the same data without progressing, likely due to the invalid file.
+
+### Suggested Modifications:
+
+To ensure that the script detects invalid worker files reliably and stops the process cleanly, consider the following modifications:
+
+1. **Exception Handling**: Implement try-except blocks around the file opening logic. This allows the script to catch exceptions when attempting to open a file and handle them gracefully.
+
+2. **Validation Function**: Before attempting to open a worker file, create a validation function to check if the file exists and has a valid signature for HDF5 files.
+
+3. **Exit or Cleanup Procedures**: In case of an error, implement proper cleanup procedures to safely exit the script. This could include logging the error, notifying the user, and freeing up any resources.
+
+### Example Code Modification:
+
+Here is an example of how you might modify the script:
+
+```python
+import h5py
+import os
+import logging
+
+def is_valid_hdf5(file_path):
+    try:
+        with h5py.File(file_path, 'r'):
+            return True
+    except Exception as e:
+        logging.error(f"Invalid HDF5 file {file_path}: {e}")
+        return False
+
+def main():
+    worker_files = ["file1.h5", "file2.h5", "file3.h5"]  # Example file list
+    for worker_file in worker_files:
+        if not os.path.exists(worker_file) or not is_valid_hdf5(worker_file):
+            logging.error(f"Stopping process due to invalid worker file: {worker_file}")
+            break  # Stop processing if an invalid file is found
+        
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                # Process the file...
+                pass  # Replace with actual processing logic
+
+        except OSError as e:
+            logging.error(f"Error opening file {worker_file}: {e}")
+            break  # Stop processing on error
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    main()
+```
+
+### Summary:
+With these modifications, the script will check for the existence and validity of each worker file before trying to open it. If an invalid file is detected, it will log the error and stop further processing, which should help you avoid crashes and allow for easier debugging. This approach also makes it easier to identify which files are causing issues without losing track of your overall processing flow.

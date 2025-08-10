@@ -1,0 +1,193 @@
+Looking at this error, the issue is clear: **one or more of the worker HDF5 files is corrupted or incomplete** (hence "file signature not found"). This likely happened because:
+
+1. A worker process crashed or was killed while writing
+2. The file was truncated due to disk space issues
+3. The process was interrupted during file creation
+
+Here's how to diagnose and fix this:
+
+## Immediate Diagnosis
+
+First, identify which worker file(s) are corrupted:
+
+```bash
+# Check all worker files
+for file in worker_*.h5; do
+    echo "Checking $file..."
+    if ! h5dump -n "$file" > /dev/null 2>&1; then
+        echo "CORRUPTED: $file"
+        ls -la "$file"
+    else
+        echo "OK: $file"
+    fi
+done
+```
+
+## Script Modifications
+
+Here are the key changes needed to make the script robust:
+
+### 1. Add File Validation Function
+
+```python
+import h5py
+import os
+import logging
+
+def validate_h5_file(filepath):
+    """Validate that an HDF5 file is readable and not corrupted."""
+    try:
+        if not os.path.exists(filepath):
+            return False, "File does not exist"
+        
+        if os.path.getsize(filepath) == 0:
+            return False, "File is empty"
+        
+        with h5py.File(filepath, 'r') as f:
+            # Try to read basic info to ensure file is valid
+            list(f.keys())
+        return True, "Valid"
+    except Exception as e:
+        return False, str(e)
+```
+
+### 2. Modify the File Joining Logic
+
+```python
+def main():
+    # ... existing code ...
+    
+    # Validate all worker files before attempting to merge
+    worker_files = [f for f in os.listdir('.') if f.startswith('worker_') and f.endswith('.h5')]
+    
+    corrupted_files = []
+    valid_files = []
+    
+    logging.info(f"Found {len(worker_files)} worker files to validate...")
+    
+    for worker_file in worker_files:
+        is_valid, message = validate_h5_file(worker_file)
+        if is_valid:
+            valid_files.append(worker_file)
+            logging.info(f"✓ {worker_file}: {message}")
+        else:
+            corrupted_files.append(worker_file)
+            logging.error(f"✗ {worker_file}: {message}")
+    
+    if corrupted_files:
+        logging.error(f"Found {len(corrupted_files)} corrupted files: {corrupted_files}")
+        
+        # Option 1: Stop completely
+        raise RuntimeError(f"Corrupted worker files detected: {corrupted_files}")
+        
+        # Option 2: Continue with valid files only (uncomment if preferred)
+        # logging.warning(f"Continuing with {len(valid_files)} valid files, skipping corrupted ones")
+        # worker_files = valid_files
+    
+    # Continue with merging only validated files
+    for worker_file in valid_files:
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                # ... existing merge logic ...
+        except Exception as e:
+            logging.error(f"Failed to process {worker_file}: {e}")
+            # Decide whether to continue or stop
+            raise
+```
+
+### 3. Add Atomic File Writing for Workers
+
+Modify the worker process to write atomically:
+
+```python
+def worker_save_results(results, worker_id):
+    """Save results atomically to prevent corruption."""
+    temp_file = f'worker_{worker_id}.h5.tmp'
+    final_file = f'worker_{worker_id}.h5'
+    
+    try:
+        with h5py.File(temp_file, 'w') as h5_out:
+            # Write all data
+            for key, data in results.items():
+                h5_out.create_dataset(key, data=data)
+        
+        # Only rename to final name if write was successful
+        os.rename(temp_file, final_file)
+        logging.info(f"Successfully saved {final_file}")
+        
+    except Exception as e:
+        logging.error(f"Failed to save worker {worker_id} results: {e}")
+        # Clean up temp file
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
+        raise
+```
+
+### 4. Add Progress Tracking and Recovery
+
+```python
+def track_completion_status():
+    """Track which optimizations have been completed."""
+    completed = set()
+    
+    for worker_file in glob.glob('worker_*.h5'):
+        is_valid, _ = validate_h5_file(worker_file)
+        if is_valid:
+            try:
+                with h5py.File(worker_file, 'r') as f:
+                    # Extract completed job IDs from the file
+                    for key in f.keys():
+                        # Parse job ID from key name
+                        completed.add(key)
+            except:
+                continue
+    
+    return completed
+
+def generate_missing_jobs(total_jobs, completed_jobs):
+    """Generate list of jobs that still need to be completed."""
+    all_jobs = set(range(total_jobs))
+    missing = all_jobs - completed_jobs
+    return list(missing)
+```
+
+## Recovery Strategy
+
+To recover and continue your work:
+
+1. **Check what you have:**
+```bash
+# Find corrupted files
+for file in worker_*.h5; do
+    if ! python -c "import h5py; h5py.File('$file', 'r').close()" 2>/dev/null; then
+        echo "Corrupted: $file"
+        rm "$file"  # Remove corrupted files
+    fi
+done
+```
+
+2. **Merge valid files:**
+```python
+# Run the modified script to merge only valid files
+# This will tell you exactly what data you have
+```
+
+3. **Resume missing work:**
+```python
+def resume_incomplete_work():
+    completed = track_completion_status()
+    missing = generate_missing_jobs(total_expected=3000, completed_jobs=completed)
+    
+    if missing:
+        logging.info(f"Resuming {len(missing)} incomplete optimizations...")
+        # Run multiprocessing only on missing jobs
+        run_optimization_batch(missing)
+```
+
+The key improvements are:
+- **Validation before merging** prevents crashes
+- **Atomic writes** prevent corruption during writing  
+- **Recovery tracking** lets you resume interrupted work
+- **Graceful error handling** with options to continue or stop
+
+Would you like me to help you implement any of these specific parts?

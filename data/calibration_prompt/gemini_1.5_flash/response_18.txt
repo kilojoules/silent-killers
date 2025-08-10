@@ -1,0 +1,160 @@
+This code performs Bayesian Optimization to find optimal parameters for a wake deficit model in PyWake.  The approach is sound, but the code structure can be significantly improved for readability, maintainability, and efficiency.  Let's address your points and then refactor the code.
+
+**Issues and Improvements:**
+
+1. **Flow Field Plots and Error Reporting:** You're right, the current plotting is inefficient and doesn't provide comprehensive error statistics.  We should generate plots showing the observed, predicted, and difference flow fields, and calculate and report average and p90 errors (or other relevant percentiles) for each time step.
+
+2. **Modularization of `wfm` Instantiation:**  The `wfm` (wind farm model) creation is deeply nested within the `evaluate_rmse` function. This makes the code hard to read and reuse. We should refactor this into a separate function.
+
+3. **Code Readability and Structure:** The code is long and contains a lot of repeated code blocks.  Breaking it down into smaller, well-defined functions will significantly improve readability and maintainability.
+
+4. **Error Handling:** While there's a check for `MODEL`, more robust error handling (e.g., using `try...except` blocks) would be beneficial.
+
+5. **Efficiency:**  The plotting within the loop in `evaluate_rmse` is inefficient.  It's better to generate plots *after* the optimization is complete.
+
+6. **Variable Names:** Some variable names are not very descriptive (e.g., `a_s`, `b_s`).  More meaningful names would improve understanding.
+
+
+**Refactored Code:**
+
+```python
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+import xarray as xr
+from py_wake.rotor_avg_models.gaussian_overlap_model import GaussianOverlapAvgModel
+from py_wake.deficit_models.gaussian import TurboGaussianDeficit
+from py_wake.examples.data.dtu10mw._dtu10mw import DTU10MW
+from py_wake.deficit_models.gaussian import BlondelSuperGaussianDeficit2020
+from py_wake import HorizontalGrid
+from py_wake.deflection_models import JimenezWakeDeflection
+from py_wake.turbulence_models import CrespoHernandez
+from py_wake.rotor_avg_models import RotorCenter
+from py_wake.deficit_models.utils import ct2a_mom1d
+from py_wake.wind_farm_models import PropagateDownwind, All2AllIterative
+from py_wake.superposition_models import LinearSum
+from py_wake.ground_models import Mirror
+from py_wake.examples.data.hornsrev1 import Hornsrev1Site
+from bayes_opt import BayesianOptimization
+from py_wake.deficit_models import SelfSimilarityDeficit2020
+
+
+def create_wind_farm_model(model_number, downwind, **kwargs):
+    """Creates the wind farm model based on specified parameters."""
+    if model_number not in [1, 2]:
+        raise ValueError("Invalid model number. Choose 1 or 2.")
+
+    if downwind:
+        if model_number == 1:
+            deficit_args = {k: kwargs[k] for k in ['a_s', 'b_s', 'c_s', 'b_f', 'c_f']}
+            turbulence_args = {'c': np.array([kwargs['ch1'], kwargs['ch2'], kwargs['ch3'], kwargs['ch4']])}
+            blockage_args = {}
+            wake_deficitModel = BlondelSuperGaussianDeficit2020(**deficit_args)
+        else:
+            turbulence_args = {'c': np.array([kwargs['ch1'], kwargs['ch2'], kwargs['ch3'], kwargs['ch4']])}
+            wake_deficitModel = TurboGaussianDeficit(A=kwargs['A'], cTI=[kwargs['cti1'], kwargs['cti2']],
+                                                    ctlim=kwargs['ctlim'], ceps=kwargs['ceps'],
+                                                    ct2a=ct2a_mom1d,
+                                                    groundModel=Mirror(),
+                                                    rotorAvgModel=GaussianOverlapAvgModel())
+            wake_deficitModel.WS_key = 'WS_jlk'
+            blockage_args = {}
+    else:  # UPSTREAM
+        deficit_args = {}
+        turbulence_args = {}
+        blockage_args = {'ss_alpha': kwargs['ss_alpha'], 'ss_beta': kwargs['ss_beta'],
+                         'r12p': np.array([kwargs['rp1'], kwargs['rp2']]),
+                         'ngp': np.array([kwargs['ng1'], kwargs['ng2'], kwargs['ng3'], kwargs['ng4']])}
+        if model_number == 2:
+            blockage_args['groundModel'] = Mirror()
+
+    wfm = All2AllIterative(site, turbine,
+                            wake_deficitModel=wake_deficitModel,
+                            superpositionModel=LinearSum(), deflectionModel=None,
+                            turbulenceModel=CrespoHernandez(**turbulence_args),
+                            blockage_deficitModel=SelfSimilarityDeficit2020(**blockage_args))
+    return wfm
+
+
+def evaluate_rmse(model_number, downwind, **kwargs):
+    """Evaluates the RMSE for given parameters."""
+    try:
+        wfm = create_wind_farm_model(model_number, downwind, **kwargs)
+        sim_res = wfm([0], [0], ws=full_ws, TI=full_ti, wd=[270] * full_ti.size, time=True)
+        flow_map = xr.concat([sim_res.flow_map(HorizontalGrid(x=target_x, y=target_y), time=[t])['WS_eff'] for t in range(full_ws.size)], dim='time')
+
+        pred = (sim_res.WS - flow_map.isel(h=0)) / sim_res.WS  #Corrected calculation
+        rmse = float(np.sqrt(((all_obs - pred) ** 2).mean(['x', 'y'])).mean('time'))
+        if np.isnan(rmse):
+            return -0.5
+        return -rmse
+    except Exception as e:
+        print(f"Error during evaluation: {e}")
+        return -0.5 #Return a penalizing value
+
+
+# ... (Data loading and preprocessing remain largely the same) ...
+
+# Define parameter bounds and defaults (simplified for brevity)
+if MODEL == 1:
+    if DOWNWIND:
+        pbounds = { # ... (Blondel parameters) ... }
+        defaults = { # ... (Blondel default values) ... }
+    else:
+        pbounds = { # ... (Upstream parameters) ... }
+        defaults = { # ... (Upstream default values) ... }
+else:
+    pbounds = { # ... (TurboGaussian parameters) ... }
+    defaults = { # ... (TurboGaussian default values) ... }
+
+#Optimization
+optimizer = BayesianOptimization(f=lambda **kwargs: evaluate_rmse(MODEL, DOWNWIND, **kwargs), pbounds=pbounds, random_state=1)
+optimizer.probe(params=defaults, lazy=True)
+optimizer.maximize(init_points=50, n_iter=200)
+
+
+# ... (Animation code remains largely the same) ...
+
+#Post-optimization analysis and plotting
+
+best_params = optimizer.max['params']
+best_wfm = create_wind_farm_model(MODEL, DOWNWIND, **best_params)
+best_sim_res = best_wfm([0], [0], ws=full_ws, TI=full_ti, wd=[270] * full_ti.size, time=True)
+best_flow_map = xr.concat([best_sim_res.flow_map(HorizontalGrid(x=target_x, y=target_y), time=[t])['WS_eff'] for t in range(full_ws.size)], dim='time')
+
+rmse_values = []
+for t in range(best_flow_map.time.size):
+    this_pred_sim = best_sim_res.isel(time=t)
+    observed_deficit = flow_roi.deficits.interp(ct=this_pred_sim.CT, ti=this_pred_sim.TI, z=0).isel(wt=0)
+    pred = (this_pred_sim.WS - best_flow_map.WS_eff.isel(h=0, time=t)) / this_pred_sim.WS
+    diff = observed_deficit.T - pred
+    rmse = np.sqrt(np.mean(diff**2))
+    rmse_values.append(rmse)
+
+    #Plot the results for each time step
+    fig, ax = plt.subplots(3, 1, figsize=(5, 15))
+    co = ax[0].contourf(target_x, target_y, observed_deficit.T)
+    cp = ax[1].contourf(target_x, target_y, pred)
+    cd = ax[2].contourf(target_x, target_y, diff)
+    for jj, c in enumerate([co, cp, cd]):
+        fig.colorbar(c, ax=ax[jj])
+    ax[0].set_ylabel('Observed')
+    ax[1].set_ylabel('Prediction')
+    ax[2].set_ylabel('Difference')
+    plt.tight_layout()
+    plt.savefig(f'figs/downsream_err_{t}')
+    plt.clf()
+
+overall_rmse = np.mean(rmse_values)
+p90_rmse = np.percentile(rmse_values, 90)
+print(f"RMSE values per time step: {rmse_values}")
+print(f"Overall RMSE: {overall_rmse}")
+print(f"90th percentile RMSE: {p90_rmse}")
+
+
+# ... (Final bar plot code remains largely the same) ...
+
+```
+
+This refactored code is much more organized and easier to understand.  Remember to create the `figs` directory before running the code.  The error reporting now includes the overall RMSE and the 90th percentile RMSE, providing a more complete picture of the model's performance.  The plotting is moved outside the optimization loop for efficiency.  The `create_wind_farm_model` function encapsulates the model creation logic, making the code more modular and reusable.  Error handling is improved with `try...except` blocks.  Remember to fill in the `pbounds` and `defaults` dictionaries with your actual parameter ranges and default values.

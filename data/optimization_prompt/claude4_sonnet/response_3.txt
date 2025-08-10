@@ -1,0 +1,208 @@
+Looking at this error, the issue is that one or more of the worker HDF5 files is corrupted or invalid (the "file signature not found" error indicates the file doesn't have a proper HDF5 header). This likely happened during the multiprocessing operations where a worker process may have crashed or been interrupted while writing to the file.
+
+Here's how to diagnose and fix this issue:
+
+## Diagnosis
+
+The error occurs in the file joining phase when trying to read worker files. The script completed 2999/3000 optimizations but failed when trying to merge the results because at least one worker file is corrupted.
+
+## Solution
+
+Here's a modified version of the relevant parts of your script to handle this robustly:
+
+```python
+import h5py
+import os
+import logging
+from pathlib import Path
+
+def validate_worker_file(worker_file):
+    """
+    Validate that a worker HDF5 file is readable and contains expected data.
+    Returns (is_valid, error_message)
+    """
+    if not os.path.exists(worker_file):
+        return False, f"File does not exist: {worker_file}"
+    
+    if os.path.getsize(worker_file) == 0:
+        return False, f"File is empty: {worker_file}"
+    
+    try:
+        with h5py.File(worker_file, 'r') as h5_test:
+            # Check if file has the expected structure
+            if len(h5_test.keys()) == 0:
+                return False, f"File contains no datasets: {worker_file}"
+            
+            # Optional: Add more specific validation based on your data structure
+            # For example, check for specific groups/datasets you expect
+            
+        return True, "Valid"
+    except Exception as e:
+        return False, f"Cannot read HDF5 file {worker_file}: {str(e)}"
+
+def get_valid_worker_files(output_dir, num_workers):
+    """
+    Get list of valid worker files and report any issues.
+    Returns (valid_files, invalid_files)
+    """
+    valid_files = []
+    invalid_files = []
+    
+    for worker_id in range(num_workers):
+        worker_file = os.path.join(output_dir, f'worker_{worker_id}.h5')
+        is_valid, error_msg = validate_worker_file(worker_file)
+        
+        if is_valid:
+            valid_files.append(worker_file)
+            logging.info(f"Worker file {worker_id} is valid")
+        else:
+            invalid_files.append((worker_file, error_msg))
+            logging.error(f"Worker file {worker_id} is invalid: {error_msg}")
+    
+    return valid_files, invalid_files
+
+def safe_merge_worker_files(output_dir, final_output_file, num_workers):
+    """
+    Safely merge worker files with validation and error handling.
+    """
+    logging.info("Validating worker files before merging...")
+    
+    valid_files, invalid_files = get_valid_worker_files(output_dir, num_workers)
+    
+    if invalid_files:
+        logging.error(f"Found {len(invalid_files)} invalid worker files:")
+        for worker_file, error_msg in invalid_files:
+            logging.error(f"  - {error_msg}")
+        
+        # Decide how to handle invalid files
+        if len(valid_files) == 0:
+            raise RuntimeError("No valid worker files found. Cannot proceed with merging.")
+        else:
+            logging.warning(f"Proceeding with {len(valid_files)} valid files out of {num_workers} total")
+            response = input(f"Continue with {len(valid_files)} valid files? (y/n): ")
+            if response.lower() != 'y':
+                raise RuntimeError("User chose to abort due to invalid worker files")
+    
+    # Proceed with merging valid files
+    logging.info(f"Merging {len(valid_files)} valid worker files...")
+    
+    with h5py.File(final_output_file, 'w') as h5_out:
+        total_merged = 0
+        
+        for worker_file in valid_files:
+            try:
+                with h5py.File(worker_file, 'r') as h5_in:
+                    # Your existing merge logic here
+                    for key in h5_in.keys():
+                        if key not in h5_out:
+                            # Copy dataset
+                            h5_in.copy(key, h5_out)
+                        else:
+                            # Handle merging logic for duplicate keys if needed
+                            logging.warning(f"Duplicate key {key} found in {worker_file}")
+                    
+                    total_merged += len(h5_in.keys())
+                    logging.info(f"Successfully merged {worker_file}")
+                    
+            except Exception as e:
+                logging.error(f"Error merging {worker_file}: {str(e)}")
+                # Decide whether to continue or abort
+                continue
+    
+    logging.info(f"Merge completed. Total datasets merged: {total_merged}")
+    
+    # Clean up valid worker files
+    for worker_file in valid_files:
+        try:
+            os.remove(worker_file)
+            logging.info(f"Cleaned up {worker_file}")
+        except Exception as e:
+            logging.warning(f"Could not remove {worker_file}: {str(e)}")
+
+# Modified main function
+def main():
+    # Your existing setup code...
+    
+    try:
+        # Your existing multiprocessing code...
+        
+        # Replace the file merging section with:
+        logging.info("Starting safe merge of worker files...")
+        safe_merge_worker_files(output_dir, final_output_file, num_workers)
+        
+    except Exception as e:
+        logging.error(f"Error in main process: {str(e)}")
+        
+        # Emergency data recovery
+        logging.info("Attempting to recover data from valid worker files...")
+        try:
+            valid_files, invalid_files = get_valid_worker_files(output_dir, num_workers)
+            if valid_files:
+                recovery_file = os.path.join(output_dir, 'recovered_data.h5')
+                safe_merge_worker_files(output_dir, recovery_file, num_workers)
+                logging.info(f"Recovery data saved to {recovery_file}")
+        except Exception as recovery_error:
+            logging.error(f"Recovery failed: {str(recovery_error)}")
+        
+        raise
+
+# Additional utility function to inspect existing files
+def inspect_worker_files(output_dir, num_workers):
+    """
+    Inspect existing worker files to see what data can be recovered.
+    """
+    print(f"Inspecting worker files in {output_dir}...")
+    
+    for worker_id in range(num_workers):
+        worker_file = os.path.join(output_dir, f'worker_{worker_id}.h5')
+        is_valid, error_msg = validate_worker_file(worker_file)
+        
+        if is_valid:
+            try:
+                with h5py.File(worker_file, 'r') as h5_file:
+                    num_datasets = len(h5_file.keys())
+                    file_size = os.path.getsize(worker_file)
+                    print(f"Worker {worker_id}: VALID - {num_datasets} datasets, {file_size} bytes")
+            except Exception as e:
+                print(f"Worker {worker_id}: ERROR reading - {str(e)}")
+        else:
+            file_size = os.path.getsize(worker_file) if os.path.exists(worker_file) else 0
+            print(f"Worker {worker_id}: INVALID - {file_size} bytes, Error: {error_msg}")
+
+if __name__ == "__main__":
+    # To inspect your current files:
+    # inspect_worker_files("your_output_directory", num_workers)
+    
+    main()
+```
+
+## Immediate Recovery Steps
+
+1. **First, inspect your existing worker files:**
+```python
+# Run this to see which files are recoverable
+inspect_worker_files("your_output_directory", num_workers)
+```
+
+2. **Recover what you can:**
+```python
+# This will merge only the valid worker files
+valid_files, invalid_files = get_valid_worker_files("your_output_directory", num_workers)
+if valid_files:
+    safe_merge_worker_files("your_output_directory", "recovered_data.h5", num_workers)
+```
+
+## Prevention for Future Runs
+
+1. **Add periodic validation during processing**
+2. **Use atomic writes for worker files**
+3. **Add checkpoint/resume functionality**
+4. **Monitor disk space and system resources**
+
+The key improvements are:
+- **Validation before merging**: Check all worker files before attempting to merge
+- **Graceful error handling**: Continue with valid files when possible
+- **Recovery options**: Attempt to save what data is available
+- **Better logging**: Clear information about what went wrong and what was recovered
+
+This should help you recover your current data and prevent similar issues in future runs.

@@ -1,0 +1,79 @@
+This script uses PyWake, NumPy, and Matplotlib to propagate uncertainties through a wind farm simulation and visualize the sensitivity of the flow field.  It focuses on the Sobol' sensitivity analysis of effective wind speed (`WS_eff`) as a function of x and y coordinates.  Because generating images for a full Sobol' analysis can be computationally expensive, the script is structured to allow you to adjust the number of samples and the resolution of the images.
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake.wind_farm_models import EngineeringWakeModel
+from pywake.examples.data.hornsrev1 import Hornsrev1Site
+from pywake.flow_map import FlowMap
+from SALib.analyze import sobol
+
+# --- Configuration ---
+n_samples = 10  # Reduce for faster execution, increase for better accuracy.  Ideally, 1000+
+x_resolution = 50  # Resolution of the x-axis in the flow field image
+y_resolution = 50  # Resolution of the y-axis in the flow field image
+time_steps = 3  # Number of time steps to visualize
+
+# --- Wind farm setup ---
+site = Hornsrev1Site()
+windTurbines = site.windTurbines
+windFarmModel = EngineeringWakeModel(site, windTurbines)
+
+# --- Uncertainty definition (example) ---
+problem = {
+    'num_vars': 1,
+    'names': ['inflow_speed'],
+    'bounds': [[7, 10]]  # Example: Inflow speed between 7 and 10 m/s
+}
+
+# --- Generate Sobol samples ---
+param_values = sobol.sample(problem, n_samples, calc_second_order=True)
+
+# --- Simulate and store results ---
+all_flow_maps = []
+for i, inflow_speed in enumerate(param_values['inflow_speed']):
+    print(f"Simulating with inflow speed: {inflow_speed:.2f} m/s")
+    # Adjust inflow speed here.  This is a simplification; a more sophisticated approach might involve modifying the site's wind speed data directly.
+    sim_results = windFarmModel(site.x_i, site.y_i, ws_ilk=np.array([inflow_speed] * len(site.x_i))[:, None])
+    flow_map = FlowMap(sim_results, resolution=(x_resolution, y_resolution), wd=site.wd[0])
+    all_flow_maps.append(flow_map.WS_eff)
+
+# --- Sobol sensitivity analysis ---
+# Reshape data for Sobol analysis:  (samples, x, y) -> (samples, x*y)
+reshaped_data = np.array(all_flow_maps).reshape(n_samples, x_resolution * y_resolution)
+Si = sobol.analyze(problem, reshaped_data, print_to_console=True)
+
+# --- Visualize flow field sensitivity ---
+for t in range(time_steps): # Visualize sensitivity at different time steps (assuming time-dependent data)
+    plt.figure(figsize=(12, 6))
+    plt.subplot(1, 2, 1)
+    plt.imshow(Si['S1'].reshape(x_resolution, y_resolution), origin='lower', cmap='viridis')
+    plt.title(f'First-order Sobol Indices (Time Step {t+1})')
+    plt.colorbar(label='Sensitivity Index')
+    plt.xlabel('x')
+    plt.ylabel('y')
+
+    plt.subplot(1, 2, 2)
+    plt.imshow(Si['ST'].reshape(x_resolution, y_resolution), origin='lower', cmap='viridis')
+    plt.title(f'Total Sobol Indices (Time Step {t+1})')
+    plt.colorbar(label='Sensitivity Index')
+    plt.xlabel('x')
+    plt.ylabel('y')
+    plt.tight_layout()
+    plt.savefig(f'flow_field_sensitivity_time_{t+1}.png')
+    plt.show()
+
+
+print("Sobol sensitivity analysis complete. Images saved.")
+
+```
+
+**Before running:**
+
+1. **Install necessary libraries:** `pip install pywake numpy matplotlib SALib`
+2. **Understand the uncertainty:** The `problem` dictionary defines the uncertainty parameters.  You'll need to adapt this to reflect the actual uncertainties in your inflow wind speed data. Consider adding more parameters (e.g., turbulence intensity, wind direction).  You might use statistical distributions from your measurements.
+3. **Computational Cost:** Sobol' sensitivity analysis is computationally intensive. Start with a low `n_samples` to test and gradually increase it for better accuracy. The resolution of the flow field images also affects the computation time.
+4. **Time Dependence:** The current example simplifies time dependence by just visualizing at different time steps.  For true time-dependent sensitivity, you would need to integrate the time dimension more explicitly into the analysis.  This might require significantly more computational resources.
+
+
+This improved script provides a more complete framework for uncertainty propagation and visualization. Remember to adapt the uncertainty definition and parameters to your specific wind farm and inflow data.  The choice of visualization method (e.g., using colormaps to represent sensitivity) is also customizable.

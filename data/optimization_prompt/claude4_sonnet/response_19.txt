@@ -1,0 +1,226 @@
+Looking at this error, I can diagnose the issue:
+
+## Diagnosis
+
+The error `OSError: Unable to synchronously open file (file signature not found)` indicates that one of the worker HDF5 files is corrupted or incomplete. This likely happened because:
+
+1. A worker process was interrupted/killed while writing to an HDF5 file
+2. The file exists but has an invalid HDF5 signature/header
+3. The multiprocessing completion tracking (2999/3000) suggests one optimization failed but the script didn't detect it properly
+
+## Solution
+
+Here's how to modify the script to detect and handle corrupted files reliably:
+
+```python
+import h5py
+import os
+import logging
+from pathlib import Path
+
+def validate_worker_file(worker_file):
+    """
+    Validate that a worker HDF5 file is readable and contains expected data.
+    Returns (is_valid, error_message)
+    """
+    try:
+        # Check if file exists and has non-zero size
+        if not os.path.exists(worker_file):
+            return False, f"File does not exist: {worker_file}"
+        
+        file_size = os.path.getsize(worker_file)
+        if file_size == 0:
+            return False, f"File is empty: {worker_file}"
+        
+        # Try to open and validate HDF5 structure
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Check for expected groups/datasets
+            if len(h5_in.keys()) == 0:
+                return False, f"File contains no data: {worker_file}"
+            
+            # Add any specific validation for your data structure
+            # For example, check for required datasets:
+            # if 'layouts' not in h5_in:
+            #     return False, f"Missing 'layouts' dataset: {worker_file}"
+            
+        return True, "File is valid"
+        
+    except OSError as e:
+        return False, f"HDF5 file corrupted: {worker_file} - {str(e)}"
+    except Exception as e:
+        return False, f"Unexpected error validating {worker_file}: {str(e)}"
+
+def find_and_validate_worker_files(temp_dir, expected_count=None):
+    """
+    Find all worker files and validate them.
+    Returns (valid_files, invalid_files, missing_count)
+    """
+    worker_files = list(Path(temp_dir).glob("worker_*.h5"))
+    valid_files = []
+    invalid_files = []
+    
+    logging.info(f"Found {len(worker_files)} worker files")
+    
+    for worker_file in worker_files:
+        is_valid, error_msg = validate_worker_file(worker_file)
+        if is_valid:
+            valid_files.append(worker_file)
+            logging.debug(f"Valid: {worker_file}")
+        else:
+            invalid_files.append((worker_file, error_msg))
+            logging.error(f"Invalid: {error_msg}")
+    
+    missing_count = 0
+    if expected_count:
+        missing_count = expected_count - len(worker_files)
+        if missing_count > 0:
+            logging.error(f"Missing {missing_count} worker files (expected {expected_count}, found {len(worker_files)})")
+    
+    return valid_files, invalid_files, missing_count
+
+def safe_merge_worker_files(output_file, temp_dir, expected_worker_count=None):
+    """
+    Safely merge worker files with validation.
+    """
+    # Find and validate all worker files
+    valid_files, invalid_files, missing_count = find_and_validate_worker_files(
+        temp_dir, expected_worker_count
+    )
+    
+    # Report validation results
+    if invalid_files:
+        logging.error(f"Found {len(invalid_files)} invalid worker files:")
+        for worker_file, error_msg in invalid_files:
+            logging.error(f"  - {error_msg}")
+    
+    if missing_count > 0:
+        logging.error(f"Missing {missing_count} worker files")
+    
+    # Decide whether to proceed
+    total_expected = expected_worker_count or len(valid_files) + len(invalid_files)
+    success_rate = len(valid_files) / total_expected if total_expected > 0 else 0
+    
+    logging.info(f"Validation summary: {len(valid_files)}/{total_expected} files valid ({success_rate:.1%})")
+    
+    # You can adjust this threshold based on your requirements
+    MIN_SUCCESS_RATE = 0.95  # Require 95% success rate
+    
+    if success_rate < MIN_SUCCESS_RATE:
+        error_msg = (f"Too many failed optimizations ({success_rate:.1%} success rate). "
+                    f"Required: {MIN_SUCCESS_RATE:.1%}")
+        logging.error(error_msg)
+        
+        # Option 1: Raise exception to stop completely
+        raise RuntimeError(error_msg)
+        
+        # Option 2: Ask user for confirmation (uncomment if preferred)
+        # response = input(f"Continue with {len(valid_files)} valid files? (y/N): ")
+        # if response.lower() != 'y':
+        #     raise RuntimeError("User chose to abort due to validation failures")
+    
+    # Proceed with merging valid files
+    logging.info(f"Merging {len(valid_files)} valid worker files...")
+    
+    with h5py.File(output_file, 'w') as h5_out:
+        total_merged = 0
+        
+        for i, worker_file in enumerate(valid_files):
+            try:
+                with h5py.File(worker_file, 'r') as h5_in:
+                    # Your existing merge logic here
+                    for key in h5_in.keys():
+                        if key not in h5_out:
+                            h5_out.create_group(key)
+                        
+                        for subkey in h5_in[key].keys():
+                            h5_out[key][subkey] = h5_in[key][subkey][...]
+                    
+                    total_merged += 1
+                    
+            except Exception as e:
+                logging.error(f"Error merging {worker_file}: {e}")
+                # File was validated but failed during merge - this is concerning
+                continue
+    
+    logging.info(f"Successfully merged {total_merged} worker files into {output_file}")
+    
+    # Clean up valid worker files
+    for worker_file in valid_files:
+        try:
+            os.remove(worker_file)
+        except OSError as e:
+            logging.warning(f"Could not remove {worker_file}: {e}")
+    
+    # Optionally clean up invalid files too
+    for worker_file, _ in invalid_files:
+        try:
+            os.remove(worker_file)
+            logging.info(f"Removed corrupted file: {worker_file}")
+        except OSError as e:
+            logging.warning(f"Could not remove corrupted file {worker_file}: {e}")
+    
+    return len(valid_files), len(invalid_files)
+
+# Modified main function
+def main():
+    # Your existing setup code...
+    
+    try:
+        # Your multiprocessing code...
+        
+        # Replace the file merging section with:
+        expected_workers = len(optimization_tasks)  # or however you count expected workers
+        
+        valid_count, invalid_count = safe_merge_worker_files(
+            output_file=final_output_file,
+            temp_dir=temp_directory,
+            expected_worker_count=expected_workers
+        )
+        
+        logging.info(f"Merge completed: {valid_count} valid, {invalid_count} invalid files")
+        
+    except RuntimeError as e:
+        logging.error(f"Process stopped due to validation failure: {e}")
+        # Optionally preserve invalid files for debugging
+        return 1
+    
+    except Exception as e:
+        logging.error(f"Unexpected error: {e}")
+        return 1
+    
+    return 0
+
+if __name__ == "__main__":
+    exit(main())
+```
+
+## Recovery Options
+
+For your current situation, you can:
+
+1. **Identify the corrupted file**:
+```bash
+# Check which worker file is corrupted
+for file in worker_*.h5; do
+    echo "Checking $file..."
+    python -c "import h5py; h5py.File('$file', 'r')" 2>/dev/null && echo "OK" || echo "CORRUPTED"
+done
+```
+
+2. **Manual recovery**:
+```python
+# Script to merge only valid files
+def recover_partial_results():
+    temp_dir = "your_temp_directory"
+    valid_files, invalid_files, _ = find_and_validate_worker_files(temp_dir)
+    
+    print(f"Found {len(valid_files)} valid files, {len(invalid_files)} invalid files")
+    
+    if len(valid_files) >= 47:  # 94% of 50 seeds
+        safe_merge_worker_files("recovered_output.h5", temp_dir)
+        print("Recovery successful!")
+    else:
+        print("Too few valid files for meaningful recovery")
+```
+
+This approach will prevent similar issues in the future by validating files before attempting to merge them and providing clear error reporting when files are corrupted.

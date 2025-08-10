@@ -1,0 +1,87 @@
+Certainly! Below is a Python script that demonstrates how to propagate measurement uncertainties through a flow simulation using PyWake and compute the Sobol sensitivity for effective wind speed (`WS_eff`) as a function of the coordinates `(x, y)`. The script also saves a series of flow field images to visualize the sensitivity.
+
+Please ensure you have the required libraries installed: PyWake, NumPy, Matplotlib, and any other dependencies you may need.
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake import PyWake
+from SALib.sample import saltelli
+from SALib.analyze import sobol
+import os
+
+# Define the model input parameters
+def define_problem():
+    problem = {
+        'num_vars': 3,  # Number of uncertain input parameters (example: wind speed, turbulence intensity, etc.)
+        'names': ['U', 'TI', 'H'],  # Names of the uncertain parameters
+        'bounds': [[8, 12],      # Wind Speed (m/s)
+                   [0.05, 0.15],  # Turbulence Intensity (as a fraction)
+                   [0, 100]]      # Hub Height (m)
+    }
+    return problem
+
+def run_simulation(params):
+    # Unpack parameters
+    U, TI, H = params
+    
+    # Set up the wind farm model in PyWake (example setup)
+    # This will depend on your specific use case
+    wake_model = PyWake()  # Initialize your PyWake model here
+    
+    # Run the simulation
+    flow_field = wake_model.calculate_flow_field(U, TI, H)  # Example function
+    return flow_field
+
+def generate_sobol_samples(problem, num_samples):
+    # Generate samples using Saltelli's method
+    return saltelli.sample(problem, num_samples)
+
+def analyze_sobol_results(S1, S2, S3):
+    # Analyzing Sobol results
+    print("First-order Sobol indices:")
+    print(f"S1: {S1}, S2: {S2}, S3: {S3}")
+
+def plot_flow_field(flow_field, time_step, output_dir):
+    plt.figure(figsize=(10, 8))
+    plt.imshow(flow_field, extent=(0, 100, 0, 100))  # Adjust extent as necessary
+    plt.colorbar(label='WS_eff (m/s)')
+    plt.title(f'Flow Field at Time Step: {time_step}')
+    plt.savefig(os.path.join(output_dir, f'flow_field_t{time_step}.png'))
+    plt.close()
+
+def main():
+    # Define the problem
+    problem = define_problem()
+    num_samples = 1000
+    samples = generate_sobol_samples(problem, num_samples)
+
+    # Directory to save images
+    output_dir = 'flow_field_images'
+    os.makedirs(output_dir, exist_ok=True)
+
+    flow_fields = []
+    
+    # Run simulations for each sample
+    for i, sample in enumerate(samples):
+        flow_field = run_simulation(sample)
+        flow_fields.append(flow_field)
+        # Save flow field images at different time steps
+        plot_flow_field(flow_field, i, output_dir)
+    
+    # Analyze Sobol Sensitivity
+    sobol_results = sobol.analyze(problem, flow_fields)
+    analyze_sobol_results(sobol_results['S1'], sobol_results['S2'], sobol_results['S3'])
+
+if __name__ == "__main__":
+    main()
+```
+
+### Notes:
+1. **Model Setup**: The `run_simulation` function is a placeholder. You need to specify how you initialize and run your PyWake model according to your specific case.
+2. **Flow Field Calculation**: The way you calculate the flow field (`calculate_flow_field`) will depend on how your model is set up. Adjust the parameters and method calls as necessary.
+3. **Sobol Analysis**: The script uses the SALib library for Sobol sensitivity analysis. Make sure you have it installed and properly set up.
+4. **Image Saving**: The flow field images will be saved in a folder named 'flow_field_images'. You can change the directory name if needed.
+5. **Parameter Definitions**: Adjust the uncertain parameters (`U`, `TI`, `H`) and their bounds based on your specific use case.
+
+Make sure to test and modify the script according to your specific requirements and PyWake setup.

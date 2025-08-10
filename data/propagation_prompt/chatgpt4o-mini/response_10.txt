@@ -1,0 +1,82 @@
+To create a script that propagates realistic measurement uncertainties through PyWake and generates flow field images showing the Sobol sensitivity of effective wind speed (`WS_eff`) as a function of x and y, we can follow a step-by-step approach. Below is a Python script that outlines how to accomplish this. Please ensure you have the necessary libraries installed (PyWake, NumPy, Matplotlib, etc.) before running the script.
+
+### Prerequisites
+Make sure you have the following Python packages installed:
+```bash
+pip install numpy matplotlib pywake sobol_seq
+```
+
+### Script
+Here's a Python script that accomplishes the task:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+import pywake
+from sobol_seq import i4_sobol_generate
+
+# Define constants
+n_samples = 1000  # Number of Sobol samples
+n_parameters = 3  # Number of uncertain parameters
+x_range = np.linspace(0, 1000, 100)  # x-coordinates
+y_range = np.linspace(0, 1000, 100)  # y-coordinates
+
+# Define function to calculate WS_eff based on input parameters
+def calculate_WS_eff(inputs):
+    # Placeholder for the actual flow model
+    # Replace this with the actual implementation using PyWake
+    return np.random.rand(len(inputs))  # Replace with your model output
+
+# Generate Sobol sequences for the uncertain parameters
+sobol_samples = i4_sobol_generate(n_parameters, n_samples)
+
+# Propagate uncertainties through the model
+WS_eff_results = []
+for sample in sobol_samples:
+    WS_eff = calculate_WS_eff(sample)
+    WS_eff_results.append(WS_eff)
+
+# Convert results to an array for analysis
+WS_eff_results = np.array(WS_eff_results)
+
+# Calculate Sobol sensitivity for WS_eff
+def sobol_sensitivity(WS_eff_results):
+    # Implement Sobol sensitivity analysis
+    # This is a placeholder; you can use a library or custom implementation
+    sensitivity_indices = np.var(WS_eff_results, axis=0) / np.var(WS_eff_results)
+    return sensitivity_indices
+
+sensitivity_indices = sobol_sensitivity(WS_eff_results)
+
+# Create a grid for x and y
+X, Y = np.meshgrid(x_range, y_range)
+
+# Create flow field images showing sensitivity
+for idx, sensitivity in enumerate(sensitivity_indices):
+    plt.figure(figsize=(10, 6))
+    plt.contourf(X, Y, sensitivity.reshape((len(x_range), len(y_range))), levels=100, cmap='viridis')
+    plt.colorbar(label='Sensitivity Index')
+    plt.title(f'Sobol Sensitivity of WS_eff at Sample {idx + 1}')
+    plt.xlabel('X Coordinate (m)')
+    plt.ylabel('Y Coordinate (m)')
+    plt.savefig(f'sobol_sensitivity_{idx + 1}.png')
+    plt.close()
+
+print("Flow field images saved successfully.")
+```
+
+### Explanation of the Script
+1. **Imports**: The script imports necessary libraries.
+2. **Constants**: It defines the number of samples and parameters, as well as the ranges for x and y coordinates.
+3. **Function Definition**: A placeholder function `calculate_WS_eff` is defined to simulate the effective wind speed calculation based on uncertain parameters.
+4. **Sobol Sequence Generation**: It generates Sobol sequences to sample the uncertain parameters.
+5. **Uncertainty Propagation**: The script loops through the Sobol samples, calculates `WS_eff` for each sample, and stores the results.
+6. **Sensitivity Analysis**: The `sobol_sensitivity` function is called to compute the Sobol sensitivity indices for `WS_eff`.
+7. **Visualization**: It creates contour plots for the sensitivity indices and saves them as PNG images.
+
+### Note
+- The `calculate_WS_eff` function is a placeholder and should be replaced with the actual model implementation using PyWake or another suitable model.
+- Adjust the parameters and ranges according to your specific requirements and model details.
+- The Sobol sensitivity analysis implementation is also a placeholder. You may want to use a dedicated library or a more accurate method to compute the sensitivity indices. 
+
+Run the script in an environment where PyWake and the other required libraries are installed, and it will generate a series of images showing the Sobol sensitivity of `WS_eff`.

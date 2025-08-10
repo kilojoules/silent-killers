@@ -1,0 +1,84 @@
+This script uses PyWake, a Python library for wind farm simulations, to propagate uncertainties in inflow wind speed through a simulation and visualize the sensitivity of the resulting flow field.  It focuses on Sobol sensitivity analysis of the effective wind speed (`WS_eff`) as a function of x and y coordinates.  Because generating images requires significant computational resources and depends on your specific PyWake setup and desired visualization library (e.g., Matplotlib), this script provides a framework.  You will need to adapt and extend parts based on your data and preferences.
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake.wind_farm_models import WindFarmModel
+from pywake.examples.data import example_data_path
+from pywake.site._site import Site
+from pywake.flow_map import XY
+from pywake.turbulence_models import GCLTurbulence
+from pywake.wind_farm_models.engineering_models import All2AllIterative
+from SALib.analyze import sobol
+from SALib.sample import saltelli
+
+# --- Input Data and Parameters ---
+# Replace with your actual data
+path = example_data_path
+site = Site.from_file(path + '/gch.yaml')
+windTurbines = site.windTurbines
+x_coords = np.array([0, 500, 1000, 1500])  # Example x-coordinates of turbines
+y_coords = np.array([0, 0, 0, 0])  # Example y-coordinates of turbines
+
+# Uncertainty parameters (adjust ranges as needed)
+problem = {
+    'num_vars': 2,
+    'names': ['wind_speed_mean', 'wind_direction_std'],
+    'bounds': [[7, 10], [10, 25]] # Mean wind speed and standard deviation of wind direction
+}
+
+# Simulation parameters
+n_samples = 100  # Number of samples for Sobol analysis (increase for better accuracy)
+n_time_steps = 5 # Number of time steps for visualization
+
+# --- Sobol Sensitivity Analysis ---
+param_values = saltelli.sample(problem, n_samples, calc_second_order=True)
+
+# Initialize empty arrays to store results
+ws_eff_results = np.zeros((n_samples, len(x_coords), len(y_coords)))
+
+# Run simulations for each parameter set
+for i, params in enumerate(param_values):
+    ws_mean, ws_std = params
+    # Here you'll need to incorporate the uncertainty into your wind farm model.  This is highly dependent on your site and model.
+    # This is a placeholder - adapt to your specific wind resource data.
+    wind_resource = {'WS_mean': ws_mean, 'WS_std': ws_std} # Example: Adjust mean wind speed and standard deviation
+
+    wf_model = All2AllIterative(site, windTurbines, turbulenceModel=GCLTurbulence())
+    flow_field = wf_model(x_coords, y_coords, wind_resource) #Simulate with uncertain inflow
+
+    # Extract effective wind speed at each turbine location for each time step
+    for t in range(n_time_steps):
+        ws_eff_results[i,:,:] = flow_field.WS_eff[t,:,:]
+
+
+# Perform Sobol analysis
+Si = sobol.analyze(problem, ws_eff_results.flatten(), print_to_console=True)
+
+# --- Visualization ---
+# This section needs adaptation based on your preferred visualization library.
+# Example using Matplotlib:  Creates a series of images showing flow field sensitivity
+
+for t in range(n_time_steps):
+    plt.figure(figsize=(10, 8))
+    plt.imshow(ws_eff_results[:, :, t].mean(axis=0), extent=[x_coords.min(), x_coords.max(), y_coords.min(), y_coords.max()], cmap='viridis')
+    plt.colorbar(label='Mean Effective Wind Speed')
+    plt.title(f'Mean Effective Wind Speed at time step {t+1}')
+    plt.xlabel('x [m]')
+    plt.ylabel('y [m]')
+    plt.savefig(f'flow_field_time_{t+1}.png')
+    plt.close() #close to release memory
+
+
+print("Sobol indices:\n", Si)
+```
+
+
+**To make this code runnable, you need to:**
+
+1. **Install necessary libraries:** `pip install pywake SALib matplotlib`
+2. **Replace placeholder data:**  Update `x_coords`, `y_coords`, `problem` (uncertainty ranges), and the wind resource data input to reflect your specific wind farm layout, turbine characteristics, and inflow conditions.  Critically, you must adapt the way the uncertainty ( `ws_mean`, `ws_std`) is incorporated into the `wf_model` call.  This will likely involve modifying or extending the wind resource definition within PyWake to account for the sampled uncertainty.
+3. **Adapt visualization:** The visualization section uses Matplotlib.  If you prefer a different library (e.g., Seaborn, Plotly), modify this part accordingly.  Consider using a more sophisticated visualization technique to properly represent the uncertainty in the flow field, such as error bars or shaded regions.
+
+
+Remember that running Sobol sensitivity analysis with a large number of samples can be computationally expensive.  Start with a smaller `n_samples` to test the code and then increase it for better accuracy as needed.  The visualization part will also generate multiple image files.  Consider adjusting the resolution and number of time steps to manage storage requirements.

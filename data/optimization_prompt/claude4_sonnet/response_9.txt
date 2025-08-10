@@ -1,0 +1,220 @@
+## Diagnosis
+
+The error occurs when trying to read an HDF5 file that is corrupted or incomplete. The "file signature not found" error typically means:
+
+1. **Incomplete file write**: A worker process was interrupted while writing, leaving a truncated/corrupted HDF5 file
+2. **Zero-byte file**: The file exists but is empty
+3. **Partial write**: The HDF5 header wasn't fully written before the process died
+
+The issue is that your current script doesn't validate file integrity before attempting to merge them.
+
+## Solution: Add File Validation
+
+Here's how to modify your script to detect and handle corrupted files:
+
+```python
+import h5py
+import os
+import logging
+from pathlib import Path
+
+def validate_hdf5_file(filepath):
+    """
+    Validate that an HDF5 file is readable and contains expected data.
+    Returns (is_valid, error_message)
+    """
+    try:
+        # Check if file exists and has non-zero size
+        if not os.path.exists(filepath):
+            return False, f"File does not exist: {filepath}"
+        
+        file_size = os.path.getsize(filepath)
+        if file_size == 0:
+            return False, f"File is empty: {filepath}"
+        
+        # Try to open and read basic structure
+        with h5py.File(filepath, 'r') as f:
+            # Check if file has the expected structure
+            # Adjust these checks based on your actual HDF5 structure
+            if len(f.keys()) == 0:
+                return False, f"File has no datasets: {filepath}"
+            
+            # Optional: Check for specific required datasets/groups
+            # expected_keys = ['layouts', 'metadata', ...]  # adjust as needed
+            # for key in expected_keys:
+            #     if key not in f:
+            #         return False, f"Missing required dataset '{key}' in {filepath}"
+        
+        return True, None
+        
+    except OSError as e:
+        return False, f"Cannot read HDF5 file {filepath}: {str(e)}"
+    except Exception as e:
+        return False, f"Unexpected error reading {filepath}: {str(e)}"
+
+def main():
+    # Your existing setup code...
+    
+    # Before merging, validate all worker files
+    logging.info("Validating worker output files...")
+    invalid_files = []
+    valid_files = []
+    
+    for i in range(num_workers):
+        worker_file = f'worker_{i}_layouts.h5'
+        is_valid, error_msg = validate_hdf5_file(worker_file)
+        
+        if is_valid:
+            valid_files.append(worker_file)
+            logging.info(f"✓ Valid: {worker_file}")
+        else:
+            invalid_files.append((worker_file, error_msg))
+            logging.error(f"✗ Invalid: {error_msg}")
+    
+    # Handle invalid files
+    if invalid_files:
+        logging.error(f"Found {len(invalid_files)} corrupted/invalid worker files:")
+        for filepath, error in invalid_files:
+            logging.error(f"  - {filepath}: {error}")
+        
+        # Option 1: Stop completely
+        raise RuntimeError(f"Cannot proceed with {len(invalid_files)} corrupted files. "
+                          "Check worker processes and rerun missing chunks.")
+        
+        # Option 2: Continue with valid files only (uncomment if preferred)
+        # logging.warning(f"Continuing with {len(valid_files)} valid files, "
+        #                f"skipping {len(invalid_files)} corrupted files")
+    
+    # Continue with merging only valid files
+    logging.info(f"Merging {len(valid_files)} valid worker files...")
+    
+    # Your existing merging code, but iterate over valid_files instead
+    for worker_file in valid_files:  # Changed from range(num_workers)
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                # Your existing merge logic...
+                pass
+        except Exception as e:
+            logging.error(f"Error processing {worker_file}: {e}")
+            # Decide whether to continue or stop
+            raise
+```
+
+## Additional Robustness Improvements
+
+### 1. Add File Locking During Write (in worker processes)
+
+```python
+import fcntl  # Unix/Linux only
+# or use portalocker for cross-platform
+
+def safe_write_hdf5(filepath, data):
+    """Write HDF5 with file locking to prevent corruption"""
+    temp_file = f"{filepath}.tmp"
+    
+    try:
+        with h5py.File(temp_file, 'w') as f:
+            # Lock the file during write
+            fcntl.flock(f.id.get_vfd_handle()[0], fcntl.LOCK_EX)
+            
+            # Write your data
+            # ... your HDF5 writing code ...
+            
+            # Ensure data is written to disk
+            f.flush()
+        
+        # Atomically move completed file
+        os.rename(temp_file, filepath)
+        
+    except Exception as e:
+        # Clean up temp file on error
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
+        raise
+```
+
+### 2. Add Progress Tracking
+
+```python
+def count_completed_tasks():
+    """Count how many tasks were actually completed"""
+    total_completed = 0
+    
+    for i in range(num_workers):
+        worker_file = f'worker_{i}_layouts.h5'
+        is_valid, _ = validate_hdf5_file(worker_file)
+        
+        if is_valid:
+            try:
+                with h5py.File(worker_file, 'r') as f:
+                    # Count actual completed tasks in this file
+                    # Adjust based on your HDF5 structure
+                    completed_in_file = len(f['layouts'])  # or whatever your structure is
+                    total_completed += completed_in_file
+            except:
+                pass
+    
+    return total_completed
+```
+
+### 3. Recovery Strategy
+
+```python
+def identify_missing_work(total_tasks, valid_files):
+    """Identify which specific tasks need to be rerun"""
+    completed_tasks = set()
+    
+    for worker_file in valid_files:
+        with h5py.File(worker_file, 'r') as f:
+            # Extract which specific tasks this file completed
+            # This depends on how you store task IDs in your HDF5 files
+            task_ids = f['task_ids'][:]  # adjust to your structure
+            completed_tasks.update(task_ids)
+    
+    all_tasks = set(range(total_tasks))
+    missing_tasks = all_tasks - completed_tasks
+    
+    return missing_tasks
+```
+
+## Immediate Recovery for Your Current Situation
+
+For your current run, try this diagnostic script:
+
+```python
+#!/usr/bin/env python3
+import h5py
+import os
+import glob
+
+def diagnose_worker_files():
+    worker_files = glob.glob('worker_*_layouts.h5')
+    
+    print(f"Found {len(worker_files)} worker files")
+    
+    valid_count = 0
+    total_layouts = 0
+    
+    for filepath in sorted(worker_files):
+        size = os.path.getsize(filepath)
+        try:
+            with h5py.File(filepath, 'r') as f:
+                keys = list(f.keys())
+                # Count layouts - adjust based on your structure
+                layout_count = len(f[keys[0]]) if keys else 0
+                total_layouts += layout_count
+                status = "✓ VALID"
+                valid_count += 1
+        except:
+            status = "✗ CORRUPTED"
+            layout_count = 0
+        
+        print(f"{filepath}: {size:,} bytes, {layout_count} layouts, {status}")
+    
+    print(f"\nSummary: {valid_count}/{len(worker_files)} files valid, {total_layouts} total layouts recovered")
+
+if __name__ == "__main__":
+    diagnose_worker_files()
+```
+
+Run this to see what data you can recover, then modify your merge script to only process the valid files.

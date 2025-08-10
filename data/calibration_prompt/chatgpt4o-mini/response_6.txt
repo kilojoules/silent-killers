@@ -1,0 +1,98 @@
+Your code for simulating and optimizing wake models for wind farms is quite comprehensive, but I can see areas for improvement, especially concerning modularity and clarity. Here’s an evaluation of your approach, along with suggestions for restructuring the code.
+
+### Observations and Suggestions:
+
+1. **Modularization**:
+   - You’ve mentioned the need for a full rewrite to better modularize the instantiation of the wind farm model (WFM). This is an excellent idea. Consider separating the configuration of the WFM into distinct functions or classes. This will improve readability and maintainability significantly.
+
+2. **Error Reporting**:
+   - You noted that you need to change how you report errors, specifically by including average and p90 values. This is a good method for understanding the performance of your model under different conditions. You could implement a function that calculates these statistics and call it where you currently compute the RMSE.
+
+3. **Flow Field Plots**:
+   - To enhance your flow field plots, consider creating a dedicated function that handles the plotting of observed, predicted, and difference fields. This will help encapsulate the plotting logic and keep the main execution flow cleaner.
+
+4. **Use of Constants**:
+   - Constants like `X_LB`, `X_UB`, and options for `MODEL` and `DOWNWIND` could be defined at the beginning of your script or in a configuration file. This will make it easier to adjust parameters without diving deep into the code.
+
+5. **Redundant Code**:
+   - There are segments of code where similar logic is repeated for different models (e.g., setting up the `wake_deficitModel`). You could encapsulate this logic into a function that takes model parameters as input.
+
+6. **Animation and Visualization**:
+   - The plotting section for the optimization convergence could be encapsulated into its own function. This way, it would be easier to modify or reuse in future projects.
+
+7. **Documentation**:
+   - Adding docstrings to your functions and comments throughout your code will greatly enhance clarity, especially for anyone else reading your code or for yourself when you return to it later.
+
+### Suggested Refactored Structure
+
+Here’s a high-level structure of how you could refactor your code:
+
+```python
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+import xarray as xr
+from py_wake import (PropagateDownwind, All2AllIterative, HorizontalGrid, 
+                     LinearSum, Mirror, CrespoHernandez, GaussianOverlapAvgModel, 
+                     TurboGaussianDeficit, BlondelSuperGaussianDeficit2020, 
+                     SelfSimilarityDeficit2020, JimenezWakeDeflection)
+
+# Constants
+X_LB = 2
+X_UB = 10
+D = 120  # Example turbine diameter
+MODEL = 2
+
+def setup_wind_farm_model(model_type, params):
+    # Function to setup the wind farm model based on selected parameters
+    if model_type == 1:
+        return BlondelSuperGaussianDeficit2020(**params)
+    elif model_type == 2:
+        return TurboGaussianDeficit(A=params['A'], cTI=[params['cti1'], params['cti2']], 
+                                     ctlim=params['ctlim'], ceps=params['ceps'])
+    # Add more models as needed
+
+def evaluate_rmse(sim_res, all_obs, flow_map):
+    # Function to calculate RMSE and other statistics
+    pred = (sim_res.WS - flow_map.WS_eff.isel(h=0)) / sim_res.WS
+    rmse = float(np.sqrt(((all_obs - pred) ** 2).mean(['x', 'y'])).mean('time'))
+    return rmse
+
+def plot_flow_fields(target_x, target_y, observed_deficit, pred, diff, t):
+    # Function to plot the flow fields
+    fig, ax = plt.subplots(3, 1, figsize=(5, 15))
+    co = ax[0].contourf(target_x, target_y, observed_deficit.T)
+    cp = ax[1].contourf(target_x, target_y, pred)
+    cd = ax[2].contourf(target_x, target_y, diff)
+    
+    for jj, c in enumerate([co, cp, cd]):
+        fig.colorbar(c, ax=ax[jj])
+    
+    plt.savefig(f'figs/downstream_err_{t}')
+    plt.clf()
+
+def main():
+    # Main execution flow
+    dat = xr.load_dataset('./DTU10MW.nc')
+    turbine = DTU10MW()
+    # Load and preprocess data...
+    
+    # Set up the model
+    wake_deficitModel = setup_wind_farm_model(MODEL, params)
+    
+    # Run simulations and evaluations...
+    
+    # Plotting and reporting
+    for t in range(flow_map.time.size):
+        plot_flow_fields(target_x, target_y, observed_deficit, pred, diff, t)
+    
+    # Report RMSE
+
+if __name__ == "__main__":
+    main()
+```
+
+### Conclusion
+
+By modularizing your code into logical functions or classes, you’ll make it much more manageable and easier to debug or extend in the future. Focus on encapsulating related functionalities, enhancing readability, and ensuring that your code is well-documented. This will benefit both you and any collaborators who may work with your code later.

@@ -1,0 +1,93 @@
+This script requires the installation of PyWake, numpy, matplotlib, and SALib.  You'll need to adapt file paths and parameters to your specific data and desired resolution.  The script focuses on demonstrating the Sobol sensitivity analysis and visualization;  optimizing for computational efficiency (especially for large domains) would require further enhancements.
+
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake.flow_map import FlowMap
+from pywake.examples.data.hornsrev1 import Hornsrev1Site
+from pywake.wind_turbines import WindTurbines
+from pywake.turbulence_models import GCLTurbulenceModel
+from SALib.analyze import sobol
+from SALib.sample import saltelli
+
+# --- Define parameters ---
+n_wt = 10  # Number of wind turbines (adjust as needed)
+x_coords = np.linspace(0, 1000, n_wt) # Example x-coordinates
+y_coords = np.zeros(n_wt) # Example y-coordinates
+
+# --- Define problem for Sobol sensitivity analysis ---
+problem = {
+    'num_vars': 2,
+    'names': ['wind_speed', 'wind_direction'],
+    'bounds': [[6, 12], [0, 360]] # Example bounds, adjust to your inflow range
+}
+
+
+# --- PyWake setup ---
+site = Hornsrev1Site() # Or your custom site
+wt = WindTurbines.from_file('path/to/your/wind_turbine_file.yaml') # Replace with your WT file
+
+fm = FlowMap(site, wt, turbulenceModel=GCLTurbulenceModel())
+
+# --- Sobol Sensitivity Analysis ---
+param_values = saltelli.sample(problem, 1000) # Adjust sample size as needed
+
+results = []
+
+for i, params in enumerate(param_values):
+    WS_eff = []
+    # Simulate for each parameter set
+    flow_field = fm(x_coords, y_coords, params[0], params[1])
+
+    # Extract effective wind speed and append
+    for j in range(len(x_coords)):
+        WS_eff.append(flow_field.WS_eff[j])
+    results.append(WS_eff)
+
+
+results = np.array(results)
+
+# Perform Sobol analysis
+Si = sobol.analyze(problem, results, print_to_console=True)
+
+# --- Visualization ---
+# Create a series of flow field images showing sensitivity
+# This example shows a simplified visualization, adapt as needed for better representation of Sobol indices
+
+#Plot Sobol indices
+plt.figure(figsize=(8,6))
+plt.bar(range(len(Si['S1'])), Si['S1'], yerr=Si['S1_conf'], capsize=5, label='First-order')
+plt.bar(range(len(Si['ST'])), Si['ST'], yerr=Si['ST_conf'], capsize=5, bottom=Si['S1'], label='Total-order')
+plt.xticks(range(len(Si['S1'])), problem['names'])
+plt.ylabel('Sobol Index')
+plt.xlabel('Parameter')
+plt.title('Sobol Sensitivity Analysis of Effective Wind Speed')
+plt.legend()
+plt.show()
+
+
+#Example of plotting a single flow field (replace with your desired visualization)
+plt.figure()
+plt.imshow(fm(x_coords, y_coords, param_values[0][0], param_values[0][1]).WS_eff.reshape(1, -1), extent=[min(x_coords), max(x_coords), min(y_coords), max(y_coords)], aspect='auto')
+plt.xlabel('x [m]')
+plt.ylabel('y [m]')
+plt.title('Effective Wind Speed [m/s] - Example Flow Field')
+plt.colorbar(label='WS_eff [m/s]')
+plt.show()
+
+#To create a series of images, iterate through a subset of param_values and save the plots:
+
+# for i in range(0, 10): # Show 10 example flow fields
+#     plt.figure()
+#     plt.imshow(fm(x_coords, y_coords, param_values[i][0], param_values[i][1]).WS_eff.reshape(1, -1), extent=[min(x_coords), max(x_coords), min(y_coords), max(y_coords)], aspect='auto')
+#     plt.xlabel('x [m]')
+#     plt.ylabel('y [m]')
+#     plt.title(f'Effective Wind Speed [m/s] - Flow Field {i+1}')
+#     plt.colorbar(label='WS_eff [m/s]')
+#     plt.savefig(f'flow_field_{i+1}.png')
+#     plt.close() #Close the figure to free memory
+
+```
+
+Remember to replace placeholders like  `'path/to/your/wind_turbine_file.yaml'` with your actual file paths.  This script provides a basic framework; you can enhance it with more sophisticated visualization techniques (e.g., using quiver plots for velocity vectors, more advanced colormaps) and error handling to make it more robust.  The Sobol indices will help you understand which inflow parameters most strongly influence the effective wind speed.  Consider using a smaller number of turbines or a coarser spatial resolution for faster computations if needed.

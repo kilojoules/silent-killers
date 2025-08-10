@@ -1,0 +1,57 @@
+The error message you've encountered indicates that a particular file could not be opened due to an "OSError: Unable to synchronously open file (file signature not found)." This suggests that the file might be corrupted, missing, or not in the expected format.
+
+To ensure this error is detected reliably and stops the process cleanly if any worker file is invalid, you can modify the script to include error handling around the file operation. Here is a general approach to handle this situation:
+
+1. **Try-Except Block**: Use a try-except block to catch exceptions when trying to open the file. This will allow the script to handle the error gracefully instead of terminating abruptly.
+
+2. **Logging**: Log the error with sufficient detail to help diagnose the issue later.
+
+3. **Graceful Shutdown**: If a critical error like this occurs, consider stopping the process or skipping the problematic file, depending on the requirements.
+
+Here's a modified version of the relevant section of your script:
+
+```python
+import h5py
+import logging
+import sys
+
+def process_worker_file(worker_file):
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Process the file as needed
+            pass
+    except OSError as e:
+        logging.error(f"Failed to open worker file {worker_file}: {e}")
+        # Optionally, you can stop the process if this failure is critical
+        sys.exit(1)
+
+def main():
+    # Assuming you have a list of worker files
+    worker_files = ["file1.h5", "file2.h5", ...]  # Replace with actual list of files
+    
+    for worker_file in worker_files:
+        process_worker_file(worker_file)
+    
+    # If you're accumulating results, handle them here
+    logging.info("All worker files processed successfully.")
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    try:
+        main()
+    except Exception as e:
+        logging.error(f"An unexpected error occurred: {e}")
+        sys.exit(1)
+```
+
+### Key Points:
+
+- **Error Handling**: The `process_worker_file` function encapsulates the file processing logic and includes a try-except block to catch and handle `OSError`.
+  
+- **Logging**: Errors are logged with a clear message to help identify which file caused the issue and what the error was. Adjust the logging level and format according to your needs.
+
+- **Graceful Exit**: The script will exit with a non-zero status code if it encounters an error while opening a file, indicating that something went wrong. If skipping the file and continuing is more appropriate for your use case, you can remove the `sys.exit(1)` line and continue processing the remaining files.
+
+- **Centralized Error Handling**: The `main` function is wrapped in a try-except block to catch any uncaught exceptions and log them before exiting.
+
+By implementing these changes, you can better manage errors related to file operations and ensure your script handles them in a predictable and controlled manner.

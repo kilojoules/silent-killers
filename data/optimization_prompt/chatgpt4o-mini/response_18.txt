@@ -1,0 +1,83 @@
+The error message you're encountering indicates that the script is attempting to open a file using the `h5py` library, but it is unable to do so because the file appears to be invalid or corrupted (the error "Unable to synchronously open file (file signature not found)" suggests that the file might not be a valid HDF5 file).
+
+To ensure that the process detects this error reliably and stops cleanly if any worker file is invalid, you can implement the following modifications to your script:
+
+### 1. Error Handling with Try-Except Block
+Wrap the file opening code in a try-except block. This will allow you to catch exceptions when attempting to open an invalid file and handle them accordingly.
+
+```python
+import h5py
+import sys
+
+def main():
+    # Your setup and processing code here...
+    
+    for worker_file in worker_files:
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                # Process the file...
+                pass  # Replace with your processing logic
+        except OSError as e:
+            print(f"Error opening file {worker_file}: {e}", file=sys.stderr)
+            # Optionally log the error to a log file
+            # LogError(f"Error opening file {worker_file}: {e}")
+            sys.exit(1)  # Exit the script with an error code
+```
+
+### 2. Validate Files Before Processing
+If you have a way to validate the HDF5 files before attempting to open them, such as checking file signatures or ensuring that they exist, consider implementing that validation step.
+
+```python
+import os
+
+def is_valid_hdf5(file_path):
+    # Check if the file exists and is of the correct size or format
+    if not os.path.isfile(file_path):
+        return False
+    # Further checks can be implemented, e.g., checking file size or performing a quick read
+    return True
+
+def main():
+    # Your setup code...
+    
+    for worker_file in worker_files:
+        if not is_valid_hdf5(worker_file):
+            print(f"Invalid HDF5 file: {worker_file}", file=sys.stderr)
+            sys.exit(1)  # Exit with error if invalid file
+        
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                # Process the file...
+                pass
+        except OSError as e:
+            print(f"Error opening file {worker_file}: {e}", file=sys.stderr)
+            sys.exit(1)
+```
+
+### 3. Logging for Debugging
+Implement logging to capture detailed error information without cluttering standard output. This can help you diagnose issues with specific files.
+
+```python
+import logging
+
+# Configure logging
+logging.basicConfig(filename='error_log.txt', level=logging.ERROR)
+
+def main():
+    # Your setup code...
+    
+    for worker_file in worker_files:
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                # Process the file...
+                pass
+        except OSError as e:
+            logging.error(f"Error opening file {worker_file}: {e}")
+            sys.exit(1)
+```
+
+### 4. Clean Exit
+If the process is interrupted or an error occurs, ensure that the script exits cleanly without leaving any processes hanging.
+
+### Summary
+By implementing these error handling mechanisms, your script will be more robust against invalid files. It will log detailed error information, exit gracefully if an error occurs, and you can also incorporate pre-validation checks for additional reliability. This will help you diagnose issues more effectively and maintain a clean execution flow, especially when processing multiple files.

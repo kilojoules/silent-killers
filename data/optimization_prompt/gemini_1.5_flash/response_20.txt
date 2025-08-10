@@ -1,0 +1,75 @@
+The error message "OSError: Unable to synchronously open file (file signature not found)" indicates that the script is trying to open a HDF5 file (`worker_file`) that is either corrupt or doesn't exist.  The fact it happened after almost completing 3000 optimizations suggests a problem during the creation or writing of one of the worker files, not necessarily during the reading.
+
+The script likely uses multiprocessing to create many `worker_file`s in parallel. One of these processes failed to properly create or write its HDF5 file.  The final `with h5py.File(worker_file, 'r') as h5_in:` statement attempts to open this bad file, causing the script to crash.
+
+Here's how to modify the script to handle this reliably:
+
+**1. Error Handling During File Creation:**
+
+The most important change is to add error handling *during* the creation of each `worker_file`.  Instead of silently failing, the script should catch `OSError` or other exceptions that might occur during HDF5 file writing.  This will prevent partially-written or corrupt files from being created.
+
+```python
+import h5py
+import multiprocessing
+# ... other imports
+
+def worker_function(args):
+    # ... your existing worker function code ...
+
+    try:
+        with h5py.File(worker_file, 'w') as h5_out:  # 'w' for write
+            # ... write data to h5_out ...
+    except OSError as e:
+        print(f"Error creating or writing worker file {worker_file}: {e}")
+        return False # Indicate failure
+    except Exception as e: #Catch other potential exceptions during file writing.
+        print(f"An unexpected error occurred in worker function for {worker_file}: {e}")
+        return False
+    return True # Indicate success
+
+
+if __name__ == "__main__":
+    # ... your existing main function code ...
+    with multiprocessing.Pool(processes=num_processes) as pool:
+        results = pool.map(worker_function, worker_args)
+
+    #Check for failures
+    if not all(results):
+        print("One or more worker processes failed. Exiting.")
+        exit(1) #Exit with a non-zero code to indicate failure.
+
+
+    # ... your existing code to read and combine the worker files ...
+```
+
+**2. Robust File Existence Check Before Reading:**
+
+Before opening each `worker_file` for reading, explicitly check if the file exists and is accessible:
+
+```python
+import os
+#...
+
+    for i in range(num_files):
+        worker_file = f"worker_file_{i}.h5"  # Adjust your filename pattern
+        if not os.path.exists(worker_file) or not os.access(worker_file, os.R_OK):
+            print(f"Error: Worker file {worker_file} not found or inaccessible.")
+            exit(1)  # Exit cleanly
+        with h5py.File(worker_file, 'r') as h5_in:
+            # ... process the file ...
+```
+
+**3.  More informative logging:**
+
+Add more detailed logging to track which files are being processed and any errors encountered.  This will help you pinpoint the failing worker file and the cause.
+
+**4. Consider Atomic Writes:**
+
+HDF5 supports atomic operations for writing.  If your write operations are complex, consider using HDF5's facilities for transactional writing to minimize the risk of corruption.  (This is more advanced but can improve robustness significantly.)
+
+**5.  Recover Missing Data (If Possible):**
+
+If you have partially completed worker files, you *might* be able to recover some data.  However, this depends on how the files were written.  If the data is written in chunks and the file is only partially written, you could attempt to read what's available, but it's unreliable.
+
+
+By implementing these changes, your script will be much more robust and less likely to crash due to invalid worker files.  It will also provide more informative error messages, making debugging much easier. Remember to replace `"worker_file_{i}.h5"` with your actual file naming convention.  The crucial part is catching errors during *writing* and checking file existence *before* reading.

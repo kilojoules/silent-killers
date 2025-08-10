@@ -1,0 +1,219 @@
+## Diagnosis
+
+The error `OSError: Unable to synchronously open file (file signature not found)` indicates that one or more of the worker HDF5 files is **corrupted or incomplete**. This typically happens when:
+
+1. A worker process crashes or is killed while writing to the HDF5 file
+2. The system runs out of disk space during writing
+3. The file gets truncated or corrupted during the multiprocessing operations
+
+The issue occurs during the **file merging phase** after all workers complete, when the main process tries to read and combine the worker files.
+
+## Solution: Add Robust File Validation
+
+Here's how to modify your script to detect and handle corrupted files reliably:
+
+### 1. Add File Validation Function
+
+```python
+import h5py
+import os
+import logging
+
+def validate_worker_file(worker_file):
+    """
+    Validate that a worker HDF5 file is readable and contains expected data.
+    Returns (is_valid, error_message, task_count)
+    """
+    if not os.path.exists(worker_file):
+        return False, f"File does not exist: {worker_file}", 0
+    
+    if os.path.getsize(worker_file) == 0:
+        return False, f"File is empty: {worker_file}", 0
+    
+    try:
+        with h5py.File(worker_file, 'r') as h5_file:
+            # Check if file has the expected structure
+            if 'farm_id' not in h5_file or 'farm_type' not in h5_file:
+                return False, f"File missing required datasets: {worker_file}", 0
+            
+            # Count number of tasks completed
+            task_count = len(h5_file['farm_id'])
+            
+            # Verify data integrity - check that arrays have consistent lengths
+            farm_ids = h5_file['farm_id'][:]
+            farm_types = h5_file['farm_type'][:]
+            
+            if len(farm_ids) != len(farm_types):
+                return False, f"Inconsistent data lengths in {worker_file}", task_count
+            
+            return True, "Valid", task_count
+            
+    except (OSError, KeyError, ValueError) as e:
+        return False, f"File corruption or read error in {worker_file}: {str(e)}", 0
+```
+
+### 2. Modify the Main Function to Validate Before Merging
+
+```python
+def main():
+    # ... existing code ...
+    
+    # After multiprocessing completes, validate all worker files
+    logging.info("Validating worker files...")
+    valid_files = []
+    corrupted_files = []
+    total_recovered_tasks = 0
+    
+    for i in range(num_processes):
+        worker_file = f'worker_{i}_layouts.h5'
+        is_valid, error_msg, task_count = validate_worker_file(worker_file)
+        
+        if is_valid:
+            valid_files.append(worker_file)
+            total_recovered_tasks += task_count
+            logging.info(f"✓ {worker_file}: {task_count} tasks completed")
+        else:
+            corrupted_files.append(worker_file)
+            logging.error(f"✗ {worker_file}: {error_msg}")
+    
+    # Report validation results
+    if corrupted_files:
+        logging.warning(f"Found {len(corrupted_files)} corrupted files: {corrupted_files}")
+        logging.info(f"Recovered {total_recovered_tasks} tasks from {len(valid_files)} valid files")
+        
+        # Decide whether to continue or abort
+        if len(valid_files) == 0:
+            logging.error("No valid worker files found. Aborting.")
+            return
+        elif len(corrupted_files) > len(valid_files):
+            logging.error("More files corrupted than valid. Consider rerunning.")
+            # Uncomment next line to abort on too many corrupted files
+            # return
+    
+    # Only process valid files
+    logging.info(f"Merging {len(valid_files)} valid worker files...")
+    
+    # ... rest of merging code, but iterate over valid_files instead of all worker files ...
+```
+
+### 3. Enhanced Merging with Error Handling
+
+```python
+def merge_worker_files_safely(valid_files, output_file):
+    """Safely merge only validated worker files"""
+    try:
+        with h5py.File(output_file, 'w') as h5_out:
+            first_file = True
+            total_merged = 0
+            
+            for worker_file in valid_files:
+                try:
+                    with h5py.File(worker_file, 'r') as h5_in:
+                        if first_file:
+                            # Copy structure from first file
+                            for key in h5_in.keys():
+                                data = h5_in[key][:]
+                                h5_out.create_dataset(key, data=data, maxshape=(None,), 
+                                                    chunks=True, compression='gzip')
+                            first_file = False
+                            total_merged += len(h5_in['farm_id'])
+                        else:
+                            # Append data from subsequent files
+                            for key in h5_in.keys():
+                                data = h5_in[key][:]
+                                h5_out[key].resize((h5_out[key].shape[0] + len(data),))
+                                h5_out[key][-len(data):] = data
+                            total_merged += len(h5_in['farm_id'])
+                            
+                    logging.info(f"Successfully merged {worker_file}")
+                    
+                except Exception as e:
+                    logging.error(f"Failed to merge {worker_file}: {e}")
+                    continue
+            
+            logging.info(f"Total records merged: {total_merged}")
+            return total_merged
+            
+    except Exception as e:
+        logging.error(f"Failed to create output file {output_file}: {e}")
+        return 0
+```
+
+### 4. Add Recovery Information
+
+```python
+def analyze_missing_tasks(valid_files, total_expected_tasks):
+    """Analyze which tasks were completed and which are missing"""
+    completed_tasks = set()
+    
+    for worker_file in valid_files:
+        try:
+            with h5py.File(worker_file, 'r') as h5_file:
+                farm_ids = h5_file['farm_id'][:]
+                farm_types = h5_file['farm_type'][:]
+                seeds = h5_file['seed'][:]  # assuming you store seeds
+                
+                for fid, ftype, seed in zip(farm_ids, farm_types, seeds):
+                    completed_tasks.add((fid, ftype, seed))
+        except:
+            continue
+    
+    logging.info(f"Recovered {len(completed_tasks)} out of {total_expected_tasks} tasks")
+    
+    if len(completed_tasks) < total_expected_tasks:
+        missing_count = total_expected_tasks - len(completed_tasks)
+        logging.warning(f"{missing_count} tasks need to be rerun")
+        
+        # Optionally, save missing tasks to a file for reprocessing
+        # save_missing_tasks_for_rerun(completed_tasks, total_expected_tasks)
+    
+    return completed_tasks
+```
+
+### 5. Update Your Main Function
+
+```python
+def main():
+    # ... existing setup code ...
+    
+    try:
+        # Run multiprocessing
+        with Pool(processes=num_processes) as pool:
+            results = list(tqdm(pool.imap(optimize_single_farm, tasks), 
+                              total=len(tasks), desc="Optimizing layouts"))
+        
+        # Validate and merge files
+        valid_files = []
+        for i in range(num_processes):
+            worker_file = f'worker_{i}_layouts.h5'
+            is_valid, error_msg, task_count = validate_worker_file(worker_file)
+            
+            if is_valid:
+                valid_files.append(worker_file)
+                logging.info(f"✓ {worker_file}: {task_count} tasks")
+            else:
+                logging.error(f"✗ {worker_file}: {error_msg}")
+        
+        if valid_files:
+            total_merged = merge_worker_files_safely(valid_files, 'farm_layouts.h5')
+            completed_tasks = analyze_missing_tasks(valid_files, len(tasks))
+            
+            logging.info(f"Successfully completed! Merged {total_merged} tasks.")
+        else:
+            logging.error("No valid files to merge. Process failed.")
+            
+    except Exception as e:
+        logging.error(f"Critical error in main process: {e}")
+    finally:
+        # Cleanup worker files if desired
+        cleanup_worker_files(num_processes)
+```
+
+This approach will:
+- **Detect corrupted files early** before attempting to merge
+- **Recover partial results** from valid worker files
+- **Provide detailed logging** about what was recovered
+- **Allow you to rerun only the missing tasks** instead of starting over
+- **Fail gracefully** with useful error information
+
+The key insight is to validate each worker file individually before attempting to merge, so you can recover the maximum amount of completed work even when some workers fail.

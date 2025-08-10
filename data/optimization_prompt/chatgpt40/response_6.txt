@@ -1,0 +1,54 @@
+The error you're encountering is an `OSError` raised by the `h5py` library, indicating that a file could not be opened. The specific message "file signature not found" suggests that the file you're trying to open is either corrupted or not a valid HDF5 file.
+
+To handle this error and ensure that your process stops cleanly if any worker file is invalid, you can implement error handling using a `try-except` block around the file opening operation. This will allow you to catch the error, log it, and terminate the process or handle it in a manner that suits your needs. Here's how you might modify your script:
+
+```python
+import h5py
+import logging
+import sys
+
+def main():
+    # Set up logging
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger("main")
+
+    try:
+        worker_file = "path_to_your_worker_file.h5"
+
+        # Attempt to open the HDF5 file
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Your processing logic here
+            pass
+
+    except OSError as e:
+        # Log the error
+        logger.error(f"Failed to open file {worker_file}: {e}")
+
+        # Stop the process cleanly
+        sys.exit(1)
+
+    except Exception as e:
+        # Handle other possible exceptions
+        logger.error(f"An unexpected error occurred: {e}")
+        sys.exit(1)
+
+    # If everything is successful
+    logger.info("Completed optimizations successfully")
+
+if __name__ == "__main__":
+    main()
+```
+
+### Key Considerations:
+
+1. **Error Handling**: The `try-except` block around `h5py.File` will catch any `OSError` related to file handling. You can extend this block to handle other exceptions if needed.
+
+2. **Logging**: Use logging to record errors and successful operations. This helps in debugging and understanding the flow of your script.
+
+3. **Exit Strategy**: Use `sys.exit(1)` to terminate the script if an error is detected. This ensures the script stops cleanly and doesn't proceed with potentially corrupted or missing data.
+
+4. **File Path**: Ensure that `worker_file` contains the correct path to the HDF5 file you intend to open.
+
+5. **Validation**: Consider implementing additional checks to validate the integrity of the files before attempting to process them. This can be done by checking file existence, size, or other file-specific metadata.
+
+By implementing these changes, you'll be able to detect file-related errors more reliably and handle them in a way that prevents your process from continuing in an invalid state.

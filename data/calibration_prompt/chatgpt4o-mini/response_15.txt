@@ -1,0 +1,113 @@
+Your code is quite complex and seems to be focused on wind farm modeling, optimization, and error evaluation. Here are some thoughts on your approach and areas for improvement:
+
+### General Comments
+
+1. **Modularization**: Your intention to modularize the code is a good one. Breaking down the code into functions or classes will make it easier to maintain, test, and reuse. Each function should ideally perform a single task, such as data loading, parameter optimization, or result visualization.
+
+2. **Flow Field Plots**: Changing the flow field plots to report average and the 90th percentile (p90) of the errors is a good idea. It provides better insight into the performance of your model, especially in understanding outliers or extreme errors.
+
+3. **Code Readability**: Adding comments and docstrings to explain the purpose of functions and complex sections of code will enhance readability. This is especially important in collaborative environments.
+
+4. **Error Handling**: Ensure that error handling is consistent throughout the code. You should handle potential exceptions that can arise from data processing, such as missing values or incorrect data types.
+
+5. **Data Management**: Consider using context managers for file operations or loading datasets to ensure that resources are properly managed.
+
+### Suggested Code Rewrite
+
+Here’s a basic outline of how you might refactor your code to improve modularization while keeping the deficit settings, MODEL, and UPSTREAM logic intact:
+
+```python
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+import xarray as xr
+from py_wake import HorizontalGrid
+from py_wake.examples.data.dtu10mw._dtu10mw import DTU10MW
+from py_wake.examples.data.hornsrev1 import Hornsrev1Site
+from py_wake.rotor_avg_models.gaussian_overlap_model import GaussianOverlapAvgModel
+from py_wake.deficit_models import BlondelSuperGaussianDeficit2020, TurboGaussianDeficit
+from py_wake.turbulence_models import CrespoHernandez
+from py_wake.wind_farm_models import All2AllIterative
+from py_wake.superposition_models import LinearSum
+from bayes_opt import BayesianOptimization
+from py_wake.deficit_models.utils import ct2a_mom1d
+
+def load_data(file_path):
+    return xr.load_dataset(file_path)
+
+def setup_turbine():
+    return DTU10MW()
+
+def define_roi(d, downwind=True):
+    if downwind:
+        return slice(2 * d, 10 * d), slice(-2 * d, 2 * d)
+    else:
+        return slice(-10 * d, -2 * d), slice(-2 * d, 2 * d)
+
+def run_simulation(site, turbine, full_ws, full_ti, model_params):
+    wfm = All2AllIterative(site, turbine,
+                            wake_deficitModel=model_params['wake_model'],
+                            superpositionModel=LinearSum(),
+                            turbulenceModel=CrespoHernandez(**model_params['turb_args']),
+                            blockage_deficitModel=model_params['blockage_model'])
+
+    return wfm([0], [0], ws=full_ws, TI=full_ti, wd=[270] * full_ti.size, time=True)
+
+def evaluate_rmse(all_obs, sim_res, time_steps):
+    rmse_values = []
+    for t in time_steps:
+        this_pred_sim = sim_res.isel(time=t)
+        observed_deficit = all_obs.interp(/* params */)  # Fill in as appropriate
+        pred = (this_pred_sim.WS - /* your flow_map logic */) / this_pred_sim.WS
+        diff = observed_deficit - pred
+        rmse = np.sqrt(np.mean(diff**2))
+        rmse_values.append(rmse)
+    return rmse_values
+
+def plot_results(rmse_values, best_params, default_params):
+    plt.bar(best_params.keys(), best_params.values(), label='Optimized')
+    plt.bar(default_params.keys(), default_params.values(), edgecolor='black', color='none', label='Default')
+    plt.title(f'Optimal RMSE: {np.mean(rmse_values):.4f}')
+    plt.tight_layout()
+    plt.savefig('results.png')
+
+def main():
+    dat = load_data('./DTU10MW.nc')
+    turbine = setup_turbine()
+    D = turbine.diameter()
+    
+    roi_x, roi_y = define_roi(D, DOWNWIND)
+    flow_roi = dat.sel(x=roi_x, y=roi_y)
+    
+    # Set up your parameters and optimization here
+    # ...
+
+    # Run the simulation
+    sim_res = run_simulation(site, turbine, full_ws, full_ti, model_params)
+    
+    # Evaluate RMSE
+    rmse_values = evaluate_rmse(all_obs, sim_res, range(flow_map.time.size))
+    
+    # Plot results
+    plot_results(rmse_values, best_params, default_params)
+
+if __name__ == "__main__":
+    main()
+```
+
+### Key Points in the Refactor
+
+1. **Function Definitions**: Each logical section of the code has been encapsulated in a function to promote code reuse and clarity.
+
+2. **Main Function**: The `main()` function serves as the entry point, organizing the flow of execution.
+
+3. **Parameter Handling**: You could consider passing parameters as dictionaries or data classes for better structure.
+
+4. **Modularity**: By breaking down your code into functions, you can easily test each part independently.
+
+5. **Error Reporting**: You should still integrate error checking where necessary as you modularize.
+
+### Conclusion
+
+Refactoring your code to be more modular will improve its maintainability and readability while making it easier to test. Be sure to implement error handling and documentation as you proceed. Good luck with your project!

@@ -1,0 +1,77 @@
+To create a script that propagates realistic measurement uncertainties through PyWake and captures the Sobol sensitivity of effective wind speed (WS_eff) as a function of x and y, you'll need to follow these general steps:
+
+1. **Setup Environment**: Ensure you have PyWake and any other necessary packages installed.
+2. **Define Inflow Conditions**: Specify the range and distribution of measurement uncertainties for your inflow parameters.
+3. **Sobol Sensitivity Analysis Setup**: Use a library like `SALib` to perform Sobol sensitivity analysis.
+4. **Run PyWake Simulations**: Generate flow fields for each parameter set derived from the Sobol analysis.
+5. **Visualize Sensitivity**: Create plots to visualize the sensitivity of WS_eff at different times and positions.
+6. **Save Results**: Store the flow field images for later analysis or reporting.
+
+Below is a simplified Python script outline that you can adapt and expand based on your specific requirements and available data:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from py_wake.examples.data.hornsrev1 import Hornsrev1Site, HornsrevV80
+from py_wake import NOJ
+from py_wake.wind_turbines import WindTurbines
+from py_wake.deficit_models.noj import NOJDeficit
+from SALib.sample import saltelli
+from SALib.analyze import sobol
+
+# Define the problem for Sobol sensitivity analysis
+problem = {
+    'num_vars': 3,
+    'names': ['wind_speed', 'wind_direction', 'turbulence_intensity'],
+    'bounds': [[6, 12],  # Example bounds for wind speed
+               [0, 360], # Example bounds for wind direction
+               [0.05, 0.15]] # Example bounds for turbulence intensity
+}
+
+# Generate samples
+param_values = saltelli.sample(problem, 1000)
+
+# Initialize site, wind turbines, and wake model
+site = Hornsrev1Site()
+windTurbines = WindTurbines.from_WindTurbines([HornsrevV80()])
+wake_model = NOJ(site, windTurbines, NOJDeficit())
+
+# Container for results
+sobol_indices = []
+
+# Run simulations
+for params in param_values:
+    wind_speed, wind_direction, turbulence_intensity = params
+    flow_map = wake_model(wind_speeds=wind_speed,
+                          wind_directions=wind_direction,
+                          turbulence_intensity=turbulence_intensity)
+    
+    # Extract WS_eff from flow map
+    WS_eff = flow_map.WS_eff().values
+
+    # Store WS_eff for sensitivity analysis
+    sobol_indices.append(WS_eff)
+
+# Perform Sobol analysis
+sobol_results = sobol.analyze(problem, np.array(sobol_indices))
+
+# Visualization
+x, y = np.meshgrid(flow_map.x, flow_map.y)
+for t in range(flow_map.WS_eff().shape[0]):  # Assuming time is the first dimension
+    plt.figure()
+    plt.title(f'Sobol Sensitivity at time {t}')
+    plt.contourf(x, y, sobol_results['S1'][:, :, t])  # Example for first order sensitivity
+    plt.colorbar(label='Sobol Sensitivity Index')
+    plt.xlabel('x')
+    plt.ylabel('y')
+    plt.savefig(f'sobol_sensitivity_time_{t}.png')
+    plt.close()
+```
+
+### Key Notes:
+- **Sobol Analysis**: This script uses the SALib library for Sobol sensitivity analysis. Ensure that the number of samples and the problem definition are appropriate for your case.
+- **Flow Field Handling**: The script assumes that `flow_map.WS_eff()` returns a 3D array where the first dimension is time. Adapt this according to how PyWake represents time and flow fields.
+- **Visualization**: The script uses `matplotlib` to create contour plots of the Sobol sensitivity indices. Customize the visualization to suit your needs.
+- **Error Handling**: Add error handling and logging for robustness in a production environment.
+
+This script provides a starting point. Depending on your specific configuration, you may need to adjust parameters, incorporate additional uncertainty sources, or refine the visualization.

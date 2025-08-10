@@ -1,0 +1,86 @@
+To generate a script that propagates measurement uncertainties through PyWake and visualizes the sensitivity of the flow field, we can employ a Sobol sensitivity analysis on the effective wind speed (`WS_eff`) as a function of spatial coordinates \(x\) and \(y\). The script will use PyWake for wind farm simulations and a sensitivity analysis package like SALib to compute Sobol indices. Finally, it will save flow field images showing the sensitivity at different times.
+
+Below is a Python script outline that demonstrates how this can be accomplished. Please ensure you have the necessary packages installed (`py_wake`, `SALib`, `matplotlib`, etc.) before running the script.
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from py_wake import WindFarmModel
+from py_wake.deficit_models.gaussian import BastankhahGaussian
+from py_wake.wind_farm_models.engineering_models import PropagateDownwind
+from py_wake.examples.data import hornsrev1
+from SALib.analyze import sobol
+from SALib.sample import saltelli
+
+# Define problem for Sobol analysis
+problem = {
+    'num_vars': 2,
+    'names': ['x', 'y'],
+    'bounds': [[-500, 500], [-500, 500]]
+}
+
+# Generate samples for the Sobol analysis
+param_values = saltelli.sample(problem, 1024)
+
+# Initialize wind farm model
+site = hornsrev1.Hornsrev1Site()
+windTurbines = hornsrev1.HornsrevV80()
+wf_model = PropagateDownwind(site, windTurbines, BastankhahGaussian())
+
+# Placeholder for results
+sobol_indices = []
+
+# Loop through each parameter set to run the simulation and collect results
+for params in param_values:
+    x, y = params
+    
+    # Assuming some function that applies the parameter to the model, e.g., inflow variation
+    # Adjust the site or model based on x, y. For instance, modify inflow direction or speed.
+    site.local_wind(x_i=x, y_i=y)
+    
+    # Simulate the wind farm
+    sim_res = wf_model(x=site.initial_position[:, 0], y=site.initial_position[:, 1], ws=8, wd=270)
+    
+    # Extract WS_eff or any other metric needed for sensitivity analysis
+    WS_eff = sim_res.WS_eff
+    sobol_indices.append(WS_eff)
+
+# Convert list to numpy array for Sobol analysis
+sobol_indices = np.array(sobol_indices)
+
+# Perform Sobol sensitivity analysis
+Si = sobol.analyze(problem, sobol_indices, print_to_console=True)
+
+# Plotting sensitivity indices for different times
+times = np.arange(0, len(sobol_indices), len(sobol_indices)//10)  # Choose 10 time slices
+for t in times:
+    plt.figure()
+    plt.scatter(param_values[:, 0], param_values[:, 1], c=sobol_indices[t], cmap='viridis')
+    plt.colorbar(label='Sobol Index')
+    plt.title(f'Sobol Sensitivity at Time {t}')
+    plt.xlabel('x')
+    plt.ylabel('y')
+    plt.savefig(f'sobol_sensitivity_time_{t}.png')
+    plt.close()
+
+print("Sensitivity analysis images saved.")
+```
+
+### Key Points:
+- **PyWake**: Used to simulate the wind farm with the `BastankhahGaussian` deficit model.
+- **SALib**: Utilized for Sobol sensitivity analysis.
+- **Parameter Variation**: Adjusts `x` and `y` to simulate different inflow conditions affecting the wind farm.
+- **Visualization**: Saves flow field sensitivity images at various times.
+
+### Assumptions:
+- The script assumes access to some function or method to adjust the site inflow conditions using parameters `x` and `y`.
+- The `WS_eff` parameter is extracted from the simulation results as the metric for analysis.
+- The script is a basic outline and may require adjustments based on the specific PyWake API and project requirements.
+
+### Prerequisites:
+Ensure you have the necessary Python packages installed:
+```bash
+pip install py_wake SALib matplotlib numpy
+```
+
+Please adjust the script according to your specific simulation setup and inflow parameterization.

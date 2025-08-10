@@ -1,0 +1,70 @@
+The error message "OSError: Unable to synchronously open file (file signature not found)" clearly indicates that one of the HDF5 files (`worker_file`) your script tries to open is corrupted or not a valid HDF5 file.  The script fails because it cannot read the file's header, which contains the signature identifying it as an HDF5 file.
+
+The problem isn't in the *joining* operation (though that might be affected by the problem), but rather in the creation or handling of one of the individual worker files *before* the joining stage.  One or more of the 3000 optimization runs likely produced a corrupted or empty file.
+
+Here's how to modify the script to reliably detect and handle this error:
+
+```python
+import h5py
+import os
+import multiprocessing as mp
+
+# ... (rest of your imports and functions) ...
+
+def process_worker_file(worker_file):
+    """Processes a single worker file, handling potential errors."""
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Your existing code to process the h5 file goes here
+            # ...
+            # Example: Extract data
+            data = h5_in['data'][:]  # Replace 'data' with your actual dataset name
+            return data  # Or whatever result you need to combine
+    except OSError as e:
+        print(f"ERROR: Could not open or read worker file: {worker_file}.  Error: {e}")
+        return None  # Indicate failure
+
+def main():
+    # ... (your existing code to set up worker files) ...
+
+    with mp.Pool(processes=mp.cpu_count()) as pool:
+        results = pool.map(process_worker_file, worker_files)
+
+    # Check for errors
+    failed_files = [worker_files[i] for i, result in enumerate(results) if result is None]
+    if failed_files:
+        print(f"ERROR: Processing failed for the following worker files: {failed_files}")
+        # Perform appropriate cleanup or error handling here (e.g., exit, log details)
+        return 1  # Indicate failure
+    else:
+        # ... (your existing code to process the combined results) ...
+        return 0  # Indicate success
+
+
+if __name__ == "__main__":
+    exit_code = main()
+    exit(exit_code)
+
+```
+
+**Key improvements:**
+
+* **Error Handling within `process_worker_file`:** The `try...except` block catches `OSError` specifically. This prevents a single bad file from crashing the entire process.  It returns `None` to signal failure.
+* **Centralized Error Checking:** After the `pool.map` operation, the code checks for `None` values in `results`.  This identifies which worker files caused problems.
+* **Explicit Failure Indication:** The script now returns an exit code (0 for success, 1 for failure). This allows you to easily monitor the script's execution in a shell script or other automation.  You can adapt this to other error handling mechanisms (e.g., logging to a file).
+* **Improved Logging:** The error message provides more context (filename and specific error).
+
+
+**Debugging the Root Cause:**
+
+1. **Examine the `failed_files`:**  The list `failed_files` will tell you *exactly* which files are causing problems.  Investigate those specific files.  Were they created correctly? Are there any patterns (e.g., all files from a specific seed or farm type)?
+2. **Check Disk Space:** Ensure you have sufficient disk space.  A full disk can cause file writing errors.
+3. **Review File Creation:**  Carefully examine the part of your code that *creates* the HDF5 worker files. Look for potential issues:
+    * **Resource exhaustion:**  Are you running out of memory during file creation?
+    * **Interrupts:**  Could the process have been interrupted while writing a file?
+    * **Permissions:** Does the script have write permissions to the directory where the files are being created?
+    * **Library versions:** Ensure all your libraries (e.g., h5py) are up-to-date and compatible.
+4. **Test with fewer files:** To isolate the problem, try running the script with a much smaller number of worker files (e.g., 10 instead of 3000).
+
+
+By implementing these changes and investigating the identified bad files, you should be able to reliably detect and handle corrupted worker files and prevent your script from crashing.  Remember to always back up important data.

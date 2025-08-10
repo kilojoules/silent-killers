@@ -1,0 +1,69 @@
+Your code appears to be a comprehensive implementation for optimizing wind farm models using Bayesian optimization. There are several areas you can consider for improvement, particularly around modularization and clarity. Let's break down a few key areas:
+
+### 1. Flow Field Plots
+You mentioned changing flow field plots and reporting average and P90s of the errors. Here are some suggestions:
+
+- **Flow Field Plots**: Consider using separate functions for plotting observed, predicted, and difference maps. This will make the code cleaner and allow for easier modifications.
+  
+- **Error Reporting**: Add a function to calculate and report not just RMSE, but also P90 (90th percentile) and average errors. You can use `numpy.percentile` for P90.
+
+### 2. Code Modularization
+To improve modularization, you can refactor your code into functions and classes. This will enhance readability and maintainability. Here's a basic structure to consider:
+
+```python
+class WindFarmSimulation:
+    def __init__(self, site, turbine, model_params, bounds, defaults):
+        self.site = site
+        self.turbine = turbine
+        self.model_params = model_params
+        self.bounds = bounds
+        self.defaults = defaults
+
+    def setup_wake_model(self):
+        # Logic to setup the appropriate wake model based on model_params
+        pass
+
+    def run_simulation(self):
+        # Logic to run the simulation
+        pass
+
+    def evaluate_rmse(self, **kwargs):
+        # Logic to evaluate RMSE
+        pass
+
+    def plot_results(self):
+        # Logic to plot results
+        pass
+
+    def optimize_parameters(self):
+        # Logic to optimize parameters using Bayesian Optimization
+        pass
+
+def main():
+    # Instantiate WindFarmSimulation with appropriate parameters
+    simulation = WindFarmSimulation(site, turbine, model_params, bounds, defaults)
+
+    # Run the optimization and simulation
+    simulation.optimize_parameters()
+    simulation.run_simulation()
+    simulation.plot_results()
+
+if __name__ == "__main__":
+    main()
+```
+
+### 3. `evaluate_rmse` Function
+The `evaluate_rmse` function is quite complex and can be broken down into smaller functions:
+
+- **Parameter Extraction**: Extract parameters for specific configurations (e.g., DOWNWIND, MODEL) into a helper function.
+  
+- **Simulation Execution**: Separate the simulation execution from RMSE calculation to make it easier to test and debug each part.
+
+### 4. General Suggestions
+- **Docstrings and Comments**: Add docstrings to your functions and classes. This will help others (and future you) understand the purpose and functionality of each part.
+  
+- **Error Handling**: Consider adding error handling, especially around data loading, model instantiation, and optimization.
+
+- **Logging**: Implement logging instead of printing to stdout for better tracking of the optimization and simulation process.
+
+By addressing these points, your code will become more modular, easier to understand, and maintainable. Let me know if you'd like further clarification or assistance on specific parts!

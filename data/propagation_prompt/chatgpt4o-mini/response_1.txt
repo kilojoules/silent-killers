@@ -1,0 +1,79 @@
+To propagate realistic measurement uncertainties through the PyWake library and save a series of flow field images showing the Sobol sensitivity of the effective wind speed (`WS_eff`) as a function of the coordinates `x` and `y`, we can follow these general steps:
+
+1. **Set Up the Environment:** Import necessary libraries and initialize PyWake.
+2. **Define the Input Parameters:** Specify the inflow conditions and uncertainties.
+3. **Generate Sobol Samples:** Use the Sobol sequence to generate samples of the input parameters.
+4. **Run Simulations:** For each sample, run the wind farm simulation and compute `WS_eff`.
+5. **Analyze Sensitivity:** Calculate Sobol sensitivity indices for `WS_eff`.
+6. **Visualize Results:** Save flow field images based on the sensitivity analysis.
+
+Here’s a Python script that accomplishes this:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake import PWake
+from pywake.examples import windFarm
+from SALib.sample import sobol
+from SALib.analyze import sobol as sobol_analyze
+
+# Step 1: Set up the environment
+# Assuming you have PyWake installed and a wind farm model ready
+wind_farm = windFarm.WindFarm()  # Replace with your wind farm setup
+n_samples = 100  # Number of Sobol samples
+
+# Step 2: Define input parameters for the Sobol sampling
+# Example: Wind speed and turbulence intensity uncertainties
+problem = {
+    'num_vars': 2,
+    'names': ['wind_speed', 'turbulence_intensity'],
+    'bounds': [[5, 15],  # Wind speed range in m/s
+               [0.1, 0.3]]  # Turbulence intensity range
+}
+
+# Step 3: Generate Sobol samples
+param_values = sobol.i4_sobol_generate(problem['num_vars'], n_samples)
+
+# Step 4: Run simulations and gather results
+WS_eff_results = []
+
+for i in range(n_samples):
+    wind_speed = param_values[i, 0]
+    turbulence_intensity = param_values[i, 1]
+    
+    # Update wind farm inflow conditions
+    wind_farm.set_inflow(wind_speed=wind_speed, turbulence_intensity=turbulence_intensity)
+    
+    # Run the simulation and compute WS_eff
+    ws_eff = wind_farm.simulate()  # Replace with the method to get effective wind speed
+    WS_eff_results.append(ws_eff)
+
+# Step 5: Analyze sensitivity
+# Assuming WS_eff_results is a 2D array where each row corresponds to the results of each sample
+sobol_results = sobol_analyze.analyze(problem, np.array(WS_eff_results), print_to_console=False)
+
+# Step 6: Visualize results and save images
+x = np.linspace(-100, 100, 200)  # x-coordinates
+y = np.linspace(-100, 100, 200)  # y-coordinates
+X, Y = np.meshgrid(x, y)
+
+for i in range(len(sobol_results['S1'])):
+    plt.figure(figsize=(10, 6))
+    plt.contourf(X, Y, sobol_results['S1'][i].reshape(200, 200), levels=50, cmap='viridis')
+    plt.colorbar(label='Sobol Sensitivity Index')
+    plt.title(f'Sobol Sensitivity of WS_eff for Sample {i+1}')
+    plt.xlabel('X (m)')
+    plt.ylabel('Y (m)')
+    plt.savefig(f'sobol_sensitivity_sample_{i+1}.png')
+    plt.close()
+
+print("Sensitivity analysis images saved successfully.")
+```
+
+### Notes:
+- Replace `windFarm.WindFarm()` and `wind_farm.simulate()` with your actual wind farm model initialization and simulation method.
+- Ensure to adapt the boundaries and the number of variables based on your specific case.
+- The contour plotting assumes that the results can be reshaped into a grid; you may need to adjust this based on the actual output format.
+- Install necessary libraries if you haven't already, such as `numpy`, `matplotlib`, `pywake`, and `SALib`.
+- Adjust the range of `x` and `y` coordinates according to your wind farm layout.
+- The script saves images named `sobol_sensitivity_sample_N.png` for each Sobol sample, showing the sensitivity of `WS_eff`.

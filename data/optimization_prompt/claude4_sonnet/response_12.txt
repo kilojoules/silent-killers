@@ -1,0 +1,196 @@
+## Diagnosis
+
+The error occurs because one or more worker HDF5 files are corrupted or incomplete. The "file signature not found" error indicates that the HDF5 file header is missing or corrupted, likely due to:
+
+1. **Incomplete writes**: A worker process was terminated mid-write
+2. **File system issues**: Disk full, network interruption, or I/O errors
+3. **Process crashes**: Worker died during file creation/writing
+
+The script completed 2999/3000 optimizations but failed when trying to read the worker files for merging, suggesting the corruption happened during the multiprocessing phase.
+
+## Solution
+
+Here's how to modify your script to detect and handle corrupted files reliably:
+
+```python
+import h5py
+import os
+import logging
+from pathlib import Path
+
+def validate_worker_file(worker_file):
+    """
+    Validate that a worker HDF5 file is readable and contains expected data.
+    Returns (is_valid, error_message)
+    """
+    try:
+        # Check if file exists and has non-zero size
+        if not os.path.exists(worker_file):
+            return False, f"File does not exist: {worker_file}"
+        
+        file_size = os.path.getsize(worker_file)
+        if file_size == 0:
+            return False, f"File is empty: {worker_file}"
+        
+        # Try to open and validate HDF5 structure
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Check for expected groups/datasets
+            expected_groups = ['layouts', 'farm_info']  # Adjust based on your structure
+            for group in expected_groups:
+                if group not in h5_in:
+                    return False, f"Missing expected group '{group}' in {worker_file}"
+            
+            # Verify we can read the data
+            try:
+                layouts = h5_in['layouts']
+                if len(layouts) == 0:
+                    return False, f"No layouts found in {worker_file}"
+            except Exception as e:
+                return False, f"Cannot read layouts from {worker_file}: {str(e)}"
+        
+        return True, "Valid"
+    
+    except OSError as e:
+        if "file signature not found" in str(e):
+            return False, f"Corrupted HDF5 file (missing signature): {worker_file}"
+        else:
+            return False, f"HDF5 error in {worker_file}: {str(e)}"
+    except Exception as e:
+        return False, f"Unexpected error validating {worker_file}: {str(e)}"
+
+def cleanup_corrupted_files(worker_files):
+    """Remove corrupted worker files to prevent confusion"""
+    for worker_file in worker_files:
+        is_valid, error_msg = validate_worker_file(worker_file)
+        if not is_valid:
+            logging.warning(f"Removing corrupted file: {error_msg}")
+            try:
+                os.remove(worker_file)
+            except Exception as e:
+                logging.error(f"Failed to remove {worker_file}: {e}")
+
+def main():
+    # Your existing code...
+    
+    # After multiprocessing completes, validate all worker files
+    worker_files = [f"{output_file_base}_worker_{i}.h5" for i in range(num_workers)]
+    
+    # Validate all worker files first
+    valid_files = []
+    corrupted_files = []
+    
+    for worker_file in worker_files:
+        is_valid, error_msg = validate_worker_file(worker_file)
+        if is_valid:
+            valid_files.append(worker_file)
+            logging.info(f"Validated worker file: {worker_file}")
+        else:
+            corrupted_files.append(worker_file)
+            logging.error(f"Corrupted worker file detected: {error_msg}")
+    
+    # Handle corrupted files
+    if corrupted_files:
+        logging.error(f"Found {len(corrupted_files)} corrupted worker files:")
+        for cf in corrupted_files:
+            logging.error(f"  - {cf}")
+        
+        # Decision point: fail fast or continue with valid files
+        if len(valid_files) == 0:
+            logging.error("No valid worker files found. Exiting.")
+            cleanup_corrupted_files(corrupted_files)
+            return False
+        
+        # Ask user or decide programmatically
+        missing_work = len(corrupted_files) * (total_jobs // num_workers)
+        logging.warning(f"Approximately {missing_work} optimizations may be missing")
+        
+        # Option 1: Fail fast (recommended for complete results)
+        logging.error("Stopping due to corrupted files. Clean restart recommended.")
+        cleanup_corrupted_files(corrupted_files)
+        return False
+        
+        # Option 2: Continue with valid files (uncomment if you prefer)
+        # logging.warning("Continuing with valid files only")
+        # cleanup_corrupted_files(corrupted_files)
+        # worker_files = valid_files
+    
+    # Proceed with merging only valid files
+    logging.info(f"Merging {len(valid_files)} valid worker files")
+    
+    # Your existing merging code, but with error handling
+    try:
+        with h5py.File(output_file, 'w') as h5_out:
+            for worker_file in valid_files:
+                try:
+                    with h5py.File(worker_file, 'r') as h5_in:
+                        # Your merging logic here
+                        pass
+                except Exception as e:
+                    logging.error(f"Error processing {worker_file} during merge: {e}")
+                    # Decide whether to continue or abort
+                    raise
+    except Exception as e:
+        logging.error(f"Fatal error during merge: {e}")
+        return False
+    
+    # Clean up worker files after successful merge
+    for worker_file in valid_files:
+        try:
+            os.remove(worker_file)
+            logging.info(f"Cleaned up {worker_file}")
+        except Exception as e:
+            logging.warning(f"Could not remove {worker_file}: {e}")
+    
+    return True
+
+# Additional: Add validation to worker processes
+def worker_function(args):
+    """Modified worker function with validation"""
+    try:
+        # Your existing worker logic
+        result = optimize_farm_layout(args)
+        
+        # Validate the output file before returning
+        worker_file = f"{output_base}_worker_{worker_id}.h5"
+        is_valid, error_msg = validate_worker_file(worker_file)
+        if not is_valid:
+            logging.error(f"Worker {worker_id} produced invalid file: {error_msg}")
+            # Optionally retry or return error status
+            return None
+        
+        return result
+    except Exception as e:
+        logging.error(f"Worker {worker_id} failed: {e}")
+        return None
+```
+
+## Recovery Strategy
+
+For your current situation:
+
+1. **Check existing worker files**:
+```bash
+ls -la *_worker_*.h5
+# Check which files exist and their sizes
+```
+
+2. **Identify the corrupted file**:
+```python
+import h5py
+import glob
+
+worker_files = glob.glob("*_worker_*.h5")
+for f in worker_files:
+    try:
+        with h5py.File(f, 'r') as h5:
+            print(f"{f}: OK ({len(h5['layouts']) if 'layouts' in h5 else 'no layouts'} layouts)")
+    except Exception as e:
+        print(f"{f}: CORRUPTED - {e}")
+```
+
+3. **Options for recovery**:
+   - **Clean restart**: Remove all worker files and restart with proper validation
+   - **Partial recovery**: Merge valid files and re-run only the missing work
+   - **Checkpoint approach**: Modify script to save progress more frequently
+
+The key improvements ensure that corruption is detected immediately and the process fails cleanly rather than at the very end.

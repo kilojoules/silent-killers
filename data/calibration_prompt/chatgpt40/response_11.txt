@@ -1,0 +1,109 @@
+Your approach is quite comprehensive, but there are a few areas where improvements can be made for better modularity, readability, and maintainability of the code. Here's a step-by-step breakdown of what you can consider adjusting:
+
+### 1. Modularize the Wind Farm Model Instantiation
+
+Instead of having separate `if-else` logic scattered throughout the code for different models and directions, you can create modular functions to handle this. This will make your code cleaner and easier to maintain.
+
+```python
+def create_wake_deficit_model(model, downwind, params):
+    if downwind:
+        if model == 1:
+            def_args = {k: params[k] for k in ['a_s', 'b_s', 'c_s', 'b_f', 'c_f']}
+            return BlondelSuperGaussianDeficit2020(**def_args)
+        else:
+            return TurboGaussianDeficit(A=params['A'], cTI=[params['cti1'], params['cti2']],
+                                        ctlim=params['ctlim'], ceps=params['ceps'],
+                                        ct2a=ct2a_mom1d, groundModel=Mirror(),
+                                        rotorAvgModel=GaussianOverlapAvgModel())
+    else:
+        def_args = {}
+        if model == 2:
+            def_args['groundModel'] = Mirror()
+        return BlondelSuperGaussianDeficit2020(**def_args)
+
+def create_wind_farm_model(site, turbine, model, downwind, params):
+    wake_deficit_model = create_wake_deficit_model(model, downwind, params)
+    turbulence_model = CrespoHernandez(c=params.get('ch', [0, 0, 0, 0]))
+    blockage_args = {}
+    if not downwind:
+        blockage_args = {'ss_alpha': params['ss_alpha'], 'ss_beta': params['ss_beta'],
+                         'r12p': np.array([params['rp1'], params['rp2']]),
+                         'ngp': np.array([params['ng1'], params['ng2'], params['ng3'], params['ng4']])}
+        if model == 2:
+            blockage_args['groundModel'] = Mirror()
+    return All2AllIterative(site, turbine, wake_deficitModel=wake_deficit_model,
+                            superpositionModel=LinearSum(), deflectionModel=None,
+                            turbulenceModel=turbulence_model,
+                            blockage_deficitModel=SelfSimilarityDeficit2020(**blockage_args))
+```
+
+### 2. Adjust Flow Field Plots
+
+If you're dealing with velocity deficits, ensure your plots correctly reflect this. The current plotting seems to correctly plot observed deficits, predictions, and differences, but ensure that you are consistently using the correct variable names.
+
+You mentioned changing the flow field plots to report averages and p90s of the errors. Here's how you could modify your plotting loop to include these statistics:
+
+```python
+import matplotlib.pyplot as plt
+
+def plot_results(target_x, target_y, observed_deficit, pred, diff, t):
+    fig, ax = plt.subplots(3, 1, figsize=(5, 15))
+    
+    co = ax[0].contourf(target_x, target_y, observed_deficit.T)
+    cp = ax[1].contourf(target_x, target_y, pred)
+    cd = ax[2].contourf(target_x, target_y, diff)
+    
+    for jj, c in enumerate([co, cp, cd]):
+        fig.colorbar(c, ax=ax[jj])
+    
+    ax[0].set_ylabel('Observed')
+    ax[1].set_ylabel('Prediction')
+    ax[2].set_ylabel('Diff')
+    
+    plt.tight_layout()
+    plt.savefig(f'figs/downsream_err_{t}')
+    plt.clf()
+
+def calculate_statistics(diff):
+    # Calculate RMSE
+    rmse = np.sqrt(np.mean(diff**2))
+    # Calculate P90 error
+    p90_error = np.percentile(np.abs(diff), 90)
+    
+    return rmse, p90_error
+
+rmse_values = []
+p90_errors = []
+
+for t in range(flow_map.time.size):
+    this_pred_sim = sim_res.isel(time=t)
+    observed_deficit = flow_roi.deficits.interp(ct=this_pred_sim.CT, ti=this_pred_sim.TI, z=0).isel(wt=0)
+    pred = (this_pred_sim.WS - flow_map.WS_eff.isel(h=0, time=t)) / this_pred_sim.WS
+    diff = observed_deficit.T - pred
+    
+    rmse, p90_error = calculate_statistics(diff)
+    rmse_values.append(rmse)
+    p90_errors.append(p90_error)
+    
+    plot_results(target_x, target_y, observed_deficit, pred, diff, t)
+
+overall_rmse = np.mean(rmse_values)
+overall_p90 = np.mean(p90_errors)
+
+print(f"RMSE values per time step: {rmse_values}")
+print(f"Overall RMSE: {overall_rmse}")
+print(f"P90 errors per time step: {p90_errors}")
+print(f"Overall P90 Error: {overall_p90}")
+```
+
+### 3. Simplify Bayesian Optimization Setup
+
+You have a lot of repetitive code for setting up the Bayesian optimization. Consider creating a function to handle the setup.
+
+### 4. Consistent Naming and Logic
+
+Ensure that all naming conventions are consistent throughout your code, and any logical decisions (like `DOWNWIND` and `MODEL`) are clearly documented.
+
+### Final Thoughts
+
+By modularizing your code, it becomes easier to understand, maintain, and extend. Additionally, focusing on efficient and informative visualizations will help in conveying the results more effectively.

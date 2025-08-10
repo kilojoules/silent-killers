@@ -1,0 +1,95 @@
+This script requires the `pywake` library and several other packages for image generation and sensitivity analysis.  Make sure you have them installed (`pip install pywake matplotlib numpy scipy salib`).  The script uses Sobol sensitivity analysis from the `salib` library.  You'll need to adapt file paths and parameters to match your specific data and desired resolution.
+
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake.wind_farm_models.engineering_models import All2AllIterative
+from pywake.examples.data.hornsrev1 import Hornsrev1Site
+from pywake.flow_map import XYGrid
+from pywake.utils.plotting import plot_map
+from salib.analyze import sobol
+from salib.sample import saltelli
+
+# --- Input parameters ---
+n_samples = 100  # Number of Sobol samples (increase for better accuracy)
+x_range = (0, 1000) # Adjust to your site's x-range (meters)
+y_range = (0, 1000) # Adjust to your site's y-range (meters)
+resolution = 20 # Resolution of the flow field images (higher = more detail, slower)
+time_steps = [0, 6, 12]  # Time steps to visualize (seconds, adjust as needed)
+
+
+# --- Load site and wind farm model ---
+site = Hornsrev1Site() # Replace with your site data
+windTurbines = site.windTurbines  # Replace with your wind turbine definition
+wf_model = All2AllIterative(site, windTurbines)
+
+# --- Define input parameters for Sobol analysis ---
+problem = {
+    'num_vars': 2,
+    'names': ['WS_x', 'WS_y'], # Adjust names as needed
+    'bounds': [[0, 10], [0, 10]] # Adjust bounds to reflect realistic uncertainty in your inflow
+}
+
+# --- Generate Sobol samples ---
+param_values = saltelli.sample(problem, n_samples, calc_second_order=False)
+
+# --- Run simulations and store results ---
+ws_eff_results = []
+for sample in param_values:
+    # Simulate with perturbed inflow
+    WS_x_perturbed = sample[0]
+    WS_y_perturbed = sample[1]
+    # Apply perturbation to your inflow data here. This is highly dependent on your data structure.
+    # Example (assuming you have a 'WS' array):
+    # site.WS = site.WS + np.array([WS_x_perturbed, WS_y_perturbed]) # This is a placeholder - adapt this line to your specific inflow data
+    
+    #Run the simulation
+    flow_map = wf_model(site.initial_flow_map, ws_eff=True)
+    
+    #Extract and save relevant data
+    ws_eff = flow_map.WS_eff.flatten()
+    ws_eff_results.append(ws_eff)
+
+ws_eff_results = np.array(ws_eff_results)
+
+# --- Sobol Sensitivity Analysis ---
+Si = sobol.analyze(problem, ws_eff_results, print_to_console=True)
+
+# --- Plot sensitivity indices ---
+plt.figure()
+plt.bar(problem['names'], Si['S1'])
+plt.ylabel('First-order sensitivity index (S1)')
+plt.title('Sobol Sensitivity Analysis of WS_eff')
+plt.show()
+
+
+# --- Visualize flow field at different time steps ---
+x, y = np.mgrid[x_range[0]:x_range[1]:resolution*1j, y_range[0]:y_range[1]:resolution*1j]
+for t in time_steps:
+    plt.figure(figsize=(12, 8))
+    for i, sample in enumerate(param_values[:5]):  # Visualize only first 5 samples for brevity
+        # Simulate with perturbed inflow (as before)
+        # Apply perturbation to your inflow data here
+        # Example (assuming you have a 'WS' array):
+        # site.WS = site.WS + np.array([sample[0], sample[1]]) # This is a placeholder - adapt this line to your specific inflow data
+        flow_map = wf_model(site.initial_flow_map, ws_eff=True)
+        plot_map(flow_map.WS_eff[t], x, y, title=f'WS_eff at t={t}s, Sample {i+1}')
+    plt.show()
+
+```
+
+
+**Crucial Adaptations Needed:**
+
+1. **Inflow Data:** The script lacks concrete details on how your inflow data is structured.  The commented-out lines show a *placeholder* for adding uncertainty. You MUST replace this with code that correctly modifies your inflow wind speed (`site.WS` or equivalent) based on `WS_x_perturbed` and `WS_y_perturbed`.  This might involve adding random noise, using a spatial correlation function, or other methods depending on your inflow model.
+
+2. **Site and Turbine Data:** Replace the example `Hornsrev1Site()` with your actual site data and wind turbine definitions.
+
+3. **Time Steps:** Adjust `time_steps` to reflect the relevant time steps in your simulation.
+
+4. **Uncertainty Bounds:** Carefully choose the bounds in `problem['bounds']` to reflect the realistic uncertainty range in your inflow parameters.
+
+5. **Error Handling:** Add error handling (e.g., `try-except` blocks) to catch potential issues during simulations.
+
+Remember to install the necessary libraries: `pywake`, `matplotlib`, `numpy`, `scipy`, and `salib`.  This expanded script provides a more complete framework, but requires significant customization to work with your specific data and simulation setup.  The key is correctly incorporating the uncertainty into your inflow data before running the PyWake simulations.

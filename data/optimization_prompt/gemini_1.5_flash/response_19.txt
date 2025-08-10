@@ -1,0 +1,78 @@
+The error message "OSError: Unable to synchronously open file (file signature not found)" clearly indicates that one of the HDF5 files (`worker_file`) your script tries to open is corrupted or doesn't exist.  The script fails because it can't read the file's header (the "file signature"). This is likely the cause of the incomplete run (2999/3000 optimizations).
+
+The problem isn't necessarily with the *joining* operation (though a faulty join could lead to incorrect file paths), but rather with the creation or integrity of one of the individual worker files *before* the join.
+
+Here's how to modify the script to reliably detect and handle invalid worker files:
+
+```python
+import h5py
+import os
+import sys
+from tqdm import tqdm # Assuming you're using tqdm for the progress bar
+
+# ... other imports and functions ...
+
+def process_worker_file(worker_file):
+    """Processes a single worker file, handling potential errors."""
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Your existing code to process the h5 file goes here
+            # ... process data from h5_in ...
+            return True # Indicate successful processing
+    except OSError as e:
+        print(f"Error processing worker file {worker_file}: {e}", file=sys.stderr)
+        return False # Indicate failure
+    except Exception as e: # Catch other potential exceptions during processing
+        print(f"Unexpected error processing {worker_file}: {e}", file=sys.stderr)
+        return False
+
+
+def main():
+    # ... your existing code ...
+
+    worker_files = [f"path/to/your/worker_files/worker_{i}.h5" for i in range(3000)] #Example.  Adjust to your actual file naming and location.
+
+    successful_processes = 0
+    for worker_file in tqdm(worker_files, desc="Processing worker files"):
+        if os.path.exists(worker_file): # Check if the file exists before attempting to open it
+            if process_worker_file(worker_file):
+                successful_processes += 1
+        else:
+            print(f"Error: Worker file {worker_file} not found!", file=sys.stderr)
+
+    print(f"Completed {successful_processes}/{len(worker_files)} optimizations successfully.")
+
+    if successful_processes != len(worker_files):
+        print("Some worker files failed to process. Exiting.", file=sys.stderr)
+        sys.exit(1) # Exit with a non-zero status code to indicate failure
+
+    # ... rest of your main function ...
+
+if __name__ == "__main__":
+    main()
+```
+
+**Key Improvements:**
+
+1. **`process_worker_file` function:** This encapsulates the file processing, making error handling cleaner.  It explicitly checks for `OSError` (the HDF5 file error) and other potential exceptions.  It returns `True` for success and `False` for failure.
+
+2. **File existence check:**  The code now checks (`os.path.exists(worker_file)`) if the file exists before attempting to open it. This prevents errors caused by missing files.
+
+3. **Error reporting:**  Error messages are now printed to `sys.stderr` for better logging and separation from standard output.
+
+4. **Exit on failure:** The script now explicitly exits with a non-zero exit code (`sys.exit(1)`) if any worker file processing fails. This signals to the calling process (e.g., a shell script or job scheduler) that the process did *not* complete successfully.
+
+5. **Progress bar:**  The `tqdm` progress bar continues to show progress even with errors, providing better feedback.
+
+**To recover from the partially completed run:**
+
+You'll need to identify which `worker_file` caused the error.  The error message *might* contain part of the filename, but it is not guaranteed.  The best approach is to:
+
+1. **Examine the log files:** Carefully review your log output to find the exact filename that caused the `OSError`. The `tqdm` progress bar might give an indication of the approximate file number.
+
+2. **Check file sizes:**  If you have many files, compare their sizes. A corrupted file might be significantly smaller or larger than expected.
+
+3. **Re-run the script:**  After fixing any issues causing the file corruption (e.g., disk errors, insufficient disk space), re-run the script. The improved error handling will ensure it stops cleanly if it encounters another problem.  You might want to resume from where it left off (2999) instead of starting from 0.  You can adjust the range in `worker_files` list to do this.  This requires careful management of the output files to avoid overwriting partially completed data.
+
+
+Remember to replace `"path/to/your/worker_files/worker_{i}.h5"` with the correct path to your worker files.  The file naming convention should match your actual file naming scheme.

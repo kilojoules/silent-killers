@@ -1,0 +1,77 @@
+Your approach is quite comprehensive, but there are certainly areas where you could make improvements to enhance readability, maintainability, and performance. Here are a few suggestions:
+
+1. **Modularization**: 
+   - Break down the existing code into functions and classes to improve readability and reusability. You can create separate functions for data loading, model setup, optimization, and visualization.
+   - Consider creating a class for your workflow that encapsulates the entire process of setting up the simulation, running it, and analyzing the results. This can help in managing state and dependencies more effectively.
+
+2. **Configuration Management**:
+   - Use configuration files or dictionaries to handle parameters and settings. This will make it easier to manage different settings for different scenarios.
+
+3. **Flow Field Plots**:
+   - As you mentioned, reporting average and p90s of the errors could provide more insight. You can calculate these statistics and include them in your plots or as additional outputs.
+   - Consider enhancing your plots with additional annotations or overlays that can provide more context or highlight key areas.
+
+4. **Code Readability**:
+   - Use descriptive variable names and comments to explain complex logic, especially in areas where you're setting up the models or processing the results.
+   - Use Python's logging module instead of print statements for better control over the output.
+
+5. **Efficiency**:
+   - Check if there are any opportunities to vectorize operations using numpy or xarray to improve performance, especially in the simulation and evaluation steps.
+
+6. **Error Handling**:
+   - Add error handling to manage exceptions and edge cases gracefully. This is especially useful when dealing with data processing and numerical computations that might encounter unexpected inputs or outputs.
+
+Here's a rough sketch of how you might start refactoring the code into a more modular structure:
+
+```python
+import numpy as np
+import xarray as xr
+from py_wake.wind_farm_models import All2AllIterative
+from py_wake.examples.data.hornsrev1 import Hornsrev1Site
+from py_wake.deficit_models.gaussian import BlondelSuperGaussianDeficit2020
+
+class WindFarmSimulation:
+    def __init__(self, site, turbine, model_params, downwind=True, model=2):
+        self.site = site
+        self.turbine = turbine
+        self.model_params = model_params
+        self.downwind = downwind
+        self.model = model
+        self.wfm = self.setup_wind_farm_model()
+
+    def setup_wind_farm_model(self):
+        wake_deficitModel = BlondelSuperGaussianDeficit2020(**self.model_params)
+        return All2AllIterative(self.site, self.turbine, wake_deficitModel=wake_deficitModel)
+
+    def run_simulation(self, positions, ws, TI, wd):
+        return self.wfm(positions[0], positions[1], ws=ws, TI=TI, wd=wd, time=True)
+
+    def evaluate_rmse(self, observed, predicted):
+        # Calculate RMSE between observed and predicted deficits
+        return np.sqrt(((observed - predicted) ** 2).mean())
+
+def load_data(file_path):
+    return xr.load_dataset(file_path)
+
+def main():
+    dat = load_data('./DTU10MW.nc')
+    turbine = DTU10MW()
+    site = Hornsrev1Site()
+    
+    model_params = {
+        'a_s': 0.17, 
+        'b_s': 0.005, 
+        'c_s': 0.2, 
+        'b_f': -0.68, 
+        'c_f': 2.41,
+    }
+    
+    simulation = WindFarmSimulation(site, turbine, model_params)
+    sim_res = simulation.run_simulation([0], [0], ws=full_ws, TI=full_ti, wd=[270] * full_ti.size)
+    # Add additional logic here for processing results and visualization
+
+if __name__ == "__main__":
+    main()
+```
+
+This code is just a starting point. You will need to fill in the gaps, especially where specific logic is needed for setting up the simulation and evaluating results. By organizing your code into functions and classes, you can make it easier to understand, maintain, and extend.

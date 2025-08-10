@@ -1,0 +1,89 @@
+To create a script that propagates realistic measurement uncertainties through PyWake and produces flow field images showing the Sobol sensitivity of the effective wind speed (WS_eff) as a function of position (x, y), we will follow these steps:
+
+1. **Define the Problem**: Identify the inputs that will have uncertainties, set up the PyWake model, and define the Sobol sensitivity analysis.
+
+2. **Setup Uncertainty Propagation**: Implement the uncertainty propagation through the PyWake model.
+
+3. **Calculate Sensitivity**: Use Sobol sensitivity analysis to assess how variations in input parameters affect WS_eff.
+
+4. **Generate Flow Field Images**: Create visualizations of the flow field at different time steps/positions.
+
+5. **Save the Flow Field Images**: Save the generated flow field images for each time step/position.
+
+Here's an example script that implements these steps. This is a general template, and specific implementations may vary based on your exact requirements and the structure of your input data.
+
+```python
+import numpy as np
+import pywake
+import matplotlib.pyplot as plt
+from scipy.stats import norm
+from SALib import Problem, Sensitivity
+
+# 1. Define the problem
+# Define the input parameters with uncertainties
+parameters = {
+    'wind_speed': {'mean': 8.0, 'std': 1.0},  # Mean wind speed and standard deviation
+    'turbulence_intensity': {'mean': 0.1, 'std': 0.02},  # Mean turbulence intensity and std
+}
+
+# 2. Setup the PyWake model
+# Initialize the PyWake environment
+site = pywake.Site(10, 50)  # Example: height of 10m, roughness length of 50m
+turbine = pywake.Turbine('my_turbine_model', rotor_diameter=120)
+
+# Setup the wind farm layout
+layout = pywake.Layout(turbine, positions=np.array([[0, 0], [500, 0]]))  # Example positions
+
+# 3. Define the Sobol sensitivity problem
+problem = {
+    'num_vars': 2,
+    'names': ['wind_speed', 'turbulence_intensity'],
+    'bounds': [[6, 10], [0.08, 0.12]]  # Bounds for wind speed and turbulence intensity
+}
+
+# Generate samples for Sobol analysis
+n_samples = 1000
+param_values = np.random.uniform(low=np.array([6, 0.08]), high=np.array([10, 0.12]), size=(n_samples, 2))
+
+# 4. Run the simulations and collect WS_eff results
+ws_eff_results = []
+
+for wind, turbulence in param_values:
+    # Run the PyWake simulation
+    inflow = pywake.Inflow(wind_speed=wind, turbulence_intensity=turbulence)
+    flow_field = layout.get_flow_field(inflow)
+
+    # Extract WS_eff at specific positions (x, y)
+    ws_eff = flow_field.WS_eff  # This should be in a format where you can access x, y positions
+    ws_eff_results.append(ws_eff)
+
+# Convert to a numpy array
+ws_eff_results = np.array(ws_eff_results)
+
+# 5. Calculate Sobol sensitivity
+sobol_indices = Sensitivity.analyze(problem, ws_eff_results, print_to_console=True)
+
+# 6. Generate flow field images
+x_positions = np.linspace(0, 1000, num=100)  # Adjust these ranges as needed
+y_positions = np.linspace(0, 1000, num=100)
+
+for i, (wind, turbulence) in enumerate(param_values):
+    plt.figure(figsize=(10, 8))
+    plt.contourf(x_positions, y_positions, ws_eff_results[i].reshape(100, 100), levels=20, cmap='viridis')
+    plt.colorbar(label='WS_eff')
+    plt.title(f'Flow field for wind speed = {wind:.2f} m/s, turbulence = {turbulence:.2f}')
+    plt.xlabel('x position (m)')
+    plt.ylabel('y position (m)')
+    plt.savefig(f'flow_field_wind_{wind:.2f}_turbulence_{turbulence:.2f}.png')
+    plt.close()
+
+# Optionally save the Sobol indices to a file
+np.savetxt('sobol_indices.csv', sobol_indices['S1'], delimiter=',', header='S1')
+```
+
+### Notes:
+- Adjust the input parameters in the `parameters` dictionary to reflect realistic uncertainty values.
+- Modify the PyWake setup according to your specific turbine model and layout details.
+- Ensure you have the requisite libraries (PyWake, SALib, NumPy, Matplotlib) installed in your Python environment.
+- The contour plot generation assumes that `ws_eff_results` can be reshaped accordingly. Adjust the reshaping dimensions based on your actual flow field data structure.
+- The code saves all generated images in the current working directory. You may want to specify a different path based on your needs.

@@ -1,0 +1,62 @@
+The error message you're encountering indicates that there is an issue with one of the worker files that is being opened by the script. Specifically, the error `OSError: Unable to synchronously open file (file signature not found)` suggests that the file being accessed is either corrupted or is not in the expected HDF5 format.
+
+To modify your script for better error handling and to ensure that the process stops cleanly if any worker file is invalid, you can take the following steps:
+
+### 1. Implement Error Handling
+Add error handling around the file-opening operation to catch exceptions and terminate the process gracefully if a file is invalid.
+
+```python
+import h5py
+import logging
+
+def main():
+    # Your existing code...
+
+    for worker_file in worker_files:
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                # process the file
+                pass  # Replace with your logic
+
+        except OSError as e:
+            logging.error(f"Failed to open worker file {worker_file}: {e}")
+            # Optionally, you can raise an exception or exit the program
+            raise  # This will stop the execution
+
+    # Continue with the rest of your logic...
+```
+
+### 2. Validate Files Before Processing
+If you have a way to verify the integrity of the files before attempting to open them, do that first. This could involve checking for file existence, file size, or even attempting to read a small portion of the file to confirm it's a valid HDF5 file.
+
+```python
+import os
+
+def is_valid_hdf5_file(filepath):
+    if not os.path.exists(filepath):
+        return False
+    if os.path.getsize(filepath) == 0:
+        return False
+    try:
+        with h5py.File(filepath, 'r'):
+            return True
+    except OSError:
+        return False
+
+# Use this function in your main processing loop
+for worker_file in worker_files:
+    if not is_valid_hdf5_file(worker_file):
+        logging.error(f"Invalid worker file: {worker_file}")
+        raise Exception(f"Invalid worker file: {worker_file}")
+```
+
+### 3. Logging and User Notification
+Make sure to log the errors encountered, so you have a clear understanding of which file caused the issue. You could also notify the user through console output or another notification mechanism.
+
+### 4. Cleaning Up After Errors
+If the process is interrupted due to an invalid file, ensure any resources are cleaned up properly. You might want to use a try-finally block or a context manager to handle cleanup.
+
+### 5. Testing the Script
+After making these modifications, thoroughly test the script with valid and invalid files to ensure that errors are caught and handled as expected.
+
+By implementing these changes, your script will be more robust and will be able to detect and handle invalid worker files more gracefully, preventing unexpected crashes and providing clearer feedback on what went wrong.

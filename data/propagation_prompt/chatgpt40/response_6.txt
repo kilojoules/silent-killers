@@ -1,0 +1,95 @@
+To generate a script that propagates realistic measurement uncertainties through PyWake and saves a series of flow field images showing the sensitivity of the flow at different times to the inflow, you can follow the steps outlined below. This script will utilize Sobol sensitivity analysis to evaluate the sensitivity of the effective wind speed (`WS_eff`) as a function of spatial coordinates (x, y).
+
+Before you begin, ensure that you have the necessary Python packages installed, including PyWake and SALib for sensitivity analysis.
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from py_wake import WindFarmModel
+from py_wake.examples.data.hornsrev1 import Hornsrev1Site, HornsrevV80
+from py_wake.site.sobol import SobolSite
+from SALib.sample import saltelli
+from SALib.analyze import sobol
+
+# Define the problem for Sobol analysis
+problem = {
+    'num_vars': 2,  # Adjust this based on the number of uncertain inputs
+    'names': ['wind_speed', 'wind_direction'],  # Example input parameters
+    'bounds': [[6, 12], [0, 360]]  # Example bounds for wind speed and direction
+}
+
+# Generate samples
+param_values = saltelli.sample(problem, 1024)
+
+# Initialize the site and wind turbine
+site = Hornsrev1Site()
+windTurbines = HornsrevV80()
+
+# Initialize the wind farm model
+wf_model = WindFarmModel(site, windTurbines)
+
+# Function to evaluate the model
+def evaluate_model(params):
+    wind_speeds, wind_directions = params.T
+    sim_res = wf_model(wind_speeds=wind_speeds, wind_directions=wind_directions)
+    ws_eff = sim_res.WS_eff  # Get the effective wind speed
+    return ws_eff
+
+# Run the model for all parameter combinations
+Y = []
+for params in param_values:
+    Y.append(evaluate_model(params))
+
+Y = np.array(Y)
+
+# Perform Sobol sensitivity analysis
+Si = sobol.analyze(problem, Y)
+
+# Plotting Sobol indices
+def plot_sobol_indices(Si, index='S1', title='First Order Sobol Indices'):
+    plt.figure(figsize=(10, 5))
+    indices = Si[index]
+    plt.bar(problem['names'], indices)
+    plt.title(title)
+    plt.xlabel('Input Parameters')
+    plt.ylabel(index)
+    plt.ylim(0, 1)
+    plt.show()
+
+plot_sobol_indices(Si, 'S1', 'First Order Sobol Indices for WS_eff')
+
+# Save a series of flow field images showing sensitivity
+x, y = np.meshgrid(np.linspace(0, 5000, 100), np.linspace(0, 5000, 100))
+for i in range(len(param_values)):
+    params = param_values[i]
+    wind_speed, wind_direction = params
+    sim_res = wf_model(wind_speeds=wind_speed, wind_directions=wind_direction)
+    ws_eff = sim_res.flow_map(x, y).WS_eff  # Compute WS_eff over grid
+
+    plt.figure(figsize=(8, 6))
+    plt.contourf(x, y, ws_eff, levels=50, cmap='viridis')
+    plt.colorbar(label='WS_eff (m/s)')
+    plt.title(f'Flow Field for WS_eff | Wind Speed: {wind_speed:.2f}, Wind Direction: {wind_direction:.2f}')
+    plt.xlabel('x (m)')
+    plt.ylabel('y (m)')
+    plt.savefig(f'flow_field_sensitivity_{i}.png')
+    plt.close()
+
+print("Flow field images saved.")
+```
+
+### Key Points:
+
+1. **Parameter Definition**: The script defines the problem setup for Sobol analysis, including the number of variables, their names, and bounds. You may need to adjust these according to your specific uncertainties.
+
+2. **Sampling**: The script uses Saltelli's sampling method to generate parameter samples.
+
+3. **Model Evaluation**: Each parameter set is evaluated using the PyWake model to calculate the effective wind speed (`WS_eff`).
+
+4. **Sensitivity Analysis**: Using the SALib library, the script performs Sobol sensitivity analysis on the results.
+
+5. **Visualization**: The script includes functions to plot Sobol indices and to generate flow field images.
+
+6. **Flow Field Images**: The script creates and saves images of the flow field, showing how the effective wind speed varies with different parameter sets.
+
+Ensure you have the required libraries installed and adjust the bounds and parameters specific to your needs.

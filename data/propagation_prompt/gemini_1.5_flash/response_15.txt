@@ -1,0 +1,98 @@
+This script requires several libraries. Make sure you have them installed:
+
+```bash
+pip install pywake==3.0.1 matplotlib numpy openpyxl sobol_seq
+```
+
+The script below uses the Sobol sequence for sensitivity analysis,  which is more efficient for higher dimensions than other methods like Latin Hypercube Sampling.  It's crucial to adapt the `windTurbines` and `flowField` sections to your specific PyWake setup and desired flow field visualization.
+
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake.wind_farm_models import All2AllIterative
+from pywake.examples.data.hornsrev1 import Hornsrev1Site, Hornsrev1WindTurbines
+from pywake.flow_map import FlowMap
+from pywake.utils.plotting import plt_windrose
+from pywake.turbulence_models.stf import STF2017
+from sobol_seq import i4_sobol_generate
+
+# --- Input Parameters ---
+n_samples = 100 # Number of Sobol samples for sensitivity analysis
+x_range = (0, 1000) # Range of x coordinates for flow field (adjust as needed)
+y_range = (0, 1000) # Range of y coordinates for flow field (adjust as needed)
+times = [0, 5, 10] # Time instances for flow field visualization (adjust as needed)
+
+
+# --- PyWake Setup ---
+site = Hornsrev1Site()
+windTurbines = Hornsrev1WindTurbines() # Replace with your wind turbine definition
+wf_model = All2AllIterative(site, windTurbines, turbulenceModel=STF2017())
+
+
+# --- Sobol Sequence for Inflow Uncertainty ---
+#  Assuming inflow uncertainty in wind speed only (adapt as needed for other parameters)
+dim = 1  # Dimension of uncertainty (here, just wind speed)
+samples = i4_sobol_generate(dim, n_samples)
+
+# Define the range of uncertainty in wind speed.  This is crucial and should reflect
+# your understanding of the uncertainty in the inflow wind speed.
+wind_speed_uncertainty = 2  # e.g., +/- 2 m/s around a mean wind speed
+mean_wind_speed = 8  # Example mean wind speed
+
+
+# --- Function to calculate and visualize flow fields ---
+def visualize_flow_field(time_index, samples_index):
+    wind_speed = mean_wind_speed + (samples[samples_index, 0] - 0.5) * 2 * wind_speed_uncertainty
+    
+    # Simulate the wind farm
+    results = wf_model(windSpeeds=[wind_speed], wd=270, time=time_index) # Adjust wd as needed
+
+    # Create a flow map
+    fm = FlowMap(results, resolution=(100,100), x_range=x_range, y_range=y_range)  # Adjust resolution as needed
+
+    # Extract flow field data (replace 'WS_eff' with the variable you want to visualize)
+    WS_eff = fm.flow_map('WS_eff')
+
+    # Plot the flow field
+    plt.figure(figsize=(10, 8))
+    plt.imshow(WS_eff, extent=[x_range[0], x_range[1], y_range[0], y_range[1]], origin='lower', cmap='viridis')
+    plt.colorbar(label='WS_eff (m/s)')
+    plt.title(f'Flow Field at Time {time_index} - Sample {samples_index+1} - Wind Speed {wind_speed:.2f} m/s')
+    plt.xlabel('x (m)')
+    plt.ylabel('y (m)')
+    plt.savefig(f'flow_field_time_{time_index}_sample_{samples_index+1}.png')
+    plt.close()  # Close the plot to prevent memory issues
+
+
+# --- Main Loop ---
+for time_index in times:
+    for samples_index in range(n_samples):
+        visualize_flow_field(time_index, samples_index)
+
+print("Flow field images saved.")
+
+
+# --- Sobol Sensitivity Analysis (Optional) ---
+# This section requires further development based on how you define your sensitivity indices.
+# Example using a simple approach (replace with more sophisticated method if needed)
+
+#  This is a placeholder; you'll need to adapt this based on your sensitivity analysis needs
+#  and how you extract the relevant data from the flow field.  You might use something
+#  like a variance-based method.
+
+# WS_eff_data = [] # collect WS_eff data for all samples and times
+# for time_index in times:
+#     for samples_index in range(n_samples):
+#         # extract relevant data from visualize_flow_field - this part needs to be added.
+#         # ... your code to extract WS_eff data ...
+#         # WS_eff_data.append(...)
+
+
+# #Perform Sobol analysis - needs a dedicated sensitivity analysis library
+# #...
+
+
+```
+
+Remember to replace the placeholder comments with your specific code for data extraction and sensitivity analysis.  This enhanced script provides a more complete framework for propagating uncertainties and visualizing the results.  The Sobol sensitivity analysis portion is a starting point; you'll likely need to adapt it based on the specific sensitivity indices you want to calculate and the tools you choose to use.  Consider libraries like `SALib` for more advanced sensitivity analysis.

@@ -1,0 +1,81 @@
+This script uses PyWake, NumPy, and Matplotlib to propagate uncertainties through a wind farm simulation and visualize the sensitivity of the effective wind speed (WS_eff) to inflow uncertainties using Sobol sensitivity analysis.  It requires you to have these libraries installed (`pip install pywake numpy matplotlib`).  You'll also need to adapt the input parameters (wind farm layout, wind turbine model, etc.) to your specific case.  This example uses a simplified setup for demonstration.
+
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake.wind_farm_models import PropagateDownwind
+from pywake.turbulence_models import GCLTurbulence
+from pywake.aep_calculator import AEPCalculator
+from pywake.fowt import FlowField
+from pywake.utils.sensitivity import SobolSensitivity
+from pywake.examples.data.hornsrev1 import Hornsrev1Site
+from pywake.wind_turbines import WindTurbine
+
+
+# --- Input parameters ---
+n_wt = 10  # Number of wind turbines
+x_coords = np.linspace(0, 1000, n_wt)  # Simplified x-coordinates
+y_coords = np.zeros(n_wt)  # Simplified y-coordinates
+
+# Wind turbine model (replace with your actual model)
+wt = WindTurbine(name="GenericWT", diameter=80, hub_height=80,
+                 ct_func=lambda ws: 0.8 * (ws/10)**2, cp_func=lambda ws: 0.4 * (ws/10)**3)
+
+# Inflow uncertainty parameters
+n_samples = 100  # Number of samples for Sobol analysis
+uncertainty_params = {
+    'WS_0': {'distribution': 'uniform', 'low': 8, 'high': 12} # Example: Uniform distribution of inflow wind speed
+}
+
+
+# --- PyWake setup ---
+site = Hornsrev1Site(1) # Using a sample site - you can replace this with your own site data
+wf_model = PropagateDownwind(site, wt, turbulenceModel=GCLTurbulence())
+
+# --- Sobol Sensitivity Analysis ---
+sobol = SobolSensitivity(wf_model, n_samples=n_samples, uncertainty_params=uncertainty_params)
+sobol_results = sobol.analyse(x_coords, y_coords)
+
+# --- Flow Field Visualization ---
+# Select a few time instances for visualization (adjust as needed)
+time_indices = [0, int(n_samples / 4), int(n_samples / 2), int(3 * n_samples / 4), n_samples -1]
+
+for i in time_indices:
+    # Extract flow field data for the selected time instance
+    flow_field = sobol.get_flow_field(i)
+
+    # Create a figure and axes
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    # Plot the wind turbine locations
+    ax.scatter(x_coords, y_coords, marker='^', color='black', label='Wind Turbines')
+
+    # Plot the effective wind speed (WS_eff) as a contour plot
+    x = np.linspace(0,1000,100)
+    y = np.linspace(-100,100,100)
+    X,Y = np.meshgrid(x,y)
+    WS_eff = flow_field.WS_eff(X,Y)
+    contour = ax.contourf(X, Y, WS_eff, levels=20, cmap='viridis')
+
+    # Add a colorbar
+    cbar = fig.colorbar(contour)
+    cbar.set_label('Effective Wind Speed (m/s)')
+
+    # Set plot title and labels
+    ax.set_title(f'Effective Wind Speed at Sample {i+1}')
+    ax.set_xlabel('x (m)')
+    ax.set_ylabel('y (m)')
+    ax.legend()
+
+    # Save the figure
+    plt.savefig(f'flow_field_sample_{i+1}.png')
+    plt.close(fig) # close to free memory
+
+
+# ---  Print Sobol indices ---
+print(sobol_results)
+
+```
+
+Remember to replace the placeholder wind turbine model and site data with your actual data.  The script generates a series of PNG images showing the flow field at different samples, illustrating the impact of the inflow uncertainty on the effective wind speed.  The Sobol indices provide a quantitative measure of the sensitivity of the effective wind speed to the inflow parameters.  You might need to adjust the visualization parameters (contour levels, colormap) for optimal results depending on your data.  Error handling (e.g., checking for file existence before saving) could also be added for robustness.

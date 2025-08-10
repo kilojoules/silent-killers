@@ -1,0 +1,80 @@
+The error message "OSError: Unable to synchronously open file (file signature not found)" indicates that the script is trying to open a HDF5 file (`worker_file`) that is either corrupted or doesn't exist.  The script fails because it cannot find the expected HDF5 file signature at the beginning of the file, meaning the file is not a valid HDF5 file. This likely happened during the creation or writing of one of the worker files.
+
+The problem is not with the joining operation itself (though that's where the error manifests), but with the creation or integrity of one of the individual worker files *before* the joining stage. The script successfully processed 2999 out of 3000 optimizations, implying a problem with the 3000th worker file.
+
+Here's how to modify the script to reliably detect and handle invalid worker files:
+
+```python
+import h5py
+import os
+import sys
+from tqdm import tqdm # Assuming you're using tqdm for the progress bar
+
+# ... other imports and functions ...
+
+def process_worker_file(worker_file):
+    """Processes a single worker file, handling potential errors."""
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Your existing code to process the h5 file here
+            # ...
+            pass  # Replace 'pass' with your actual processing logic
+        return True # Indicate success
+    except OSError as e:
+        print(f"Error processing worker file {worker_file}: {e}", file=sys.stderr)
+        return False # Indicate failure
+    except Exception as e: # Catch other potential exceptions during processing
+        print(f"An unexpected error occurred while processing {worker_file}: {e}", file=sys.stderr)
+        return False
+
+def main():
+    # ... your existing code ...
+
+    total_workers = 3000 # Or however many you expect
+    successful_workers = 0
+    failed_workers = []
+
+    for i in tqdm(range(total_workers)): #Use tqdm for better progress tracking even with failures
+        worker_file = f"worker_file_{i}.h5" # Adjust filename pattern as needed
+        if process_worker_file(worker_file):
+            successful_workers +=1
+        else:
+            failed_workers.append(worker_file)
+
+    if failed_workers:
+        print(f"The following worker files failed to process: {failed_workers}", file=sys.stderr)
+        print(f"Only {successful_workers} out of {total_workers} workers processed successfully.", file=sys.stderr)
+        sys.exit(1) # Exit with a non-zero status code to indicate failure
+
+    # ... rest of your main function ...
+
+if __name__ == "__main__":
+    main()
+```
+
+**Key improvements:**
+
+* **`process_worker_file` function:** This encapsulates the file opening and processing logic, making error handling cleaner. It explicitly checks for `OSError` (the HDF5 file error) and other exceptions that might occur during processing.  It returns `True` for success and `False` for failure.
+
+* **Error Reporting:** The script now prints detailed error messages to `sys.stderr` (standard error), making debugging easier.  It also lists the failed files.
+
+* **Early Exit:** If any worker file fails to process, the script immediately exits with a non-zero exit code (`sys.exit(1)`). This signals to the calling process (e.g., a shell script or job scheduler) that the operation failed.
+
+* **Robust Progress Tracking:** Using `tqdm` will show you progress even if some files fail.
+
+* **List of Failed Files:** The script keeps track of the names of the files that failed to process, allowing you to investigate why those specific files failed.
+
+
+**Debugging Steps:**
+
+1. **Examine Failed Files:**  Identify the `worker_file_XXX.h5` that caused the error.  Try opening it directly using `h5py` or a HDF5 viewer (like HDFView) to see if it's truly corrupted.
+
+2. **Check File Creation:** Review the code that *creates* the HDF5 worker files.  Look for potential issues like:
+    * **Incomplete writes:**  Ensure that all data is written to the file before it's closed.
+    * **Resource exhaustion:**  If your script runs out of memory or disk space, it might not be able to write the file correctly.
+    * **Interrupted processes:**  If the process creating the worker files is interrupted (e.g., by a signal), the file might be left in an inconsistent state.
+
+3. **Improve Logging:** Add more logging statements to the file creation part of your script to track the progress and identify potential problems earlier.
+
+
+By implementing these changes, you'll have a much more robust and reliable script that gracefully handles invalid worker files and provides informative error messages. Remember to adapt the filename pattern (`worker_file_{i}.h5`) to match your actual file naming convention.

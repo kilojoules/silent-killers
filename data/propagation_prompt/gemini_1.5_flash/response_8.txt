@@ -1,0 +1,70 @@
+This script uses PyWake, NumPy, and Matplotlib to propagate uncertainties through a wind farm simulation, calculate Sobol sensitivity indices for effective wind speed (`WS_eff`), and visualize the flow field sensitivity.  Because generating images for a full Sobol analysis can be computationally expensive, this example focuses on a simplified demonstration.  You'll need to adapt it to your specific wind farm layout and desired level of detail.
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake.wind_farm_models import PropagateDownwind
+from pywake.examples.data.hornsrev1 import Hornsrev1Site
+from pywake.flow_map import FlowMap
+from pywake.utils.sensitivity import SobolSensitivity
+from pywake.turbulence_models import IEC_TurbulenceModel
+
+# --- Input parameters ---
+n_wt = 10  # Number of turbines (reduce for faster computation)
+n_samples = 100  # Number of Sobol samples (reduce for faster computation)
+x_resolution = 20
+y_resolution = 20
+
+# --- Wind farm setup ---
+site = Hornsrev1Site()
+x, y = site.initial_position[:n_wt, :2]  # Use only a subset of Hornsrev1 turbines
+windTurbines = site.windTurbines[:n_wt]
+windFarmModel = PropagateDownwind(site, windTurbines)
+
+# --- Uncertainty model ---
+# Define parameters and their uncertainties.  This is a simplified example.
+# In a real-world scenario, you would need to define appropriate distributions and ranges.
+parameters = {
+    'wind_speed': {'distribution': 'uniform', 'lower': 8, 'upper': 12},
+    'wind_direction': {'distribution': 'uniform', 'lower': 270, 'upper': 270+10} # 10 degree spread
+}
+
+# --- Sobol sensitivity analysis ---
+sobol = SobolSensitivity(windFarmModel, parameters, n_samples=n_samples)
+sobol.run()
+
+# --- Flow map generation ---
+# Calculate the flow map for a selection of Sobol samples
+selected_samples = [0, int(n_samples/2), n_samples-1] #show first, middle and last samples
+for i in selected_samples:
+    sample_input = sobol.samples[i]
+    fm = FlowMap(windFarmModel, sample_input)
+    WS_eff = fm.flow_map(x_resolution=x_resolution, y_resolution=y_resolution)
+
+
+    # --- Visualization ---
+    plt.figure(figsize=(12, 6))
+    plt.imshow(WS_eff, interpolation='nearest', origin='lower', extent=(x.min(), x.max(), y.min(), y.max()))
+    plt.colorbar(label='Effective Wind Speed (m/s)')
+    plt.title(f'Effective Wind Speed - Sobol Sample {i+1}')
+    plt.xlabel('x (m)')
+    plt.ylabel('y (m)')
+    plt.scatter(x, y, marker='x', color='black', label='Turbines')
+    plt.legend()
+    plt.savefig(f'flow_map_sample_{i+1}.png')
+    plt.show()
+
+
+# --- Sensitivity results ---
+print(sobol.sensitivity)  # Print Sobol sensitivity indices
+
+```
+
+**Before running:**
+
+1. **Install necessary libraries:**  `pip install pywake numpy matplotlib`
+2. **Adjust parameters:** Modify `n_wt`, `n_samples`, `x_resolution`, `y_resolution`, and the `parameters` dictionary to match your needs and computational resources.  More samples and higher resolution will increase accuracy but significantly increase computation time. Consider using a smaller subset of Hornsrev1 or another smaller wind farm for testing.
+3. **Uncertainty model:** The provided uncertainty model is extremely simplified.  Replace it with a more realistic model based on your knowledge of the uncertainties in wind speed and direction. You might consider using distributions like Gaussian or Weibull.
+4. **Turbine model:**  The code uses the `Hornsrev1Site`. Replace with your chosen turbine model if needed.
+
+This improved script provides a more complete and realistic framework for uncertainty propagation and sensitivity analysis in PyWake. Remember to adapt it to your specific wind farm and uncertainty characteristics for meaningful results.  The visualization part focuses on a subset of Sobol samples for clarity and computational efficiency; you can extend this to show more samples or create animations if desired.  Note that the Sobol sensitivity is calculated across all turbines, not spatially resolved.  If you want a spatial sensitivity analysis, you will need a more sophisticated approach involving iterative calculations and spatial averaging.

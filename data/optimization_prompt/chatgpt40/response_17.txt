@@ -1,0 +1,44 @@
+The error you're encountering indicates that there's an issue opening a worker file using the `h5py` library, which is likely due to the file being invalid or corrupted ("file signature not found"). To handle this error reliably and stop the process cleanly, you can implement proper error handling around the file opening operation. Here are some steps you can take to modify the script:
+
+1. **Add Error Handling**: Use a try-except block to catch and handle the `OSError` when attempting to open the file. You can log an error message and then decide whether to stop the entire process or skip the invalid file, depending on your requirements.
+
+2. **Log the Error**: Ensure that the error is logged with enough detail to help you diagnose the problem later.
+
+3. **Graceful Shutdown**: If encountering an invalid file should stop the process, ensure you exit the script cleanly with a descriptive error message.
+
+Here's how you might modify your script:
+
+```python
+import logging
+import sys
+import h5py
+
+def main():
+    worker_file = 'path_to_worker_file.h5'  # Replace with your actual file logic
+
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Perform your operations with the file
+            pass
+    except OSError as e:
+        logging.error(f"Failed to open worker file '{worker_file}': {e}")
+        # Decide if you want to skip the file or stop the process
+        # If stopping, you can exit the script with a non-zero status
+        sys.exit(1)  # Use a non-zero value to indicate an error
+
+    # Continue with the rest of your script if not exiting
+    logging.info("Completed processing successfully")
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    main()
+```
+
+### Additional Considerations:
+- **Validation**: Consider adding a validation step before the optimization process to ensure all worker files are valid and accessible. This can be done by attempting to open each file at the start of the process.
+
+- **Backup and Recovery**: If possible, have a backup mechanism or a way to regenerate corrupted files. This can help in recovering from such errors without having to halt the entire process.
+
+- **Monitoring and Alerts**: Implement monitoring to alert you when such issues occur in production, allowing you to respond promptly.
+
+By adding these error handling mechanisms, your script should be more robust and able to handle issues with worker files more gracefully.

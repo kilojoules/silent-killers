@@ -1,0 +1,91 @@
+To create a script that propagates realistic measurement uncertainties through PyWake and saves a series of flow field images showing the Sobol sensitivity of the effective wind speed (`WS_eff`) as a function of `x` and `y`, you can follow these steps. This script will use PyWake, a Python library for wind farm simulation, along with the SALib library for sensitivity analysis.
+
+Before you begin, ensure you have PyWake, SALib, Matplotlib, NumPy, and other necessary libraries installed in your Python environment.
+
+Here's a basic outline of what the script might look like:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from py_wake import WindFarmModel
+from py_wake.examples.data import hornrev1
+from py_wake.wind_turbines import WindTurbines
+from py_wake.site import UniformSite
+from SALib.sample import saltelli
+from SALib.analyze import sobol
+import os
+
+# Define the problem for SALib
+problem = {
+    'num_vars': 2,  # Number of input variables
+    'names': ['Variable1', 'Variable2'],  # Replace with actual variable names
+    'bounds': [[0.9, 1.1], [0.9, 1.1]]  # Adjust the bounds based on the expected uncertainty
+}
+
+# Generate samples using Saltelli's method
+param_values = saltelli.sample(problem, 1024)
+
+# Load wind farm model data
+site = UniformSite([1], ti=0.1)
+windTurbines = WindTurbines.from_WAsP(hornrev1)
+wf_model = WindFarmModel(site, windTurbines)
+
+# Placeholder for storing sensitivity indices
+sensitivity_indices = []
+
+# Iterate over each parameter set and run the simulation
+for i, params in enumerate(param_values):
+    print(f"Running simulation {i+1}/{len(param_values)} with params: {params}")
+    
+    # Here, you need to adjust the site or wind turbine parameters based on params
+    # For example, modify the inflow wind speed or direction
+    site.default_wd = params[0]  # Example modification, adjust as needed
+    site.default_ws = params[1]  # Example modification, adjust as needed
+    
+    # Run the wind farm model
+    result = wf_model(x=[0], y=[0])  # Replace with actual turbine coordinates
+
+    # Extract WS_eff and store it
+    WS_eff = result.WS_eff.values
+    sensitivity_indices.append(WS_eff)
+
+# Perform Sobol sensitivity analysis
+sensitivity = sobol.analyze(problem, np.array(sensitivity_indices), print_to_console=True)
+
+# Plot sensitivity indices as a function of x and y
+x = np.linspace(0, 1, len(sensitivity_indices))
+y = np.linspace(0, 1, len(sensitivity_indices))
+X, Y = np.meshgrid(x, y)
+
+# Plotting
+fig, ax = plt.subplots(figsize=(10, 8))
+cp = ax.contourf(X, Y, sensitivity['S1'].reshape(X.shape))  # First-order sensitivity index
+plt.colorbar(cp)
+ax.set_title('Sobol Sensitivity of WS_eff')
+ax.set_xlabel('x')
+ax.set_ylabel('y')
+plt.savefig('sensitivity_plot.png')
+plt.show()
+
+# Save flow field images
+output_dir = "flow_field_images"
+os.makedirs(output_dir, exist_ok=True)
+for i, WS_eff in enumerate(sensitivity_indices):
+    fig, ax = plt.subplots()
+    ax.imshow(WS_eff.reshape(X.shape), cmap='viridis')  # Adjust reshape as necessary
+    ax.set_title(f'Flow Field Image {i+1}')
+    plt.colorbar(ax.images[0])
+    plt.savefig(f'{output_dir}/flow_field_{i+1}.png')
+    plt.close(fig)
+
+print("Sensitivity analysis and flow field images saved.")
+```
+
+### Key Points:
+- **Inputs and Outputs**: You need to adjust the wind farm model's input parameters to reflect realistic uncertainties. The script outputs flow field images and a sensitivity plot.
+- **Sensitivity Analysis**: The script uses the SALib library to perform Sobol sensitivity analysis on the effective wind speed (`WS_eff`).
+- **Visualization**: Flow field images are saved for each parameter set, and a contour plot shows the sensitivity of `WS_eff`.
+- **Adjustments**: You'll need to adjust the script to fit your specific setup, including the correct wind farm model, parameter names, and bounds.
+
+### Note:
+Ensure you have all dependencies installed and configured correctly. This script serves as a basic framework and may require further customization based on your specific needs and PyWake's API details.

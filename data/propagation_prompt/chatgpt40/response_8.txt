@@ -1,0 +1,82 @@
+To propagate realistic measurement uncertainties through PyWake and generate a series of flow field images showing the sensitivity of the flow at different times, you can follow a structured approach. This involves setting up a Sobol sensitivity analysis for the effective wind speed (WS_eff) and visualizing the results. Below is a script outline to achieve this:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from py_wake.examples.data.hornsrev1 import Hornsrev1Site, V80
+from py_wake import WindFarmModel
+from py_wake.wind_turbines import WindTurbines
+from py_wake.site import UniformSite
+from py_wake.deficit_models.noj import NOJ
+from py_wake.turbulence_models.stf import STF2017Turbulence
+from py_wake.wind_farm_models.engineering_models import All2AllIterative
+from py_wake.wind_farm_models.engineering_models import PropagateDownwind
+from SALib.sample import sobol_sequence
+from SALib.analyze import sobol
+
+# Define the problem for Sobol analysis
+problem = {
+    'num_vars': 2,
+    'names': ['wind_speed', 'wind_direction'],
+    'bounds': [[6, 14], [0, 360]]  # Example bounds for wind speed (m/s) and direction (degrees)
+}
+
+# Generate samples
+param_values = sobol_sequence.sample(1000, problem['num_vars'])
+
+# Setup the site and the wind farm
+site = Hornsrev1Site()
+windTurbines = V80()
+
+# Define the wind farm model
+wf_model = NOJ(site, windTurbines)
+
+# Arrays to store results
+ws_eff_sobol_indices = []
+
+# Perform the simulations and Sobol sensitivity analysis
+for i, (ws, wd) in enumerate(param_values):
+    # Run the wind farm simulation for each parameter set
+    flow_map = wf_model(x=[0, 500, 1000],
+                        y=[0, 500, 1000],
+                        h=[70, 70, 70],
+                        wd=[wd],
+                        ws=[ws])
+    
+    # Extract WS_eff
+    ws_eff = flow_map.WS_eff  # This is a placeholder; adjust based on actual PyWake output
+
+    # Calculate Sobol indices for WS_eff
+    # (This is a simplified example. You may need to implement your own Sobol calculation based on your WS_eff outputs)
+    Si = sobol.analyze(problem, ws_eff.flatten())
+    ws_eff_sobol_indices.append(Si['S1'])
+
+    # Plot the flow field
+    plt.figure()
+    flow_map.plot_wake_map()
+    plt.title(f'Flow field for WS={ws:.2f} m/s, WD={wd:.2f}°')
+    plt.savefig(f'flow_field_{i}.png')
+    plt.close()
+
+# Calculate and plot mean Sobol indices over all simulations
+mean_sobol_indices = np.mean(ws_eff_sobol_indices, axis=0)
+plt.figure()
+plt.bar(problem['names'], mean_sobol_indices)
+plt.title('Mean Sobol Sensitivity Indices for WS_eff')
+plt.ylabel('Sobol Index')
+plt.savefig('sobol_sensitivity_ws_eff.png')
+plt.close()
+```
+
+### Explanation:
+1. **Problem Definition**: The `problem` dictionary defines the parameters for the Sobol analysis, including wind speed and wind direction with their respective bounds.
+
+2. **Sample Generation**: The Sobol sequence is used to generate parameter samples, which are then used in the simulations.
+
+3. **Wind Farm Simulation**: For each sample, the PyWake wind farm model is run to compute the flow field and extract the effective wind speed (`WS_eff`).
+
+4. **Sensitivity Analysis**: The Sobol indices for `WS_eff` are calculated to assess the sensitivity concerning the input parameters.
+
+5. **Visualization**: Flow field images are saved for each simulation to visualize the sensitivity and variability of the flow field. Additionally, a bar plot of the mean Sobol indices is created to summarize the sensitivity analysis.
+
+Note that the script assumes you have the PyWake library and other dependencies set up correctly in your Python environment. You may need to adjust the script based on the actual output format of `WS_eff` from your PyWake simulations.

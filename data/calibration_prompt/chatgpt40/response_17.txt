@@ -1,0 +1,68 @@
+Your code is quite complex, but it seems like you're trying to optimize a wind farm model using Bayesian Optimization. Here are a few thoughts and suggestions to consider:
+
+1. **Flow Field Plots**: 
+    - Since you're using velocity deficits in your reference data, it might be more intuitive to plot velocity deficits instead of velocities directly. This aligns your simulations more closely with your reference data.
+    - Consider plotting both the average and the 90th percentile (P90) of the errors. This can give you a sense of both the typical performance and the performance under less favorable conditions.
+
+2. **Modularization**:
+    - Your code would benefit from being broken down into smaller, more manageable functions. This can make it easier to read, test, and maintain.
+    - For the instantiation of the wind farm model (wfm), consider creating a factory function that can handle the logic of selecting between different models and their parameters.
+
+3. **Error Handling**:
+    - Ensure you have appropriate error handling, especially when dealing with potentially NaN values or other numerical issues that might arise during optimization.
+
+4. **Parameter Management**:
+    - Consider using a configuration file or a dictionary to manage your parameters (`defaults`, `pbounds`, etc.). This can make it easier to tweak and manage these settings.
+
+5. **Visualization**:
+    - Ensure that your plots are clear and easy to interpret. Use labels, legends, and titles effectively.
+    - Consider adding more color and style options to make different data series distinguishable.
+
+6. **Performance**:
+    - If performance becomes an issue, consider profiling your code to identify bottlenecks.
+    - For large datasets, ensure you're using efficient data structures and libraries that can handle large-scale computations.
+
+7. **Documentation**:
+    - Adding comments and docstrings can significantly improve the readability of your code, especially for complex sections.
+
+Here is a basic template for how you might start restructuring the code:
+
+```python
+def create_wind_farm_model(model_type, downwind, params):
+    if downwind:
+        if model_type == 1:
+            wake_deficit_model = BlondelSuperGaussianDeficit2020(**params['def_args'])
+        else:
+            wake_deficit_model = TurboGaussianDeficit(**params['turbo_args'])
+        turbulence_model = CrespoHernandez(**params['turb_args'])
+        blockage_model = None
+    else:
+        wake_deficit_model = BlondelSuperGaussianDeficit2020(**params['def_args'])
+        turbulence_model = None
+        blockage_model = SelfSimilarityDeficit2020(**params['blockage_args'])
+    
+    # Define and return the wind farm model
+    wfm = All2AllIterative(
+        site=params['site'],
+        turbine=params['turbine'],
+        wake_deficitModel=wake_deficit_model,
+        superpositionModel=LinearSum(),
+        deflectionModel=None,
+        turbulenceModel=turbulence_model,
+        blockage_deficitModel=blockage_model
+    )
+    return wfm
+
+# Example usage
+params = {
+    'site': site,
+    'turbine': turbine,
+    'def_args': def_args,
+    'turbo_args': turbo_args,
+    'turb_args': turb_args,
+    'blockage_args': blockage_args
+}
+wfm = create_wind_farm_model(MODEL, DOWNWIND, params)
+```
+
+This is a starting point, and you can expand upon it to include more of your logic.

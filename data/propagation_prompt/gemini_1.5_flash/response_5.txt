@@ -1,0 +1,89 @@
+This script requires the `pywake`, `matplotlib`, `numpy`, and `SALib` libraries.  Make sure you have them installed (`pip install pywake matplotlib numpy SALib`).  This example uses a simplified setup; you'll need to adapt it to your specific PyWake model and desired resolution.
+
+```python
+import matplotlib.pyplot as plt
+import numpy as np
+from pywake.flow_map import FlowMap
+from pywake.examples.data.hornsrev1 import Hornsrev1Site
+from pywake.turbulence_models import GCLTurbulenceModel
+from pywake.wind_farm_models import All2AllIterative
+from SALib.analyze import sobol
+from SALib.sample import saltelli
+
+# --- PyWake setup ---
+site = Hornsrev1Site()
+windTurbines = site.windTurbines
+windFarmModel = All2AllIterative(site, windTurbines, turbulenceModel=GCLTurbulenceModel())
+
+# --- Uncertainty Parameters (Sobol Sensitivity Analysis) ---
+problem = {
+    'num_vars': 2,
+    'names': ['U_inf', 'Yaw_misalignment'],  # Example parameters
+    'bounds': [[7, 10], [-5, 5]]  # Example bounds (m/s, degrees)
+}
+
+# Generate Sobol samples
+param_values = saltelli.sample(problem, 1000) # Adjust sample size as needed
+
+# --- Flow Field Calculation and Uncertainty Propagation ---
+times = [0, 10, 20] #Example timesteps, adjust as needed.
+
+all_flow_maps = []
+for i, params in enumerate(param_values):
+    U_inf, yaw_misalignment = params
+    flow_maps = []
+    for t in times:
+        # Simulate flow field for each time step and parameter set.
+        # This requires adapting to your specific PyWake model and how you incorporate U_inf and yaw_misalignment.
+        # Example:  Assume U_inf affects the inflow wind speed and yaw_misalignment affects the turbine yaw angle.
+        flow_map = windFarmModel(x=[0], y=[0], wd=[270], ws=[U_inf], yaw=[yaw_misalignment], time=t).flow_map(
+            x_resolution=20, y_resolution=20 # Adjust resolution as needed
+        )
+        flow_maps.append(flow_map)
+    all_flow_maps.append(flow_maps)
+
+
+# --- Sobol Sensitivity Analysis ---
+#Extract relevant data for sensitivity analysis (example: WS_eff at specific points)
+#This section is highly dependent on your specific PyWake output and what you want to analyze.
+#Here's an example assuming 'WS_eff' is available in flow_map
+x_points = [500, 1000]  #Example x-coordinates
+y_points = [500, 1000]  #Example y-coordinates
+WS_eff_data = np.zeros((len(param_values), len(times), len(x_points), len(y_points)))
+
+for i, flow_maps in enumerate(all_flow_maps):
+    for j, flow_map in enumerate(flow_maps):
+        for k, x in enumerate(x_points):
+            for l, y in enumerate(y_points):
+                try:
+                    WS_eff_data[i, j, k, l] = flow_map.WS_eff(x, y) #Adapt as needed for your flow_map
+                except:
+                    print(f"Error extracting WS_eff at ({x}, {y}) for parameter set {i}, time {j}")
+                    WS_eff_data[i, j, k, l] = np.nan #Handle missing data
+
+
+#Perform Sobol analysis for each time step and location
+for t in range(len(times)):
+    for k in range(len(x_points)):
+        for l in range(len(y_points)):
+            Si = sobol.analyze(problem, WS_eff_data[:, t, k, l], print_to_console=True)
+            print(f"Sobol indices for time {times[t]}, x={x_points[k]}, y={y_points[l]}:")
+            print(Si)
+
+
+# --- Visualization (Example: WS_eff at a specific time) ---
+time_index = 0  # Choose a time step to visualize
+
+fig, axes = plt.subplots(len(param_values), 1, figsize=(8, 6 * len(param_values)))
+for i, flow_maps in enumerate(all_flow_maps):
+    flow_map = flow_maps[time_index]
+    im = axes[i].imshow(flow_map.WS_eff, extent=(flow_map.x.min(), flow_map.x.max(), flow_map.y.min(), flow_map.y.max()), origin='lower')
+    axes[i].set_title(f"WS_eff, Parameter Set {i+1}, Time={times[time_index]}")
+    fig.colorbar(im, ax=axes[i])
+
+plt.tight_layout()
+plt.show()
+
+```
+
+Remember to replace placeholder comments like  `# Adapt as needed for your flow_map` and adjust parameters (sample size, resolution, etc.) according to your specific needs and PyWake model.  The crucial part is correctly extracting the relevant data (`WS_eff` in this example) from your PyWake `flow_map` object for the Sobol analysis.  Error handling (the `try...except` block) is included to manage potential issues during data extraction.  The visualization part can be expanded to show more detailed flow field properties and different time steps.

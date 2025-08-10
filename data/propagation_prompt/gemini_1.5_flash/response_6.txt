@@ -1,0 +1,92 @@
+This script requires several libraries and assumes you have a functioning PyWake installation with your specific wind farm layout and atmospheric conditions defined.  I can't provide a complete, executable script without that specific context, but I will give you a detailed framework that incorporates uncertainty propagation using Sobol sensitivity analysis and visualization of the flow field.
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake.wind_farm_models import WindFarmModel
+from pywake.flow_map import FlowMap
+from pywake.utils.sensitivity import SobolSensitivity
+from pywake.utils.profiling import timeit
+import xarray as xr # For easier handling of flow field data
+
+# --- 1. Define your Wind Farm and Wind Conditions ---
+
+# Replace with your actual wind farm setup
+# ...  (Define your wind turbine positions, wind farm model, etc.) ...
+# Example (replace with your specific parameters):
+from pywake.examples.data.hornsrev1 import Hornsrev1Site
+site = Hornsrev1Site()
+windFarmModel = WindFarmModel(site, ... ) # Your wind farm model
+
+# Define inflow wind speed uncertainty (example: 2% uncertainty)
+WS_uncertainty = 0.02
+
+# Define time steps for analysis (replace with your desired times)
+times = np.arange(0, 600, 60) # Example: 0 to 600 seconds, every 60 seconds
+
+
+# --- 2. Sobol Sensitivity Analysis ---
+
+def calculate_sensitivity(wind_speed, time):
+    """Calculates Sobol sensitivity indices for a given wind speed and time."""
+    # Create a SobolSensitivity object.  'WS_eff' is a placeholder; replace with your actual PyWake variable for effective wind speed.
+    sobol = SobolSensitivity(windFarmModel, [('WS_eff', wind_speed)], n_samples=1000) # Adjust n_samples as needed for accuracy vs. computation time
+    # Run the sensitivity analysis
+    return sobol.analyze()
+
+# --- 3. Flow Field Calculation and Visualization ---
+
+def visualize_flow_field(flow_map, time, sobol_results):
+    """Visualizes the flow field and overlays sensitivity information."""
+    # Extract relevant data from flow_map.  Adapt as needed for your specific PyWake flow map structure.
+    WS_eff = flow_map.WS_eff  # Replace with the actual variable name
+
+    # Create the plot
+    plt.figure(figsize=(12, 8))
+    plt.imshow(WS_eff, origin='lower', cmap='viridis')
+    plt.colorbar(label='Effective Wind Speed [m/s]')
+    plt.title(f'Flow Field at t={time}s, Sobol Sensitivity Analysis')
+
+    # Overlay sensitivity information (example: show Sobol indices as a heatmap)
+    # ... (Adapt this section to your specific visualization needs) ...
+    # You might want to add contours or color-coded regions based on the sensitivity indices.
+
+
+    plt.xlabel('x [m]')
+    plt.ylabel('y [m]')
+    plt.savefig(f'flow_field_{time}.png')  # Save the image
+    plt.close() # Close the plot to free memory
+
+
+# --- 4. Main Loop ---
+
+for time in times:
+    # Sample inflow wind speed with uncertainty
+    nominal_WS = ... # Your nominal wind speed at this time (replace with your data)
+    uncertain_WS = nominal_WS * (1 + np.random.normal(0, WS_uncertainty))
+
+    # Calculate the flow field
+    flow_map = FlowMap(windFarmModel, ... , windSpeed=uncertain_WS, time=time) # Adapt parameters as needed
+
+    # Perform Sobol sensitivity analysis
+    sobol_results = calculate_sensitivity(uncertain_WS, time)
+
+    # Visualize the flow field and sensitivity
+    visualize_flow_field(flow_map, time, sobol_results)
+
+print("Flow field images saved.")
+
+```
+
+
+**Important Considerations:**
+
+* **Replace Placeholders:**  Many parts of this script are placeholders.  You *must* replace them with your specific PyWake setup, wind farm layout, and atmospheric data.  This includes the wind farm model definition, the way you access effective wind speed (`WS_eff`), and the parameters for `FlowMap`.
+* **Variable Names:**  Ensure that `WS_eff` accurately reflects the variable name PyWake uses for effective wind speed in your specific configuration.
+* **Visualization:** The visualization section (`visualize_flow_field`) is highly customizable.  You'll likely need to adapt it based on how your `flow_map` object stores and represents the flow field data. Consider using libraries like `xarray` for cleaner handling of multi-dimensional flow data.
+* **Computational Cost:** Sobol sensitivity analysis can be computationally expensive, especially with many input parameters and a large number of samples.  Adjust `n_samples` in `SobolSensitivity` to balance accuracy and runtime.
+* **Error Handling:** Add error handling (e.g., `try...except` blocks) to gracefully handle potential issues during the analysis and visualization.
+* **Dependencies:** Make sure you have all the necessary libraries installed (`numpy`, `matplotlib`, `pywake`, `xarray`).
+
+
+This expanded framework provides a more robust starting point. Remember to adapt it to your specific PyWake implementation and dataset.  If you encounter problems, share your PyWake setup details and the error messages you receive, and I'll do my best to help.

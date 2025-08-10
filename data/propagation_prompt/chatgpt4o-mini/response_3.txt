@@ -1,0 +1,95 @@
+To create a script that propagates realistic measurement uncertainties through PyWake, generates flow field images, and analyzes the Sobol sensitivity of the effective wind speed (`WS_eff`) as a function of `x` and `y`, you can follow this outline. The script will utilize PyWake's capabilities for wind farm simulations, along with the `SALib` library for sensitivity analysis.
+
+Here's a Python script template that you can adapt to your needs:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake import NOJ, WindFarm
+from pywake.site import UniformSite
+from pywake.utils import get_wind_farm_flow
+from SALib.sample import saltelli
+from SALib.analyze import sobol
+import os
+
+# Define wind farm parameters
+wind_farm_layout = np.array([[0, 0], [500, 0], [1000, 0]])  # Example turbine positions
+wind_farm = WindFarm(wind_farm_layout)
+site = UniformSite()
+
+# Define the uncertainty parameters
+num_samples = 1000  # Number of samples
+params = {
+    'wind_speed': [8.0, 1.0],  # Mean wind speed and standard deviation
+    'turbulence_intensity': [0.1, 0.02]  # Mean turbulence intensity and standard deviation
+}
+
+# Generate samples for sensitivity analysis
+problem = {
+    'num_vars': 2,
+    'names': ['wind_speed', 'turbulence_intensity'],
+    'bounds': [[params['wind_speed'][0] - 3 * params['wind_speed'][1],
+                params['wind_speed'][0] + 3 * params['wind_speed'][1]],
+               [params['turbulence_intensity'][0] - 3 * params['turbulence_intensity'][1],
+                params['turbulence_intensity'][0] + 3 * params['turbulence_intensity'][1]]]
+}
+
+# Generate samples using Saltelli's method
+samples = saltelli.sample(problem, num_samples)
+
+# Prepare to collect WS_eff results
+WS_eff_results = []
+
+# Simulate flow for each sample
+for sample in samples:
+    wind_speed, turbulence_intensity = sample
+    site.set_wind_speed(wind_speed)
+    site.set_turbulence_intensity(turbulence_intensity)
+    
+    # Calculate flow field
+    flow_field = get_wind_farm_flow(wind_farm, site)
+    WS_eff = flow_field.WS_eff  # Extracting effective wind speed
+    
+    WS_eff_results.append(WS_eff)
+
+# Convert results to NumPy array for analysis
+WS_eff_results = np.array(WS_eff_results)
+
+# Perform Sobol sensitivity analysis
+sobol_indices = sobol.analyze(problem, WS_eff_results, print_to_console=True)
+
+# Save flow field images at different time instances
+output_dir = 'flow_field_images'
+os.makedirs(output_dir, exist_ok=True)
+
+for i in range(len(WS_eff_results)):
+    plt.figure(figsize=(10, 6))
+    plt.imshow(WS_eff_results[i], extent=[0, 1500, 0, 500], origin='lower')
+    plt.colorbar(label='Effective Wind Speed (m/s)')
+    plt.title(f'Flow Field - Sample {i+1}')
+    plt.xlabel('X Position (m)')
+    plt.ylabel('Y Position (m)')
+    plt.savefig(os.path.join(output_dir, f'flow_field_sample_{i+1}.png'))
+    plt.close()
+
+print("Flow field images saved and Sobol sensitivity analysis completed.")
+```
+
+### Explanation of the Script
+
+1. **Wind Farm Definition**: The layout of the wind farm is defined using the `WindFarm` class from PyWake. This example uses three turbines arranged in a line.
+
+2. **Uncertainty Parameters**: Define the uncertainty parameters for wind speed and turbulence intensity, including their mean and standard deviation.
+
+3. **Sensitivity Analysis Setup**: Use the `SALib` library to set up and generate samples for a Sobol sensitivity analysis.
+
+4. **Flow Simulation**: Loop through each sample, updating the wind speed and turbulence intensity in the site object, and simulate the flow using `get_wind_farm_flow`. The effective wind speed (`WS_eff`) is collected for analysis.
+
+5. **Sobol Sensitivity Analysis**: The Sobol sensitivity indices are calculated for the effective wind speed results.
+
+6. **Flow Field Visualization**: For each sample, generate and save flow field images showing the effective wind speed distribution.
+
+### Notes
+- Ensure that you have the necessary libraries installed (`PyWake`, `SALib`, `matplotlib`).
+- Adjust the layout and the parameters as per your experimental setup and measurement uncertainties.
+- The resolution of the flow field images and the number of samples can be modified based on your computational capabilities and requirements.

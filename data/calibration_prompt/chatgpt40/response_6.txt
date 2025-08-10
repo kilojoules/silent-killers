@@ -1,0 +1,85 @@
+Your code is quite comprehensive, and it looks like you're doing some advanced wind farm modeling and optimization. It seems like you've identified a few areas where improvements could be made, especially in terms of modularizing the instantiation of the wind farm model (wfm) and improving the flow field plots. I'll address these one by one:
+
+### Flow Field Plots
+
+For the flow field plots, if you want to report average and 90th percentile (p90) of the errors, you can modify the plotting section where you compute and visualize RMSE to also compute these additional statistics. Here's an outline of how you might do that:
+
+1. **Compute Additional Statistics:**
+   - Calculate the mean error and p90 error for each time step.
+   - Use `numpy` functions like `np.percentile` to compute p90.
+
+2. **Enhance Plotting:**
+   - Add these statistics to your plots, possibly as annotations or in the title/legend.
+
+### Refactor for Better Modularity
+
+To improve the modularity of your code, especially around the instantiation of the `wfm`, you could create a function or a class that handles this. Here’s a suggestion to encapsulate the logic:
+
+```python
+def create_wind_farm_model(site, turbine, params, model=1, downwind=True):
+    """
+    Create a wind farm model with specified parameters and settings.
+
+    Args:
+        site: The wind farm site.
+        turbine: The turbine model.
+        params: Dictionary of parameters for the model.
+        model: Integer indicating which model to use.
+        downwind: Boolean indicating if the model is downwind.
+
+    Returns:
+        An instantiated wind farm model.
+    """
+    if downwind:
+        if model == 1:
+            wake_deficitModel = BlondelSuperGaussianDeficit2020(**params['deficit'])
+        else:
+            wake_deficitModel = TurboGaussianDeficit(A=params['A'], cTI=params['cTI'],
+                                                     ctlim=params['ctlim'], ceps=params['ceps'],
+                                                     ct2a=ct2a_mom1d, groundModel=Mirror(),
+                                                     rotorAvgModel=GaussianOverlapAvgModel())
+            wake_deficitModel.WS_key = 'WS_jlk'
+        
+        turbulenceModel = CrespoHernandez(**params['turbulence'])
+        blockage_deficitModel = SelfSimilarityDeficit2020()
+    else:
+        wake_deficitModel = BlondelSuperGaussianDeficit2020()
+        turbulenceModel = CrespoHernandez()
+        blockage_deficitModel = SelfSimilarityDeficit2020(**params['blockage'])
+
+    return All2AllIterative(site, turbine,
+                            wake_deficitModel=wake_deficitModel,
+                            superpositionModel=LinearSum(),
+                            deflectionModel=None,
+                            turbulenceModel=turbulenceModel,
+                            blockage_deficitModel=blockage_deficitModel)
+```
+
+### Integrate the Modular Function
+
+You can then replace the relevant parts of your code to use this new function:
+
+```python
+# Example of using the function
+params = {
+    'deficit': {'a_s': best_params['a_s'], 'b_s': best_params['b_s'], 'c_s': best_params['c_s'], 'b_f': best_params['b_f'], 'c_f': best_params['c_f']},
+    'turbulence': {'c': np.array([best_params['ch1'], best_params['ch2'], best_params['ch3'], best_params['ch4']])},
+    'blockage': {'ss_alpha': best_params['ss_alpha'], 'ss_beta': best_params['ss_beta'], 'r12p': np.array([best_params['rp1'], best_params['rp2']]), 'ngp': np.array([best_params['ng1'], best_params['ng2'], best_params['ng3'], best_params['ng4']])},
+    'A': best_params['A'],
+    'cTI': [best_params['cti1'], best_params['cti2']],
+    'ceps': best_params['ceps'],
+    'ctlim': best_params['ctlim']
+}
+
+wfm = create_wind_farm_model(site, turbine, params, model=MODEL, downwind=DOWNWIND)
+```
+
+This approach will make it easier to maintain and extend your code, as all the logic related to the creation of the wind farm model is encapsulated in one place.
+
+### Additional Considerations
+
+- **Validation:** Ensure that your changes maintain the correct functionality by validating against known outputs or test cases.
+- **Performance:** Consider if any of these changes impact performance, especially if the modularity introduces additional function call overheads.
+- **Documentation:** Add docstrings and comments to your functions to improve readability and maintainability.
+
+By modularizing your code and enhancing your plots, you should be able to maintain a cleaner and more efficient workflow for your wind farm modeling and optimization tasks.

@@ -1,0 +1,90 @@
+This script uses PyWake and Sobol sensitivity analysis to propagate uncertainties in inflow wind speed and visualize their effect on the flow field.  It requires several libraries; make sure you have them installed (`pip install pywake`).  The script focuses on demonstrating the core concept;  you might need to adapt it based on your specific PyWake setup and desired visualization details.
+
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake.wind_farm_models import PropagateDownwind
+from pywake.examples.data.hornsrev1 import Hornsrev1Site
+from pywake.flow_map import XYGrid
+from SALib.analyze import sobol
+from SALib.sample import saltelli
+
+# --- Input Parameters ---
+# Define the uncertainty range for inflow wind speed (e.g., +/- 10%)
+wind_speed_uncertainty = 0.1  
+# Number of samples for Sobol sequence
+n_samples = 100 # Increase for better accuracy, but computationally expensive
+
+
+# --- PyWake Setup ---
+site = Hornsrev1Site()
+x_coords = np.linspace(site.x_coords.min(), site.x_coords.max(), 100)
+y_coords = np.linspace(site.y_coords.min(), site.y_coords.max(), 100)
+x, y = np.meshgrid(x_coords, y_coords)
+grid = XYGrid(x,y)
+
+# --- Sobol Sensitivity Analysis ---
+# Define the problem
+problem = {
+    'num_vars': 1,  # Only wind speed uncertainty
+    'names': ['wind_speed'],
+    'bounds': [[1 - wind_speed_uncertainty, 1 + wind_speed_uncertainty]] #Relative to nominal value
+}
+
+# Generate Sobol samples
+param_values = saltelli.sample(problem, n_samples, calc_second_order=True)
+
+# Initialize array to store WS_eff results
+ws_eff_results = np.zeros((n_samples, len(x.flatten())))
+
+# --- Simulation Loop ---
+for i, sample in enumerate(param_values):
+    # Apply wind speed uncertainty
+    wind_speed_factor = sample[0]
+    site.wind_speed = site.wind_speed * wind_speed_factor
+
+    # Run PyWake simulation (replace with your chosen model)
+    wf_model = PropagateDownwind(site, wake_model=None) # Replace None with your wake model
+    flow_map = wf_model(site.x_coords, site.y_coords, wd=270, ws=site.wind_speed)
+
+    # Extract effective wind speed (WS_eff) from the flow map
+    ws_eff = flow_map.WS_eff.flatten()
+    ws_eff_results[i, :] = ws_eff
+
+# --- Sobol Analysis ---
+# Perform Sobol analysis
+Si = sobol.analyze(problem, ws_eff_results, print_to_console=True)
+
+# --- Visualization ---
+# Plot sensitivity indices
+plt.figure()
+plt.bar(['wind_speed'], Si['S1'])
+plt.title('First-order Sobol Sensitivity Indices')
+plt.ylabel('Sensitivity Index')
+plt.show()
+
+# Visualize flow field for a few selected samples (e.g., min, max, median)
+selected_indices = [np.argmin(ws_eff_results[:,0]), np.argmax(ws_eff_results[:,0]), np.argmin(np.abs(ws_eff_results[:,0]-np.median(ws_eff_results[:,0])))] #Example selection
+
+for i in selected_indices:
+    ws_eff_selected = ws_eff_results[i,:].reshape(x.shape)
+    plt.figure()
+    plt.imshow(ws_eff_selected, extent=(x.min(),x.max(),y.min(),y.max()), origin='lower', interpolation='nearest')
+    plt.colorbar(label='WS_eff')
+    plt.title(f'Flow Field Sample {i+1}: Wind Speed Factor = {param_values[i][0]:.2f}')
+    plt.xlabel('x')
+    plt.ylabel('y')
+    plt.show()
+
+```
+
+**Before running:**
+
+1. **Replace `None` in `PropagateDownwind`:**  Substitute `None` with your chosen wake model from PyWake (e.g., `GaussianWake`, `JensenWake`).  You'll need to adjust parameters accordingly.
+2. **Adapt the visualization:** The plotting section provides a basic visualization.  For more sophisticated plots (e.g., contour plots, vector fields), explore Matplotlib's capabilities.
+3. **Consider computational cost:** Increasing `n_samples` improves the accuracy of the Sobol analysis but significantly increases computation time. Start with a smaller number and gradually increase it.  For very large wind farms, consider using more efficient sampling techniques or parallel processing.
+4. **Choose appropriate wind farm and site:** The example uses Hornsrev1. Replace this with your specific wind farm data.
+
+
+This enhanced script provides a more complete framework for uncertainty propagation and sensitivity analysis within PyWake. Remember to adapt it to your specific needs and wind farm characteristics.  The visualization is a crucial step to understand the impact of uncertainties on your flow field.

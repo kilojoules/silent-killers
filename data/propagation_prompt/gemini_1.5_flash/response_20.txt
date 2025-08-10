@@ -1,0 +1,87 @@
+This script uses PyWake, a Python library for wind farm simulations, to propagate measurement uncertainties through a wind farm model and visualize the sensitivity of the flow field at different times.  It focuses on the Sobol sensitivity analysis of the effective wind speed (`WS_eff`) as a function of x and y coordinates.  Because a full Sobol analysis is computationally expensive, this script provides a framework that you'll need to adapt based on your specific needs and computational resources.  A simplified example with reduced resolution is given.
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake.wind_farm_models import WindFarmModel
+from pywake.examples.data.hornsrev1 import Hornsrev1Site
+from pywake.flow_map import XYGrid
+from pywake.turbulence_models import GCLTurbulenceModel
+from SALib.analyze import sobol
+from SALib.sample import saltelli
+
+# --- Input parameters ---
+# Adjust these based on your specific wind farm and uncertainty ranges
+n_wt = 10 #Number of wind turbines
+x_coords = np.linspace(0, 1000, n_wt)
+y_coords = np.zeros(n_wt)
+wind_speed = 8 #m/s
+wind_direction = 270
+site = Hornsrev1Site() #Use a simplified site for this example
+turbine_type = site.turbines[0] #Use a standard turbine model
+
+
+# Uncertainty parameters and ranges (example)
+problem = {
+    'num_vars': 2,
+    'names': ['wind_speed', 'wind_direction'],
+    'bounds': [[wind_speed - 1, wind_speed + 1], [wind_direction - 10, wind_direction + 10]]
+}
+
+# Sobol sampling (adjust `n` for higher accuracy, but this will take much longer)
+param_values = saltelli.sample(problem, 100) #100 samples for demonstration. Increase for better accuracy
+
+
+# --- PyWake Simulation ---
+def run_simulation(wind_speed, wind_direction):
+    #Create a wind farm model
+    wf_model = WindFarmModel(site, turbine_type, GCLTurbulenceModel())
+
+    #Simulate the wind farm
+    flow_map = wf_model(x_coords, y_coords, wind_speed, wind_direction)
+    return flow_map
+
+#Run simulations for each sample
+results = []
+for i, params in enumerate(param_values):
+    flow_map = run_simulation(params[0], params[1])
+    results.append(flow_map.WS_eff.flatten()) #Flatten to 1D for Sobol analysis
+
+# --- Sobol Sensitivity Analysis ---
+# Reshape the data for the Sobol analysis
+Y = np.array(results)
+
+# Perform Sobol analysis
+Si = sobol.analyze(problem, Y, print_to_console=True)
+
+# --- Visualization ---
+# Plot Sobol indices
+plt.figure()
+plt.bar(problem['names'], Si['S1'], yerr=Si['S1_conf'], capsize=5)
+plt.ylabel('First-order Sobol indices')
+plt.title('Sobol Sensitivity Analysis of WS_eff')
+plt.show()
+
+# Visualize the flow field for a few selected samples (replace with your desired visualization)
+sample_indices = [0, 25, 50, 75, 99] # Select a few samples to visualize
+
+for i in sample_indices:
+    flow_map = run_simulation(param_values[i][0], param_values[i][1])
+    plt.figure()
+    plt.imshow(flow_map.WS_eff, extent=[x_coords.min(), x_coords.max(), y_coords.min(), y_coords.max()], origin='lower')
+    plt.title(f'Flow Field (Sample {i+1}) - WS:{param_values[i][0]:.2f} m/s, WD:{param_values[i][1]:.2f} deg')
+    plt.colorbar(label='Effective Wind Speed (m/s)')
+    plt.xlabel('x (m)')
+    plt.ylabel('y (m)')
+    plt.show()
+
+```
+
+**Before running:**
+
+1. **Install necessary libraries:**  `pip install pywake SALib matplotlib`
+2. **Adjust parameters:**  Modify the `problem` dictionary to reflect the actual uncertainties in your wind speed and direction measurements.  Increase the number of samples in `saltelli.sample` for a more accurate Sobol analysis (but be aware of increased computation time).  Adjust the `sample_indices` to visualize specific samples.
+3. **Consider your computational resources:**  A full Sobol analysis can be computationally expensive, especially for large wind farms and high sample counts. You might consider using a smaller subset of turbines or a simpler turbulence model to reduce the computational burden.  Consider parallelization techniques for faster execution.
+4. **Replace placeholders:** The code uses a simplified site and turbine.  Replace these with your actual site and turbine data.  You may need to adjust the `run_simulation` function to handle your specific data format and simulation setup.
+
+This improved script provides a more complete and robust framework for propagating uncertainties and visualizing the results. Remember to adapt it to your specific wind farm and computational constraints.  The visualization part is a basic example; you can enhance it using more sophisticated plotting techniques for better representation of the flow field.

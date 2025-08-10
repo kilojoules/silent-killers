@@ -1,0 +1,121 @@
+The error "OSError: Unable to synchronously open file (file signature not found)" indicates that the script is trying to open a HDF5 file (`worker_file`) that is either corrupted or doesn't exist.  The fact that it happened after successfully processing 2999 out of 3000 optimizations suggests a problem with one of the worker files generated during the process.  The script likely failed to properly handle a potential error during the creation or writing of one of these files.
+
+Here's how to modify the script to reliably detect and handle invalid worker files:
+
+**1. Error Handling during File Opening:**
+
+Instead of directly opening the file, wrap the `h5py.File` operation in a `try-except` block to catch the `OSError`.  This will allow the script to gracefully handle the failure instead of crashing.
+
+```python
+import h5py
+import os
+
+# ... other code ...
+
+def process_worker_file(worker_file):
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Your existing code to process the h5 file
+            # ...
+    except OSError as e:
+        print(f"Error opening worker file {worker_file}: {e}")
+        print(f"Skipping this worker file. Check if it exists and is not corrupted.")  # Add more informative message
+        return None # or raise the exception if you want to stop the entire process.
+
+# ... in your main loop ...
+results = []
+for i in range(num_workers):  # Assuming num_workers is the total number of worker files
+    worker_file = f"worker_file_{i}.h5" # Adjust the filename pattern as needed
+    result = process_worker_file(worker_file)
+    if result is not None: # Only append if the file was processed successfully
+        results.append(result)
+
+# ... rest of your code ...
+```
+
+**2.  Check for File Existence Before Opening:**
+
+Before attempting to open the file, verify that it exists using `os.path.exists()`. This prevents unnecessary error handling if the file is simply missing.
+
+```python
+import os
+
+def process_worker_file(worker_file):
+    if not os.path.exists(worker_file):
+        print(f"Worker file {worker_file} does not exist. Skipping.")
+        return None
+    # ... (rest of the try-except block from above) ...
+```
+
+**3.  Logging:**
+
+Implement more robust logging to record which worker file caused the failure.  This is crucial for debugging.  Use Python's `logging` module for this.
+
+```python
+import logging
+
+logging.basicConfig(filename='precompute_log.txt', level=logging.INFO, 
+                    format='%(asctime)s - %(levelname)s - %(message)s')
+
+# ... in your main loop ...
+    try:
+        # ... your code ...
+    except OSError as e:
+        logging.error(f"Error processing worker file {worker_file}: {e}", exc_info=True) # exc_info=True includes traceback
+        # ...
+```
+
+**4.  Consider Parallel Processing Robustness:**
+
+If you're using multiprocessing (as suggested by `mp_main` in the log), ensure your multiprocessing framework handles exceptions properly.  Otherwise, an exception in one worker might not be properly propagated to the main process.  The `multiprocessing.Pool`'s `map` and `apply_async` methods can be used with error handling.
+
+```python
+from multiprocessing import Pool
+
+with Pool(processes=num_processes) as pool:
+    results = pool.map(process_worker_file, worker_files) # worker_files is a list of filenames
+
+# Process results, handling None values (indicating failures)
+```
+
+**5. Data Recovery (If Possible):**
+
+The log mentions attempting data recovery.  If some worker files are partially complete, you *might* be able to recover some data.  However, this depends on the file format and the extent of the corruption.  You'd need to examine the partially written files carefully to see if they contain any usable information (e.g., checking for partial datasets).  This is a more advanced step and might require specialized tools or understanding of the HDF5 format.
+
+**Modified Script Example (Illustrative):**
+
+```python
+import h5py
+import os
+import logging
+from multiprocessing import Pool
+
+# ... (logging setup as shown above) ...
+
+def process_worker_file(worker_file):
+    if not os.path.exists(worker_file):
+        logging.warning(f"Worker file {worker_file} does not exist. Skipping.")
+        return None
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Your code to process the h5 file
+            # ...  process data from h5_in ...
+            return processed_data  # Return the processed data
+    except OSError as e:
+        logging.error(f"Error processing worker file {worker_file}: {e}", exc_info=True)
+        return None
+
+def main():
+    worker_files = [f"worker_file_{i}.h5" for i in range(50)] # Process 50 files
+    with Pool(processes=os.cpu_count()) as pool:
+        results = pool.map(process_worker_file, worker_files)
+    
+    #Process the valid results
+    valid_results = [r for r in results if r is not None]
+    # ... further processing of valid_results ...
+
+if __name__ == "__main__":
+    main()
+```
+
+Remember to adapt the filename pattern (`worker_file_{i}.h5`) to match your actual file naming convention.  The key improvements are the robust error handling, file existence checks, and detailed logging, enabling reliable detection and reporting of any issues with worker files.  The multiprocessing integration ensures that failures in one worker don't bring down the entire process.

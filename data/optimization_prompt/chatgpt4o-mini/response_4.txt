@@ -1,0 +1,55 @@
+The error message you provided indicates that the script encountered an issue when attempting to open a file using the `h5py` library. The specific error, `OSError: Unable to synchronously open file (file signature not found)`, suggests that the file being accessed is either corrupted or not in the expected format for an HDF5 file.
+
+To ensure that this error is detected reliably and that the process stops cleanly if any worker file is invalid, consider the following modifications to your script:
+
+1. **File Validity Check**: Before attempting to open each worker file, you should first validate the file. You can do this by checking if the file exists and whether it can be opened as an HDF5 file.
+
+2. **Exception Handling**: Implement robust exception handling when opening files to catch any errors that occur, which will allow you to log the error and terminate the process gracefully.
+
+3. **Logging**: Ensure that errors are logged appropriately to help with debugging.
+
+Here is a modified version of the file opening section, incorporating the above suggestions:
+
+```python
+import os
+import h5py
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+
+def main():
+    worker_files = [...]  # List of worker files to process
+    for worker_file in worker_files:
+        # Check if the file exists
+        if not os.path.isfile(worker_file):
+            logging.error(f"File not found: {worker_file}")
+            continue  # Or raise an exception if you want to stop the process
+
+        # Attempt to open the file
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                # Process the file
+                pass  # Your processing logic here
+        except OSError as e:
+            logging.error(f"Failed to open file {worker_file}: {e}")
+            # Optionally, stop the process here if you want to halt on errors
+            # raise e
+
+    logging.info("Processing completed.")
+
+if __name__ == "__main__":
+    main()
+```
+
+### Key Changes Made:
+
+1. **File Existence Check**: Before attempting to open the file, we check if it exists using `os.path.isfile()`. If the file is missing, an error is logged.
+
+2. **Exception Handling**: A `try-except` block is added around the file opening code. If an `OSError` is raised (like if the file signature is not found), it logs an error message and can either continue processing the next file or halt the process based on your requirements.
+
+3. **Logging**: Error messages are logged to provide information about what went wrong, which is helpful for debugging.
+
+### Additional Considerations:
+- If you have a specific requirement to process only valid files and stop the entire operation on the first invalid file, you can uncomment the `raise e` line in the `except` block to raise the exception again after logging.
+- Make sure to test your script after making these changes to ensure that it behaves as expected in various scenarios (valid files, missing files, and corrupt files).

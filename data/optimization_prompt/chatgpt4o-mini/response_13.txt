@@ -1,0 +1,63 @@
+The error message you're encountering indicates that the script is attempting to open a file using the HDF5 library (h5py) but is unable to do so, likely because the file is invalid or corrupted. The error "OSError: Unable to synchronously open file (file signature not found)" suggests that the file being accessed does not contain the expected HDF5 file signature.
+
+To ensure that this issue is detected reliably and that the process stops cleanly if any worker file is invalid, you can implement the following modifications to your script:
+
+### 1. File Validation Before Processing
+Before attempting to open each HDF5 file, you should validate that the file exists and is a valid HDF5 file. You can do this by checking the file signature or attempting to open the file in a try-except block.
+
+### 2. Exception Handling
+Wrap the file opening and processing logic in a try-except block to catch any exceptions that occur. If an exception is raised, log the error and terminate the process gracefully.
+
+### 3. Logging
+Ensure that you log any errors encountered so that you can diagnose issues later. Use logging instead of print statements for better tracking.
+
+### Example Code Modification
+Here is an example of how you might modify your script:
+
+```python
+import os
+import h5py
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+
+def is_valid_hdf5_file(file_path):
+    """Check if the file is a valid HDF5 file."""
+    try:
+        with h5py.File(file_path, 'r'):
+            return True
+    except Exception as e:
+        logging.error(f"Invalid HDF5 file {file_path}: {e}")
+        return False
+
+def process_worker_file(worker_file):
+    """Process the worker file."""
+    if not is_valid_hdf5_file(worker_file):
+        logging.error(f"Stopping process due to invalid file: {worker_file}")
+        raise ValueError(f"Invalid HDF5 file: {worker_file}")
+    
+    # Continue processing if the file is valid
+    with h5py.File(worker_file, 'r') as h5_in:
+        # Your processing logic here
+        pass
+
+def main():
+    worker_files = [...]  # Your list of worker files
+    for worker_file in worker_files:
+        try:
+            process_worker_file(worker_file)
+        except Exception as e:
+            logging.critical(f"An error occurred: {e}")
+            break  # Stop the process on error
+
+if __name__ == "__main__":
+    main()
+```
+
+### Summary
+- **File Validation**: The `is_valid_hdf5_file` function checks if a file is a valid HDF5 file.
+- **Exception Handling**: The `process_worker_file` function raises an error if the file is invalid, stopping the process.
+- **Logging**: Use the logging module to keep track of errors and important information.
+
+By implementing these changes, your script should be able to detect invalid worker files reliably and stop the process cleanly if any issues are encountered.

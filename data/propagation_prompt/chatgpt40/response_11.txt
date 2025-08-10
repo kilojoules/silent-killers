@@ -1,0 +1,87 @@
+To generate a script that propagates realistic measurement uncertainties through PyWake and saves a series of flow field images showing the sensitivity of the flow to these uncertainties, you will need to follow several steps. This involves Monte Carlo simulations or similar techniques to model the uncertainties, and Sobol sensitivity analysis to evaluate the impact on the effective wind speed (WS_eff). I will provide a basic outline of how this can be scripted in Python using PyWake and related libraries.
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from py_wake import WindFarmModel
+from py_wake.examples.data.hornsrev1 import Hornsrev1Site, HornsrevV80
+from py_wake.utils.propagation import Propagate
+from SALib.sample import saltelli
+from SALib.analyze import sobol
+
+# Define the problem for Sobol sensitivity analysis
+problem = {
+    'num_vars': 3,  # For example: wind speed, wind direction, turbulence intensity
+    'names': ['wind_speed', 'wind_direction', 'turbulence_intensity'],
+    'bounds': [[7, 15], [0, 360], [0.05, 0.15]]  # Example bounds
+}
+
+# Sample inputs
+param_values = saltelli.sample(problem, 1000)  # Generate samples
+
+# Initialize site and turbines
+site = Hornsrev1Site()
+wind_turbines = HornsrevV80()
+
+# Initialize the wind farm model
+wf_model = WindFarmModel(site, wind_turbines)
+
+# Placeholder for results
+ws_eff_results = np.zeros((len(param_values), site.ds.shape[0], site.ds.shape[1]))
+
+# Propagate uncertainties through the model
+for i, params in enumerate(param_values):
+    wind_speed, wind_direction, turbulence_intensity = params
+    # Set site conditions
+    site.ds['WS'] = wind_speed
+    site.ds['WD'] = wind_direction
+    site.ds['TI'] = turbulence_intensity
+    
+    # Calculate flow field
+    flow_map = wf_model(x=site.ds.x, y=site.ds.y)
+    ws_eff_results[i] = flow_map.WS_eff.values  # Save WS_eff for each simulation
+
+# Perform Sobol sensitivity analysis
+sobol_indices = np.zeros((site.ds.shape[0], site.ds.shape[1], 3))
+
+for x in range(site.ds.shape[0]):
+    for y in range(site.ds.shape[1]):
+        ws_eff = ws_eff_results[:, x, y]
+        Si = sobol.analyze(problem, ws_eff)
+        sobol_indices[x, y, 0] = Si['S1'][0]  # First-order index for wind speed
+        sobol_indices[x, y, 1] = Si['S1'][1]  # First-order index for wind direction
+        sobol_indices[x, y, 2] = Si['S1'][2]  # First-order index for turbulence intensity
+
+# Plot and save results
+timesteps = 10  # Number of timesteps for which to save images
+for t in range(timesteps):
+    plt.figure(figsize=(10, 6))
+    plt.imshow(sobol_indices[:, :, t], extent=(site.ds.x.min(), site.ds.x.max(), site.ds.y.min(), site.ds.y.max()), origin='lower')
+    plt.colorbar(label='Sobol Index')
+    plt.title(f'Sobol Sensitivity at Time {t}')
+    plt.xlabel('x')
+    plt.ylabel('y')
+    plt.savefig(f'sobol_sensitivity_time_{t}.png')
+    plt.close()
+```
+
+### Key Points:
+
+1. **Imports and Setup**: Import necessary libraries. Set up the problem definition for Sobol sensitivity analysis using `SALib`.
+
+2. **Sampling**: Use Saltelli sampling to generate a sample set of input parameters reflecting your measurement uncertainties.
+
+3. **Model Initialization**: Set up your wind farm site and model using PyWake.
+
+4. **Uncertainty Propagation**: Loop through each set of parameters, run the wind farm model, and store the effective wind speed results.
+
+5. **Sensitivity Analysis**: Conduct Sobol sensitivity analysis for each grid point of interest.
+
+6. **Visualization**: Plot and save the Sobol indices for each timestep of interest.
+
+### Additional Considerations:
+- You may need to adjust the bounds and number of variables in the Sobol analysis depending on your specific uncertainties.
+- Depending on your data size and computational resources, you might need to optimize the script for performance.
+- Ensure that dependencies like PyWake, SALib, and Matplotlib are installed in your Python environment.
+
+This script provides a basic framework and may require adjustments depending on your specific setup and requirements.

@@ -1,0 +1,252 @@
+## Diagnosis
+
+The error `OSError: Unable to synchronously open file (file signature not found)` indicates that one or more of the worker HDF5 files is corrupted or incomplete. This typically happens when:
+
+1. A worker process crashes or gets killed while writing to the HDF5 file
+2. The system runs out of disk space during writing
+3. A worker process is interrupted mid-write, leaving a partially written/corrupted file
+
+The issue occurs during the file merging phase after all workers complete, when the main process tries to read each worker file to combine results.
+
+## Solution
+
+Here's how to modify your script to detect and handle corrupted worker files reliably:
+
+```python
+import h5py
+import os
+import logging
+from pathlib import Path
+
+def validate_worker_file(worker_file):
+    """
+    Validate that a worker HDF5 file is readable and contains expected data.
+    Returns (is_valid, error_message, recoverable_data)
+    """
+    try:
+        # Check if file exists and has non-zero size
+        if not os.path.exists(worker_file):
+            return False, f"File does not exist: {worker_file}", None
+        
+        file_size = os.path.getsize(worker_file)
+        if file_size == 0:
+            return False, f"File is empty: {worker_file}", None
+        
+        # Try to open and read the file
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Check for expected structure
+            if len(h5_in.keys()) == 0:
+                return False, f"File contains no datasets: {worker_file}", None
+            
+            # Try to read at least one dataset to ensure file integrity
+            dataset_count = 0
+            recoverable_data = []
+            
+            for key in h5_in.keys():
+                try:
+                    dataset = h5_in[key]
+                    # Try to read the dataset attributes/shape to verify accessibility
+                    _ = dataset.shape
+                    _ = dict(dataset.attrs)
+                    dataset_count += 1
+                    recoverable_data.append(key)
+                except Exception as e:
+                    logging.warning(f"Dataset {key} in {worker_file} is corrupted: {e}")
+            
+            if dataset_count == 0:
+                return False, f"No readable datasets in {worker_file}", None
+            
+            return True, f"Valid file with {dataset_count} datasets", recoverable_data
+            
+    except OSError as e:
+        return False, f"HDF5 file corruption in {worker_file}: {e}", None
+    except Exception as e:
+        return False, f"Unexpected error reading {worker_file}: {e}", None
+
+def merge_worker_files_safely(worker_files, output_file, recovery_mode=False):
+    """
+    Safely merge worker files with corruption detection and recovery options.
+    """
+    valid_files = []
+    corrupted_files = []
+    total_recovered = 0
+    
+    # Phase 1: Validate all worker files
+    logging.info("Validating worker files...")
+    for worker_file in worker_files:
+        is_valid, message, recoverable_data = validate_worker_file(worker_file)
+        
+        if is_valid:
+            valid_files.append((worker_file, recoverable_data))
+            logging.info(f"✓ {worker_file}: {message}")
+        else:
+            corrupted_files.append((worker_file, message))
+            logging.error(f"✗ {worker_file}: {message}")
+    
+    # Phase 2: Decide how to proceed
+    if corrupted_files:
+        logging.error(f"Found {len(corrupted_files)} corrupted files out of {len(worker_files)} total")
+        
+        if not recovery_mode:
+            # Strict mode: fail if any file is corrupted
+            logging.error("Stopping due to corrupted files. Use recovery_mode=True to proceed with partial data.")
+            for worker_file, error in corrupted_files:
+                logging.error(f"  - {worker_file}: {error}")
+            raise RuntimeError(f"Cannot proceed: {len(corrupted_files)} corrupted worker files found")
+        else:
+            # Recovery mode: proceed with valid files only
+            logging.warning(f"Recovery mode: proceeding with {len(valid_files)} valid files, skipping {len(corrupted_files)} corrupted files")
+    
+    if not valid_files:
+        raise RuntimeError("No valid worker files found - cannot create output")
+    
+    # Phase 3: Merge valid files
+    logging.info(f"Merging {len(valid_files)} valid worker files...")
+    
+    with h5py.File(output_file, 'w') as h5_out:
+        for worker_file, recoverable_data in valid_files:
+            try:
+                with h5py.File(worker_file, 'r') as h5_in:
+                    for dataset_name in recoverable_data:
+                        try:
+                            # Copy dataset to output file
+                            h5_in.copy(dataset_name, h5_out)
+                            total_recovered += 1
+                            logging.debug(f"Copied {dataset_name} from {worker_file}")
+                        except Exception as e:
+                            logging.error(f"Failed to copy {dataset_name} from {worker_file}: {e}")
+                            
+            except Exception as e:
+                logging.error(f"Failed to process {worker_file} during merge: {e}")
+    
+    # Phase 4: Clean up and report
+    logging.info(f"Successfully merged {total_recovered} datasets from {len(valid_files)} files")
+    
+    if corrupted_files and recovery_mode:
+        # Create a report of what was lost
+        lost_report_file = output_file.replace('.h5', '_lost_data_report.txt')
+        with open(lost_report_file, 'w') as f:
+            f.write(f"Data Recovery Report\n")
+            f.write(f"===================\n\n")
+            f.write(f"Total worker files: {len(worker_files)}\n")
+            f.write(f"Valid files: {len(valid_files)}\n")
+            f.write(f"Corrupted files: {len(corrupted_files)}\n")
+            f.write(f"Datasets recovered: {total_recovered}\n\n")
+            f.write("Corrupted files:\n")
+            for worker_file, error in corrupted_files:
+                f.write(f"  - {worker_file}: {error}\n")
+        
+        logging.warning(f"Recovery report written to: {lost_report_file}")
+    
+    return len(valid_files), len(corrupted_files), total_recovered
+
+# Modified main function
+def main():
+    # ... your existing setup code ...
+    
+    try:
+        # Your existing multiprocessing code here
+        # ... worker processes run ...
+        
+        # After workers complete, merge files safely
+        worker_files = [f"worker_{i}.h5" for i in range(num_workers)]
+        
+        # Option 1: Strict mode (fail on any corruption)
+        try:
+            valid_count, corrupted_count, recovered_count = merge_worker_files_safely(
+                worker_files, 
+                "final_output.h5", 
+                recovery_mode=False
+            )
+            logging.info(f"All files valid - merged {recovered_count} datasets successfully")
+            
+        except RuntimeError as e:
+            logging.error(f"Strict validation failed: {e}")
+            
+            # Option 2: Ask user or automatically switch to recovery mode
+            user_choice = input("Do you want to proceed with partial data recovery? (y/n): ")
+            
+            if user_choice.lower() == 'y':
+                valid_count, corrupted_count, recovered_count = merge_worker_files_safely(
+                    worker_files, 
+                    "final_output_partial.h5", 
+                    recovery_mode=True
+                )
+                logging.info(f"Recovery completed: {recovered_count} datasets from {valid_count} files")
+                logging.warning(f"Lost data from {corrupted_count} corrupted files")
+            else:
+                logging.info("User chose not to proceed with partial recovery")
+                return False
+    
+    except Exception as e:
+        logging.error(f"Fatal error during processing: {e}")
+        return False
+    
+    finally:
+        # Clean up worker files if desired
+        cleanup_worker_files = True  # Set based on your preference
+        if cleanup_worker_files:
+            for worker_file in worker_files:
+                try:
+                    if os.path.exists(worker_file):
+                        os.remove(worker_file)
+                        logging.debug(f"Cleaned up {worker_file}")
+                except Exception as e:
+                    logging.warning(f"Could not clean up {worker_file}: {e}")
+    
+    return True
+
+if __name__ == "__main__":
+    success = main()
+    if not success:
+        exit(1)
+```
+
+## Additional Preventive Measures
+
+1. **Add worker-level validation**:
+```python
+def worker_function(args):
+    try:
+        # Your existing worker code
+        result = process_farm_layout(args)
+        
+        # Validate the output file before worker exits
+        worker_file = f"worker_{worker_id}.h5"
+        is_valid, message, _ = validate_worker_file(worker_file)
+        
+        if not is_valid:
+            logging.error(f"Worker {worker_id} produced invalid file: {message}")
+            # Optionally retry or handle the error
+            
+        return result
+        
+    except Exception as e:
+        logging.error(f"Worker {worker_id} failed: {e}")
+        # Ensure partial files are cleaned up
+        worker_file = f"worker_{worker_id}.h5"
+        if os.path.exists(worker_file):
+            os.remove(worker_file)
+        raise
+```
+
+2. **Add disk space monitoring**:
+```python
+import shutil
+
+def check_disk_space(path, required_gb=1):
+    """Check if sufficient disk space is available"""
+    total, used, free = shutil.disk_usage(path)
+    free_gb = free // (1024**3)
+    
+    if free_gb < required_gb:
+        raise RuntimeError(f"Insufficient disk space: {free_gb}GB available, {required_gb}GB required")
+    
+    return free_gb
+```
+
+This solution will help you:
+- Detect corrupted files before they cause crashes
+- Recover partial data when possible
+- Get detailed reports about what data was lost
+- Prevent similar issues in future runs

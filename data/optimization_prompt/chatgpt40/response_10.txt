@@ -1,0 +1,49 @@
+The error message you've encountered indicates that one of the HDF5 files (likely `worker_file`) could not be opened because the file signature was not found. This typically means that the file is either corrupted, does not exist, or is not a valid HDF5 file.
+
+To handle this error reliably and ensure the process stops cleanly if any worker file is invalid, you can modify the script to include error handling around the file opening operation. Here is how you might modify the script to achieve this:
+
+1. **Add Error Handling**: Use a `try-except` block when attempting to open the file. If an exception is caught, log the error and terminate the process gracefully.
+
+2. **Use Logging for Errors**: Ensure that the error is logged in a way that makes it easy to diagnose the issue later.
+
+3. **Exit Cleanly**: If an error occurs, exit the process with an appropriate status code.
+
+Here's a sample modification to the `main()` function to incorporate these changes:
+
+```python
+import h5py
+import logging
+import sys
+
+def main():
+    logging.basicConfig(level=logging.INFO)
+    worker_file = 'path_to_your_worker_file.h5'
+
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Process the file as needed
+            logging.info("Successfully opened the worker file.")
+
+    except OSError as e:
+        # Log the error
+        logging.error(f"Failed to open worker file {worker_file}: {e}")
+        sys.exit(1)  # Exit the process with an error code
+
+    except Exception as e:
+        # Catch any other exceptions and log them
+        logging.error(f"An unexpected error occurred: {e}")
+        sys.exit(1)  # Exit the process with an error code
+
+    # Continue with the rest of your script logic
+    logging.info("Completed all tasks successfully.")
+
+if __name__ == "__main__":
+    main()
+```
+
+### Additional Recommendations
+
+- **Validate Files Before Processing**: Consider adding a pre-processing step that checks if all necessary files exist and are valid HDF5 files before starting the main computation.
+- **Backup and Recovery**: Implement a mechanism to back up your data regularly and recover from the last known good state in case of failure.
+- **Incremental Progress Saving**: Save intermediate results frequently so that you can resume from the last successful point rather than starting over if a failure occurs.
+- **Comprehensive Logging**: Ensure that your script logs detailed information about the progress and any issues encountered to facilitate troubleshooting and recovery efforts.

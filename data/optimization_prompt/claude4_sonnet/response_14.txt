@@ -1,0 +1,216 @@
+## Diagnosis
+
+The error indicates that one of the worker HDF5 files is corrupted or incomplete - it has an invalid file signature, meaning it's not a proper HDF5 file. This likely happened because:
+
+1. A worker process crashed or was killed while writing to the file
+2. The system ran out of disk space during writing
+3. A network interruption occurred if using network storage
+4. The process was interrupted during the critical file writing phase
+
+The repetitive "130 possible points..." messages suggest workers were still running when the main process tried to read incomplete files.
+
+## Solution: Add Robust Error Detection and Recovery
+
+Here's how to modify your script to handle this reliably:
+
+```python
+import h5py
+import os
+import logging
+from pathlib import Path
+
+def validate_hdf5_file(filepath):
+    """Validate that an HDF5 file is complete and readable."""
+    try:
+        if not os.path.exists(filepath):
+            return False, "File does not exist"
+        
+        if os.path.getsize(filepath) == 0:
+            return False, "File is empty"
+            
+        with h5py.File(filepath, 'r') as f:
+            # Try to access the root group and list keys
+            list(f.keys())
+            # You can add more specific validation here based on your data structure
+            # For example, check for required datasets:
+            # if 'required_dataset' not in f:
+            #     return False, "Missing required dataset"
+        
+        return True, "Valid"
+    except Exception as e:
+        return False, f"Validation error: {str(e)}"
+
+def cleanup_invalid_files(worker_files):
+    """Remove invalid HDF5 files and return list of valid ones."""
+    valid_files = []
+    invalid_files = []
+    
+    for worker_file in worker_files:
+        is_valid, error_msg = validate_hdf5_file(worker_file)
+        if is_valid:
+            valid_files.append(worker_file)
+            logging.info(f"Valid file: {worker_file}")
+        else:
+            invalid_files.append(worker_file)
+            logging.error(f"Invalid file {worker_file}: {error_msg}")
+            # Remove the corrupted file
+            try:
+                if os.path.exists(worker_file):
+                    os.remove(worker_file)
+                    logging.info(f"Removed corrupted file: {worker_file}")
+            except Exception as e:
+                logging.error(f"Could not remove {worker_file}: {e}")
+    
+    return valid_files, invalid_files
+
+def safe_multiprocessing_join(processes, timeout=30):
+    """Safely join processes with timeout and cleanup."""
+    for process in processes:
+        try:
+            process.join(timeout=timeout)
+            if process.is_alive():
+                logging.warning(f"Process {process.pid} did not finish within timeout, terminating...")
+                process.terminate()
+                process.join(timeout=5)  # Give it 5 more seconds
+                if process.is_alive():
+                    logging.error(f"Force killing process {process.pid}")
+                    process.kill()
+        except Exception as e:
+            logging.error(f"Error joining process {process.pid}: {e}")
+
+def main():
+    # Your existing setup code...
+    
+    try:
+        # Start multiprocessing
+        processes = []
+        for i in range(num_workers):
+            # Your process creation code...
+            process = multiprocessing.Process(target=worker_function, args=(...))
+            processes.append(process)
+            process.start()
+        
+        # Wait for all processes with better error handling
+        logging.info("Waiting for worker processes to complete...")
+        safe_multiprocessing_join(processes, timeout=60)  # Adjust timeout as needed
+        
+        # Check process exit codes
+        failed_processes = []
+        for i, process in enumerate(processes):
+            if process.exitcode != 0:
+                failed_processes.append(i)
+                logging.error(f"Worker {i} failed with exit code: {process.exitcode}")
+        
+        if failed_processes:
+            logging.error(f"Workers {failed_processes} failed. Checking file integrity...")
+        
+        # Validate all worker files before proceeding
+        worker_files = [f"worker_{i}_output.h5" for i in range(num_workers)]  # Adjust naming
+        valid_files, invalid_files = cleanup_invalid_files(worker_files)
+        
+        if invalid_files:
+            logging.error(f"Found {len(invalid_files)} corrupted files: {invalid_files}")
+            
+            # Option 1: Stop and report what needs to be rerun
+            missing_work = identify_missing_work(invalid_files)
+            logging.error(f"Need to rerun work for: {missing_work}")
+            
+            # Option 2: Continue with valid files only (if acceptable)
+            # logging.warning(f"Continuing with {len(valid_files)} valid files only")
+            
+            # Option 3: Stop completely
+            raise RuntimeError(f"Cannot proceed due to {len(invalid_files)} corrupted worker files")
+        
+        logging.info(f"All {len(valid_files)} worker files validated successfully")
+        
+        # Proceed with merging valid files
+        successful_count = 0
+        for worker_file in valid_files:
+            try:
+                with h5py.File(worker_file, 'r') as h5_in:
+                    # Your existing merge logic...
+                    successful_count += len(h5_in.keys())  # Or however you count
+                    
+            except Exception as e:
+                logging.error(f"Error processing {worker_file}: {e}")
+                # Decide whether to continue or stop
+                raise
+        
+        logging.info(f"Completed {successful_count}/3000 optimizations successfully")
+        
+    except Exception as e:
+        logging.error(f"Fatal error in main process: {e}")
+        # Cleanup any remaining processes
+        for process in processes:
+            if process.is_alive():
+                process.terminate()
+        raise
+
+def identify_missing_work(invalid_files):
+    """Identify which work units need to be rerun based on invalid files."""
+    missing_work = []
+    for invalid_file in invalid_files:
+        # Extract worker ID or work range from filename
+        # This depends on your naming convention
+        worker_id = extract_worker_id(invalid_file)
+        work_range = get_work_range_for_worker(worker_id)
+        missing_work.extend(work_range)
+    return missing_work
+
+# Additional helper for atomic file writing in workers
+def safe_write_hdf5(data, filepath):
+    """Write HDF5 file atomically using temporary file."""
+    temp_path = f"{filepath}.tmp"
+    try:
+        # Write to temporary file first
+        with h5py.File(temp_path, 'w') as f:
+            # Your data writing code here
+            pass
+        
+        # Only move to final location if write was successful
+        os.rename(temp_path, filepath)
+        logging.info(f"Successfully wrote {filepath}")
+        
+    except Exception as e:
+        # Clean up temp file if it exists
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        logging.error(f"Failed to write {filepath}: {e}")
+        raise
+```
+
+## Recovery Strategy
+
+Since you have the worker files, you can:
+
+1. **Identify valid files**: Run the validation function on all worker files
+2. **Determine missing work**: Figure out which seeds/farms are missing
+3. **Selective rerun**: Only rerun the missing work instead of starting over
+
+```python
+# Recovery script
+def recover_missing_work():
+    worker_files = glob.glob("worker_*.h5")  # Adjust pattern
+    valid_files, invalid_files = cleanup_invalid_files(worker_files)
+    
+    # Determine what work was completed
+    completed_work = set()
+    for valid_file in valid_files:
+        with h5py.File(valid_file, 'r') as f:
+            # Extract completed work IDs from file
+            completed_work.update(extract_completed_work_ids(f))
+    
+    # Determine what's missing
+    all_work = set(range(3000))  # Or however you define your work units
+    missing_work = all_work - completed_work
+    
+    logging.info(f"Found {len(completed_work)} completed, {len(missing_work)} missing")
+    return list(missing_work)
+```
+
+The key improvements are:
+1. **File validation** before processing
+2. **Atomic writes** in workers using temporary files
+3. **Process monitoring** with timeouts
+4. **Graceful error handling** with cleanup
+5. **Recovery capability** to resume from partial completion

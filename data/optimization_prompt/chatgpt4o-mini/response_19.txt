@@ -1,0 +1,58 @@
+The error message indicates that the script is trying to open a file using the `h5py` library, but it cannot find a valid HDF5 file signature in the specified worker file. This usually means that the file is either corrupted, not an HDF5 file, or possibly empty.
+
+To ensure that this error is detected reliably and that the process stops cleanly if any worker file is invalid, you can take the following steps:
+
+### 1. Validate the Worker Files
+
+Before attempting to open each worker file, add a validation step to check whether the file exists and whether it’s a valid HDF5 file. You can use a try-except block to catch `OSError` exceptions when trying to open the files.
+
+### 2. Modify the Script
+
+Here’s a modified example of how you could implement this in your script:
+
+```python
+import os
+import h5py
+
+def is_valid_hdf5(file_name):
+    """ Check if a file is a valid HDF5 file. """
+    try:
+        with h5py.File(file_name, 'r'):
+            return True
+    except (OSError, IOError):
+        return False
+
+def main():
+    # Assuming you have a list of worker files
+    worker_files = ['file1.h5', 'file2.h5', 'file3.h5']  # Replace with your actual file names
+    for worker_file in worker_files:
+        if not os.path.exists(worker_file):
+            print(f"Error: File {worker_file} does not exist.")
+            return  # Stop the process
+
+        if not is_valid_hdf5(worker_file):
+            print(f"Error: File {worker_file} is not a valid HDF5 file.")
+            return  # Stop the process
+
+        # Proceed with processing the valid worker file
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Your processing logic here
+            pass
+
+if __name__ == "__main__":
+    main()
+```
+
+### 3. Explanation of the Changes
+
+- **Validation Function**: The `is_valid_hdf5` function attempts to open the file and catches any `OSError` or `IOError`. If the file can be opened without exception, it is considered valid.
+- **File Existence Check**: Before checking validity, the script checks if the file exists. If it does not, an error message is printed, and the process stops.
+- **Early Termination**: If any file is found to be invalid or non-existent, the script terminates early, preventing further processing and potential cascading errors.
+
+### 4. Additional Considerations
+
+- **Logging**: Instead of just printing errors, consider using a logging framework to log messages at different severity levels (INFO, WARNING, ERROR).
+- **Error Handling**: Depending on your use case, you may want to implement more sophisticated error handling, such as retrying to open files or skipping invalid files while continuing with valid ones.
+- **File Recovery**: If you suspect that some files are corrupted but still contain some recoverable data, you might need to implement a more complex recovery mechanism or use tools designed for HDF5 file recovery.
+
+By implementing these modifications, you can ensure that your script detects file issues reliably and stops processing cleanly if any worker file is invalid.

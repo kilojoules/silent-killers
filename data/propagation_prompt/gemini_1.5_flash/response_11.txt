@@ -1,0 +1,71 @@
+This script uses PyWake, a Python library for wind farm simulations, to propagate uncertainties through a wind farm model and visualize the sensitivity of the flow field to these uncertainties using Sobol sensitivity analysis.  Since PyWake doesn't directly support visualization of Sobol sensitivity indices in a flow field, we'll visualize the flow field variations resulting from different inflow conditions generated based on the Sobol indices.  This provides a visual representation of the sensitivity.
+
+**Note:** This script requires several libraries. Make sure you have them installed: `pywake`, `numpy`, `matplotlib`, `SALib`, and potentially others depending on your PyWake setup.  Install them using pip:  `pip install pywake numpy matplotlib SALib`
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake.wind_farm_models.engineering_models import PropagateDownwind
+from pywake.examples.data.hornsrev1 import Hornsrev1Site
+from pywake.flow_map import XY, FlowMap
+from SALib.analyze import sobol
+from SALib.sample import saltelli
+
+# --- Define the Problem ---
+problem = {
+    'num_vars': 2,  # Two input parameters: wind speed and direction
+    'names': ['WS_eff', 'wd'],
+    'bounds': [[7, 10], [260, 280]]  # Example ranges; adjust as needed
+}
+
+# --- Generate Samples using Sobol Sequence ---
+param_values = saltelli.sample(problem, 1000) # Adjust sample size as needed
+
+# --- PyWake Simulation Setup ---
+site = Hornsrev1Site()
+x, y = site.initial_position[:, 0], site.initial_position[:, 1]
+windTurbines = site.windTurbines
+windFarmModel = PropagateDownwind(site, windTurbines)
+
+# --- Run Simulations for each sample ---
+all_flow_maps = []
+for i, params in enumerate(param_values):
+    WS_eff, wd = params
+    flow_map = windFarmModel(x, y, wd, WS_eff=WS_eff)  # Simulate with uncertain inputs
+    all_flow_maps.append(flow_map)
+
+# --- Sobol Sensitivity Analysis (Simplified) ---
+# We'll perform a simplified analysis focusing on WS_eff at specific points.
+# A more comprehensive analysis would require analyzing the entire flow field,
+# which is computationally expensive.
+
+# Example: Analyze WS_eff at a specific location (e.g., center of the farm)
+x_center = np.mean(x)
+y_center = np.mean(y)
+ws_eff_values = np.array([fm.WS_eff(x_center, y_center) for fm in all_flow_maps])
+Y = ws_eff_values.reshape((len(param_values), 1))
+
+Si = sobol.analyze(problem, Y, print_to_console=True)
+
+# --- Visualization ---
+# Visualize the flow field at different times/samples.
+# We select a few representative samples to illustrate the impact of uncertainty.
+selected_indices = [0, 250, 500, 750, 999] # Select indices for visualization
+
+fig, axes = plt.subplots(1, len(selected_indices), figsize=(15, 5))
+for i, idx in enumerate(selected_indices):
+    fm = all_flow_maps[idx]
+    im = axes[i].imshow(fm.WS_eff.T, extent=(x.min(), x.max(), y.min(), y.max()), origin='lower')
+    axes[i].set_title(f'Sample {idx+1}, WS_eff={param_values[idx,0]:.2f}, wd={param_values[idx,1]:.2f}')
+    fig.colorbar(im, ax=axes[i])
+    axes[i].set_xlabel('x [m]')
+    axes[i].set_ylabel('y [m]')
+plt.tight_layout()
+plt.show()
+
+print("Sobol Indices:")
+print(Si)
+
+```
+
+Remember to replace placeholder values (wind speed, direction ranges, etc.) with your specific data and adjust the sample size and visualization as needed.  The Sobol analysis here is simplified; for a more complete analysis of the spatial flow field sensitivity, you might need to consider techniques like analyzing the Sobol indices at multiple points or using spatial statistics on the flow field data.  This would be significantly more computationally intensive.  The provided script focuses on demonstrating the visualization aspect combined with a basic Sobol analysis.

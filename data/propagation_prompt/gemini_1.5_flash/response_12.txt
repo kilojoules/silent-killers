@@ -1,0 +1,81 @@
+This script requires the `pywake`, `matplotlib`, `numpy`, and `SALib` libraries.  Make sure you have them installed (`pip install pywake matplotlib numpy SALib`).  This example uses a simple Gaussian wind field for demonstration; you'll need to adapt it to your specific inflow data and PyWake setup.  The Sobol sensitivity analysis is computationally expensive, especially for high-resolution flow fields. Consider reducing the resolution or the number of Sobol samples for faster execution.
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake.wind_farm_models.engineering_models import PropagateDownwind
+from pywake.turbulence_models.turbulence_model import TurbulenceModel
+from pywake.flow_map import FlowMap
+from SALib.analyze import sobol
+from SALib.sample import saltelli
+
+# --- Define Input Parameters and their uncertainties ---
+problem = {
+    'num_vars': 2,
+    'names': ['x', 'y'],
+    'bounds': [[0, 1000], [0, 1000]] # Example bounds, adjust to your inflow domain
+}
+
+# --- Number of Sobol samples (increase for better accuracy, but slower computation) ---
+param_values = saltelli.sample(problem, 100) # 100 samples, increase for better accuracy
+
+# --- Simplified Gaussian Wind Field (replace with your actual inflow data) ---
+def gaussian_wind_field(x, y, t):
+    # Simulates a Gaussian wind speed profile centered at (500, 500)
+    center_x, center_y = 500, 500
+    sigma_x, sigma_y = 100, 100  # Adjust for spread
+    base_ws = 8  # Base wind speed
+    ws = base_ws * np.exp(-((x - center_x)**2 / (2 * sigma_x**2) + (y - center_y)**2 / (2 * sigma_y**2)))
+    return ws
+
+# --- PyWake Setup (adapt to your specific wind farm and model) ---
+class MyTurbulenceModel(TurbulenceModel):
+    def __init__(self):
+        super().__init__()
+    def calc_turbulence_intensity(self,WS_ilk,TI_ilk):
+      return 0.1*np.ones_like(WS_ilk)
+
+class MyWindFarmModel(PropagateDownwind):
+    def __init__(self, site, windTurbines):
+        super().__init__(site, windTurbines, turbulenceModel=MyTurbulenceModel())
+
+
+# --- Simulation Loop ---
+times = [0, 1, 2, 3, 4] # Simulation times (adjust as needed)
+fig, axes = plt.subplots(len(times), 1, figsize=(10, 20))
+
+for i, t in enumerate(times):
+    flow_fields = []
+    for j, params in enumerate(param_values):
+        x_shift, y_shift = params
+        #Apply shifts to your data if you're using real data, here it is applied to the Gaussian function
+        x = np.arange(0, 1001, 10) # Adjust resolution as needed
+        y = np.arange(0, 1001, 10)
+        X,Y = np.meshgrid(x, y)
+        WS_eff = gaussian_wind_field(X + x_shift, Y + y_shift, t)
+        flow_fields.append(WS_eff)
+
+
+    # Reshape for Sobol analysis (samples x x x y)
+    flow_fields = np.array(flow_fields).reshape(len(param_values), -1)
+
+    # --- Sobol Sensitivity Analysis ---
+    Si = sobol.analyze(problem, flow_fields, print_to_console=True)
+
+    # --- Plotting ---
+    ax = axes[i]
+    #Plot Mean flow field
+    mean_flow = np.mean(flow_fields, axis=0).reshape(len(x),len(y))
+    im = ax.imshow(mean_flow, origin='lower', extent=[0, 1000, 0, 1000], cmap='viridis')
+    ax.set_title(f'Time {t}: Sobol Sensitivity - Mean WS_eff')
+    ax.set_xlabel('x')
+    ax.set_ylabel('y')
+    fig.colorbar(im, ax=ax, label='WS_eff')
+    # Add sensitivity indices to the plot (optional, can be complex to visualize nicely)
+    # You might want to overlay contours or annotations showing the sensitivity
+
+plt.tight_layout()
+plt.show()
+```
+
+Remember to replace the placeholder Gaussian wind field with your actual inflow data and adjust the PyWake setup (site, wind turbines, etc.) to match your specific case.  The Sobol analysis will take time; monitor its progress. The output shows the mean flow field and you can add visualizations of the Sobol sensitivity indices (e.g., using contour plots or annotations) to show how the uncertainty in 'x' and 'y' affects the flow field.  Consider using a smaller sample size or lower resolution to reduce computation time during development and testing.

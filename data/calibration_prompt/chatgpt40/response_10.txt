@@ -1,0 +1,69 @@
+Your code is quite comprehensive and seems to tackle a complex problem with multiple components. Here are some thoughts and suggestions to address the points you raised and to potentially improve the code:
+
+### 1. Flow Field Plots
+
+If you want to report average and p90s of the errors, you could consider modifying the code to calculate these statistics for the errors. Here's how you can approach it:
+
+- **Calculate Average and p90 of Errors:** You can compute these statistics over the `rmse_values` or the differences between observed and predicted deficits. This can be done using NumPy or Pandas functions. 
+
+- **Modify Plotting:** Update your plotting logic to include these statistics. This could involve adding these values as text on the plots or as additional lines/markers.
+
+### 2. Modularizing the Code
+
+It's a good idea to modularize your code for better maintainability and readability. You can break down the code into smaller functions that handle specific tasks. Here’s a potential approach:
+
+- **Encapsulation:** Create functions for repetitive tasks like data preparation, model instantiation with different parameters, and evaluation.
+
+- **Flow Map Calculation:** Separate this logic into a function that takes parameters and returns the flow map and RMSE.
+
+- **Optimization and Plotting:** These can be individual functions that handle the optimization process and the plotting logic.
+
+### 3. Comments on Deficit Settings, MODEL, and UPSTREAM Logic
+
+- **Deficit Settings and MODEL:** Ensure that the logic for selecting models and their parameters is clear and well-documented. Consider using a configuration dictionary or object to manage different parameter sets and models, which will make it easier to switch between configurations.
+
+- **UPSTREAM/DOWNWIND Logic:** This can be refactored into functions or classes that handle these scenarios. This makes it easier to manage the logic and any future changes.
+
+### 4. Code Refactoring Example
+
+Here’s a brief example of how you might refactor some parts of your code into functions:
+
+```python
+def load_data(filename, diameter):
+    dat = xr.load_dataset(filename)
+    return dat.assign_coords(x=dat.x * diameter, y=dat.y * diameter)
+
+def instantiate_wfm(site, turbine, params, model_type, downwind):
+    if model_type == 1:
+        if downwind:
+            wake_deficitModel = BlondelSuperGaussianDeficit2020(**params['deficit'])
+            turb_args = params['turbulence']
+        else:
+            # Handle upstream logic
+            pass
+    else:
+        # Handle MODEL 2 logic
+        wake_deficitModel = TurboGaussianDeficit(**params['deficit'])
+        turb_args = params['turbulence']
+    
+    return All2AllIterative(
+        site, turbine,
+        wake_deficitModel=wake_deficitModel,
+        superpositionModel=LinearSum(),
+        deflectionModel=None,
+        turbulenceModel=CrespoHernandez(**turb_args),
+        blockage_deficitModel=SelfSimilarityDeficit2020(**params['blockage'])
+    )
+
+def calculate_rmse(all_obs, sim_res, flow_map, ws):
+    pred = (sim_res.WS - flow_map.isel(h=0)) / ws
+    return float(np.sqrt(((all_obs - pred) ** 2).mean(['x', 'y'])).mean('time'))
+
+# Example usage
+dat = load_data('./DTU10MW.nc', D)
+wfm = instantiate_wfm(site, turbine, best_params, MODEL, DOWNWIND)
+```
+
+### Conclusion
+
+Your approach is on the right track, and with some refactoring and modularization, you can make the code more maintainable and easier to understand. Consider also adding comments and documentation to clarify the purpose of each section and function. This will help both you and others who might work with the code in the future.

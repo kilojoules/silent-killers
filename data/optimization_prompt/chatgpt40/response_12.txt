@@ -1,0 +1,63 @@
+The error message you're encountering indicates that there was a problem opening an HDF5 file (`worker_file`) with `h5py`. Specifically, the error "file signature not found" suggests that the file is either not a valid HDF5 file or is corrupted.
+
+To ensure that this error is detected reliably and stops the process cleanly, you can modify your script to include error handling around the file opening operation. Here's a general approach on how to do this:
+
+### Step 1: Add Error Handling
+
+Wrap the file opening operation in a `try-except` block to catch the `OSError` and handle it gracefully:
+
+```python
+import h5py
+import logging
+import sys
+
+def main():
+    worker_file = 'path_to_worker_file.h5'
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Perform operations with the file
+            pass
+    except OSError as e:
+        logging.error(f"Failed to open the worker file {worker_file}: {e}")
+        sys.exit(1)  # Exit the program with an error code
+
+if __name__ == "__main__":
+    main()
+```
+
+### Step 2: Logging
+
+Make sure to log the error message with sufficient detail to understand what went wrong. This can be done using Python's `logging` module.
+
+### Step 3: Validate Files Before Processing
+
+If possible, validate your HDF5 files before attempting to open them. This can help you identify potential issues early on. Here’s an example of how you might validate an HDF5 file:
+
+```python
+def is_valid_hdf5_file(file_path):
+    try:
+        with h5py.File(file_path, 'r'):
+            return True
+    except OSError:
+        return False
+
+def main():
+    worker_file = 'path_to_worker_file.h5'
+    if not is_valid_hdf5_file(worker_file):
+        logging.error(f"The file {worker_file} is not a valid HDF5 file or is inaccessible.")
+        sys.exit(1)
+    
+    # Proceed with your existing logic if the file is valid
+```
+
+### Step 4: Implement a Recovery Strategy
+
+If you have other files that can help recover missing data, implement a strategy to handle such cases. This might involve:
+
+- Checking if alternative data sources are available.
+- Attempting to reconstruct the data from other available files.
+- Logging an appropriate message and continuing with other operations if recovery is possible.
+
+### Conclusion
+
+By incorporating these modifications into your script, you can ensure that any issues with worker files are detected early and handled gracefully, preventing the script from continuing with potentially invalid data and providing clear information about any errors encountered.

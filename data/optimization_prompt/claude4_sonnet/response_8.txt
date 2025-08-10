@@ -1,0 +1,231 @@
+## Diagnosis
+
+The issue is that one or more worker HDF5 files are corrupted or incomplete. The error "file signature not found" indicates that the HDF5 file header is missing or corrupted, which can happen when:
+
+1. A worker process crashes while writing
+2. The file system runs out of space
+3. The process is killed mid-write
+4. Network issues (if using networked storage)
+
+The script completed 2999/3000 optimizations but failed when trying to read one of the worker files during the joining phase.
+
+## Solution
+
+Here's how to modify the script to detect and handle corrupted files reliably:
+
+```python
+import h5py
+import os
+import logging
+from pathlib import Path
+
+def validate_worker_file(worker_file):
+    """
+    Validate that a worker HDF5 file is readable and contains expected data.
+    Returns (is_valid, error_message, recoverable_data)
+    """
+    if not os.path.exists(worker_file):
+        return False, f"File does not exist: {worker_file}", None
+    
+    if os.path.getsize(worker_file) == 0:
+        return False, f"File is empty: {worker_file}", None
+    
+    try:
+        with h5py.File(worker_file, 'r') as h5_file:
+            # Check if file has the expected structure
+            if 'farm_layouts' not in h5_file:
+                return False, f"Missing 'farm_layouts' group in {worker_file}", None
+            
+            # Count how many layouts are actually in the file
+            farm_layouts = h5_file['farm_layouts']
+            layout_count = len([key for key in farm_layouts.keys() if key.startswith('layout_')])
+            
+            return True, None, layout_count
+            
+    except (OSError, IOError, KeyError) as e:
+        return False, f"Cannot read HDF5 file {worker_file}: {str(e)}", None
+
+def get_recoverable_data_from_worker_files(worker_files, expected_total):
+    """
+    Analyze worker files to determine what data can be recovered.
+    """
+    valid_files = []
+    corrupted_files = []
+    total_recovered = 0
+    
+    for worker_file in worker_files:
+        is_valid, error_msg, layout_count = validate_worker_file(worker_file)
+        
+        if is_valid:
+            valid_files.append((worker_file, layout_count))
+            total_recovered += layout_count
+            logging.info(f"✓ Valid worker file: {worker_file} ({layout_count} layouts)")
+        else:
+            corrupted_files.append((worker_file, error_msg))
+            logging.error(f"✗ Corrupted worker file: {error_msg}")
+    
+    logging.info(f"Recovery summary: {total_recovered}/{expected_total} layouts recoverable from {len(valid_files)}/{len(worker_files)} worker files")
+    
+    return valid_files, corrupted_files, total_recovered
+
+def join_worker_files_with_validation(worker_files, output_file, expected_total):
+    """
+    Modified joining function that validates files before processing.
+    """
+    # First, validate all worker files
+    valid_files, corrupted_files, total_recovered = get_recoverable_data_from_worker_files(
+        worker_files, expected_total
+    )
+    
+    if corrupted_files:
+        logging.warning(f"Found {len(corrupted_files)} corrupted worker files:")
+        for worker_file, error_msg in corrupted_files:
+            logging.warning(f"  - {error_msg}")
+    
+    if not valid_files:
+        raise RuntimeError("No valid worker files found - cannot proceed with joining")
+    
+    # Proceed with joining only valid files
+    logging.info(f"Proceeding to join {len(valid_files)} valid worker files...")
+    
+    with h5py.File(output_file, 'w') as h5_out:
+        farm_layouts_out = h5_out.create_group('farm_layouts')
+        layout_counter = 0
+        
+        for worker_file, expected_count in valid_files:
+            try:
+                with h5py.File(worker_file, 'r') as h5_in:
+                    farm_layouts_in = h5_in['farm_layouts']
+                    
+                    actual_count = 0
+                    for layout_key in farm_layouts_in.keys():
+                        if layout_key.startswith('layout_'):
+                            # Copy the entire layout group
+                            h5_in.copy(f'farm_layouts/{layout_key}', 
+                                     farm_layouts_out, 
+                                     name=f'layout_{layout_counter}')
+                            layout_counter += 1
+                            actual_count += 1
+                    
+                    if actual_count != expected_count:
+                        logging.warning(f"Expected {expected_count} layouts in {worker_file}, but found {actual_count}")
+                    
+                    logging.info(f"Successfully copied {actual_count} layouts from {worker_file}")
+                    
+            except Exception as e:
+                logging.error(f"Failed to process {worker_file}: {str(e)}")
+                # Continue with other files rather than failing completely
+                continue
+    
+    logging.info(f"Joining complete: {layout_counter} total layouts written to {output_file}")
+    return layout_counter, corrupted_files
+
+# Modified main function
+def main():
+    # ... existing setup code ...
+    
+    try:
+        # ... multiprocessing code ...
+        
+        # Wait for all processes to complete
+        for process in processes:
+            process.join()
+        
+        # Validate worker files before attempting to join
+        logging.info("Validating worker files...")
+        worker_files = [f"{output_file_base}_worker_{i}.h5" for i in range(num_workers)]
+        
+        # Check for corrupted files early
+        valid_files, corrupted_files, total_recovered = get_recoverable_data_from_worker_files(
+            worker_files, len(optimization_tasks)
+        )
+        
+        if corrupted_files:
+            logging.error(f"Detected {len(corrupted_files)} corrupted worker files!")
+            
+            # Decide whether to proceed or abort
+            recovery_percentage = (total_recovered / len(optimization_tasks)) * 100
+            
+            if recovery_percentage < 95:  # Adjust threshold as needed
+                logging.error(f"Only {recovery_percentage:.1f}% of data is recoverable. Aborting.")
+                
+                # Clean up corrupted files
+                for worker_file, _ in corrupted_files:
+                    if os.path.exists(worker_file):
+                        os.remove(worker_file)
+                        logging.info(f"Removed corrupted file: {worker_file}")
+                
+                # List missing work for rerun
+                missing_work = len(optimization_tasks) - total_recovered
+                logging.error(f"You need to rerun the script to complete {missing_work} missing optimizations")
+                return False
+            else:
+                logging.warning(f"Proceeding with {recovery_percentage:.1f}% data recovery")
+        
+        # Join the valid worker files
+        logging.info("Joining worker files...")
+        final_count, corrupted_files = join_worker_files_with_validation(
+            worker_files, output_file, len(optimization_tasks)
+        )
+        
+        # Clean up worker files (only the valid ones that were successfully processed)
+        for worker_file in worker_files:
+            if os.path.exists(worker_file) and validate_worker_file(worker_file)[0]:
+                os.remove(worker_file)
+        
+        logging.info(f"Successfully completed optimization with {final_count} layouts")
+        
+        if corrupted_files:
+            logging.warning("Some data was lost due to corrupted worker files. Consider rerunning with different parameters.")
+        
+        return True
+        
+    except Exception as e:
+        logging.error(f"Fatal error: {str(e)}")
+        return False
+
+if __name__ == "__main__":
+    success = main()
+    if not success:
+        exit(1)
+```
+
+## Recovery Strategy
+
+For your current situation, you can create a recovery script:
+
+```python
+def recover_current_run():
+    """Recovery script for the current failed run"""
+    worker_files = [f"your_output_base_worker_{i}.h5" for i in range(num_workers)]
+    
+    valid_files, corrupted_files, total_recovered = get_recoverable_data_from_worker_files(
+        worker_files, 3000  # your expected total
+    )
+    
+    print(f"Recovery analysis:")
+    print(f"  Valid files: {len(valid_files)}")
+    print(f"  Corrupted files: {len(corrupted_files)}")
+    print(f"  Recoverable layouts: {total_recovered}/3000")
+    
+    if total_recovered > 0:
+        # Join the recoverable data
+        final_count, _ = join_worker_files_with_validation(
+            [f[0] for f in valid_files], 
+            "recovered_layouts.h5", 
+            3000
+        )
+        print(f"Recovered {final_count} layouts to 'recovered_layouts.h5'")
+    
+    return total_recovered
+
+# Run recovery
+recovered_count = recover_current_run()
+```
+
+This approach will:
+1. **Detect corrupted files early** before attempting to read them
+2. **Recover as much data as possible** from valid worker files  
+3. **Provide clear reporting** on what was lost
+4. **Allow you to resume** from where you left off
+5. **Clean up properly** without losing valid data

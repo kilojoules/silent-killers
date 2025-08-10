@@ -1,0 +1,52 @@
+The error message you're encountering indicates that there was an attempt to open an HDF5 file using the `h5py` library, but the file could not be opened because it doesn't contain a valid HDF5 file signature. This typically means that the file is either corrupted, empty, or not an HDF5 file at all.
+
+To handle this scenario more robustly, you can modify your script to include error handling that checks for the validity of the file before attempting to open it. Here's a way you can modify the script to ensure that such errors are detected reliably, and the process stops cleanly if any worker file is invalid:
+
+1. **Check File Existence and Size:** Before trying to open the file, check if the file exists and whether its size is greater than zero.
+
+2. **Try-Except Block:** Use a try-except block around the code that opens the file to catch any `OSError`.
+
+3. **Logging and Cleanup:** Log a meaningful error message and perform any necessary cleanup or alerting.
+
+Here is an example of how you can implement these steps:
+
+```python
+import os
+import h5py
+import logging
+
+def main():
+    worker_file = "path_to_your_worker_file.h5"
+
+    # Check if file exists and is not empty
+    if not os.path.exists(worker_file) or os.path.getsize(worker_file) == 0:
+        logging.error(f"Worker file {worker_file} is missing or empty.")
+        # You may want to raise an exception or return here to stop the process
+        raise FileNotFoundError(f"Worker file {worker_file} is missing or empty.")
+
+    try:
+        # Attempt to open the HDF5 file
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Your processing code here
+            pass
+    except OSError as e:
+        logging.error(f"Failed to open worker file {worker_file}: {e}")
+        # Handle the error (e.g., notify user, clean up resources, exit the program)
+        raise
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    main()
+```
+
+### Key Points
+
+- **Existence and Size Check:** This helps catch issues where a file might be missing or zero-length, which would not be a valid HDF5 file.
+
+- **Try-Except Block:** This allows you to catch `OSError` exceptions specifically related to file opening issues, and handle them gracefully.
+
+- **Logging:** Provides clear feedback on what went wrong and why, which is invaluable for debugging.
+
+- **Raise or Exit:** Depending on your application's structure, you may choose to raise an exception, log an error, or even terminate the process if an invalid file is detected.
+
+By implementing these changes, you can ensure that your script handles invalid worker files more gracefully and provides clear feedback on errors encountered during processing.

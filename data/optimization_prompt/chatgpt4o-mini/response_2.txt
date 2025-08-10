@@ -1,0 +1,78 @@
+Based on the log output and the error traceback you provided, it seems that the script is encountering an issue when trying to open a HDF5 file (`worker_file`) that is either corrupted or does not exist. The specific error message is:
+
+```
+OSError: Unable to synchronously open file (file signature not found)
+```
+
+This indicates that the file cannot be read properly, which might be due to various reasons such as the file being empty, corrupted, or not being in the expected format.
+
+### Steps to Diagnose and Modify the Script
+
+1. **Check File Validity Before Opening**: Before attempting to open the `worker_file`, the script should include a check to ensure that the file exists and is a valid HDF5 file. You can use the `os.path.exists()` function to check for existence and potentially use a try-except block to catch errors when attempting to open the file.
+
+    ```python
+    import os
+    import h5py
+
+    def is_valid_hdf5_file(file_path):
+        try:
+            with h5py.File(file_path, 'r') as f:
+                return True
+        except (OSError, IOError):
+            return False
+
+    # Example usage in your main function
+    if not is_valid_hdf5_file(worker_file):
+        print(f"Error: {worker_file} is not a valid HDF5 file.")
+        # Handle the error here (e.g., logging, skipping, or stopping the process)
+        raise Exception(f"Invalid worker file: {worker_file}")
+    ```
+
+2. **Graceful Error Handling**: When the script detects an invalid file, it should stop further processing in a controlled manner. This can be done using a custom exception or a simple error handling strategy.
+
+3. **Logging**: Enhance logging to capture the occurrence of invalid files. This way, you can review the logs to see which files were problematic.
+
+4. **Batch Processing**: If you're processing multiple worker files, consider implementing a loop that processes each file individually. This way, if one file is invalid, it won't affect the processing of others.
+
+5. **File Recovery**: If you have backups or alternative files that might help recover missing data, implement logic to check for alternate files when a primary file fails. You can use a list of backup files or a naming convention to look for potential replacements.
+
+### Example Modification
+
+Here’s an example of how you might incorporate these suggestions into your script:
+
+```python
+import os
+import h5py
+import logging
+
+def is_valid_hdf5_file(file_path):
+    try:
+        with h5py.File(file_path, 'r') as f:
+            return True
+    except (OSError, IOError):
+        return False
+
+def process_worker_file(worker_file):
+    if not is_valid_hdf5_file(worker_file):
+        logging.error(f"Invalid worker file: {worker_file}")
+        raise Exception(f"Invalid worker file: {worker_file}")
+    # Continue processing the valid file
+    with h5py.File(worker_file, 'r') as h5_in:
+        # Your processing logic here
+
+def main():
+    worker_files = [...]  # List of worker files to process
+    for worker_file in worker_files:
+        try:
+            process_worker_file(worker_file)
+        except Exception as e:
+            logging.critical(f"Processing failed for {worker_file}: {e}")
+            break  # Stop processing on error
+
+if __name__ == "__main__":
+    main()
+```
+
+### Conclusion
+
+By adding checks for file validity, improving error handling, and logging, you can enhance the robustness of your script and ensure that it stops processing cleanly when encountering an invalid worker file. This approach will help you avoid cascading errors and make it easier to diagnose issues in the future.

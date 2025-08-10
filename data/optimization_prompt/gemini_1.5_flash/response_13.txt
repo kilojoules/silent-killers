@@ -1,0 +1,89 @@
+The error message "OSError: Unable to synchronously open file (file signature not found)" indicates that the HDF5 file specified by `worker_file` is corrupted or not a valid HDF5 file.  The script likely tried to open a file that either wasn't created correctly, was incompletely written, or was damaged.  The fact it happened near the end of a long process suggests a partial write or interruption during file creation.
+
+The problem isn't necessarily in the *joining* operation (though that's where the error manifested), but in the creation or handling of the individual `worker_file`s *before* the join.
+
+Here's how to modify the script to detect and handle this reliably:
+
+**1. Robust File Handling:**
+
+Instead of directly using `h5py.File(worker_file, 'r')`, wrap the file opening in a `try-except` block to catch the `OSError`.  This allows you to handle the error gracefully instead of crashing the entire process.
+
+```python
+import h5py
+import os
+
+def process_worker_file(worker_file):
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Your existing code to process the HDF5 file
+            # ...
+            pass  # Replace with your data extraction logic
+    except OSError as e:
+        print(f"ERROR: Could not open or read worker file '{worker_file}': {e}")
+        # Optionally: Log the error to a file for later analysis
+        return None # Or raise the exception if you want to stop the whole process immediately
+    except Exception as e: # Catch other potential exceptions during file processing
+        print(f"ERROR: An error occurred while processing '{worker_file}': {e}")
+        return None
+    return # Return data from the file
+
+# ... rest of your main function ...
+
+for worker_file in worker_files:
+    results = process_worker_file(worker_file)
+    if results is None:
+        print("Skipping this worker file due to error.  Consider retrying.")
+        continue # Skip to the next file if an error occurred
+
+# ... continue with the rest of your processing  ...
+```
+
+**2. Check File Existence and Size:**
+
+Before attempting to open the file, add checks to ensure the file exists and has a non-zero size.  An empty or missing file is a strong indicator of a problem.
+
+```python
+import os
+
+def process_worker_file(worker_file):
+    if not os.path.exists(worker_file):
+        print(f"ERROR: Worker file '{worker_file}' does not exist.")
+        return None
+    if os.path.getsize(worker_file) == 0:
+        print(f"ERROR: Worker file '{worker_file}' is empty.")
+        return None
+    # ... (rest of your try-except block from above) ...
+```
+
+**3.  Improve Error Logging:**
+
+Enhance your logging to include more details when an error occurs. This will help in debugging:
+
+```python
+import logging
+
+# Configure logging
+logging.basicConfig(filename='precompute_log.txt', level=logging.ERROR, 
+                    format='%(asctime)s - %(levelname)s - %(message)s')
+
+# ... in your process_worker_file function ...
+except OSError as e:
+    logging.error(f"Could not open or read worker file '{worker_file}': {e}")
+    # ...
+except Exception as e:
+    logging.exception(f"An error occurred while processing '{worker_file}': {e}")
+    # ...
+```
+
+**4. Investigate the Root Cause (Important!):**
+
+The error is a symptom; find the cause.  The most likely scenarios are:
+
+* **Interrupted Write:** The script creating the HDF5 files might be crashing or being killed before the files are completely written. Check for resource limits (memory, disk space). Use a more robust method for writing data to the HDF5 files (e.g. flushing buffers more frequently). Consider using atomic file operations if your system supports them.
+
+* **Hardware Issues:**  Disk errors can cause file corruption.  Run disk checks (`fsck` on Linux, `chkdsk` on Windows) to rule out bad sectors.
+
+* **Software Bugs:**  There might be a bug in the code that generates the HDF5 files. Carefully review that part of your script.
+
+
+By implementing these changes, you'll create a more robust and reliable script that gracefully handles invalid worker files and provides better diagnostics to help you identify the root cause of the problem. Remember to adapt the error handling to your specific needs – you might want to retry opening a file a few times before giving up, or you might want to stop the entire process immediately upon encountering an error.

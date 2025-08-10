@@ -1,0 +1,91 @@
+Certainly! Below is a Python script that demonstrates how to propagate realistic measurement uncertainties through the PyWake framework, calculate the Sobol sensitivity of the effective wind speed (WS_eff), and save flow field images at different time steps. This script assumes you have a basic understanding of Python and that you have PyWake installed along with the necessary libraries.
+
+Please ensure you have the required libraries installed:
+```bash
+pip install pywake sobol_seq matplotlib numpy
+```
+
+Here's a sample script:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake import WindFarm
+from pywake.utils import SobolSensitivity
+from pywake.examples import wind_farm
+from sobol_seq import i4_sobol
+import os
+
+# Set the random seed for reproducibility
+np.random.seed(42)
+
+# Define measurement uncertainties for wind speed and direction
+uncertainty_ws = 0.5  # Example: ±0.5 m/s
+uncertainty_wd = 5.0  # Example: ±5 degrees
+
+# Define the number of samples for Sobol analysis
+n_samples = 1000
+
+# Wind farm configuration
+wind_farm = wind_farm()
+
+# Create output directory for images
+output_dir = "flow_field_images"
+os.makedirs(output_dir, exist_ok=True)
+
+# Generate Sobol samples for wind speed and direction
+sobol_samples = np.array(i4_sobol(n_samples, 2))  # 2 dimensions: wind speed and direction
+ws_samples = 7 + uncertainty_ws * (sobol_samples[:, 0] * 2 - 1)  # Adjusting based on uncertainty
+wd_samples = 180 + uncertainty_wd * (sobol_samples[:, 1] * 2 - 1)  # Adjusting based on uncertainty
+
+# Initialize an array to hold WS_eff values
+ws_eff_array = []
+
+# Calculate the flow field and effective wind speed for each sample
+for i in range(n_samples):
+    # Set wind speed and direction
+    wind_farm.set_wind_speed(ws_samples[i])
+    wind_farm.set_wind_direction(wd_samples[i])
+
+    # Calculate the flow field
+    flow_field = wind_farm.get_flow_field()
+    ws_eff = flow_field.WS_eff
+
+    # Store the effective wind speed
+    ws_eff_array.append(ws_eff)
+
+# Convert to a NumPy array for analysis
+ws_eff_array = np.array(ws_eff_array)
+
+# Calculate Sobol sensitivity
+sensitivity = SobolSensitivity(ws_eff_array, n_samples)
+
+# Plot and save the flow field images at different times
+x = np.linspace(0, 1000, 100)  # x-coordinates in meters
+y = np.linspace(0, 1000, 100)  # y-coordinates in meters
+X, Y = np.meshgrid(x, y)
+
+for t in range(10):  # Assuming we want to visualize at 10 different time steps
+    plt.figure(figsize=(10, 6))
+    plt.contourf(X, Y, ws_eff_array[t].reshape(X.shape), levels=50, cmap='viridis')
+    plt.colorbar(label='WS_eff (m/s)')
+    plt.title(f'Flow Field at Time Step {t + 1}')
+    plt.xlabel('X Position (m)')
+    plt.ylabel('Y Position (m)')
+    plt.savefig(os.path.join(output_dir, f'flow_field_t{t + 1}.png'))
+    plt.close()
+
+print(f"Flow field images saved to {output_dir}")
+```
+
+### Explanation of the Script:
+1. **Measurement Uncertainties**: You define the uncertainties for wind speed and direction.
+2. **Sobol Sampling**: The script generates Sobol samples for the input parameters (wind speed and direction) considering their uncertainties.
+3. **Flow Field Calculation**: It calculates the effective wind speed (`WS_eff`) for each sample.
+4. **Sensitivity Analysis**: The Sobol sensitivity is calculated to understand how sensitive the effective wind speed is to the uncertainties in wind input.
+5. **Visualization**: Finally, it visualizes the flow field at different time steps and saves the images to a specified directory.
+
+### Note:
+- Ensure you modify the wind farm setup and parameters according to your specific application and data.
+- The script assumes a simplified model for visualization; in practice, you may need to handle the flow field data more thoroughly.
+- Adjust the number of time steps and the parameters as needed for your analysis.

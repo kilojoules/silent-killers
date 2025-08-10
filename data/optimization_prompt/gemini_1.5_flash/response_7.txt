@@ -1,0 +1,99 @@
+The error message "OSError: Unable to synchronously open file (file signature not found)" indicates that the HDF5 file specified by `worker_file` is corrupt or not a valid HDF5 file.  The script likely failed to properly handle a problem during the creation or writing of one of the worker files. This happened during the processing of the 3000th optimization (out of 3000),  suggesting that the issue occurred during the last iteration of a loop.  Since you were aiming for 50 seeds and only 2999 optimizations completed successfully, it's highly probable that a problem arose during the creation of the HDF5 file for the 3000th optimization, possibly related to a worker process.
+
+Here's how to modify the script to detect and handle invalid worker files reliably:
+
+**1.  Robust File Handling and Error Checking:**
+
+The core problem is the lack of error handling when opening the HDF5 files.  Wrap the file opening in a `try-except` block to catch `OSError` and other potential exceptions.
+
+```python
+import h5py
+import os
+
+def process_worker_file(worker_file):
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Your existing code to process the HDF5 file here
+            # ...
+    except OSError as e:
+        print(f"Error opening or reading worker file '{worker_file}': {e}")
+        # Handle the error appropriately.  Options include:
+        #   a) Log the error and continue (if skipping is acceptable)
+        #   b) Raise the exception to stop the entire process
+        #   c) Attempt to recover (if possible, e.g., retrying or using a backup)
+        return False # Indicate failure
+    except Exception as e: # Catch other potential exceptions during file processing
+        print(f"An unexpected error occurred while processing '{worker_file}': {e}")
+        return False
+    return True # Indicate success
+
+# ... in your main loop ...
+success = process_worker_file(worker_file)
+if not success:
+    print(f"Processing failed for {worker_file}. Exiting.")
+    # Optionally: Clean up partially created files here
+    exit(1) # Exit with a non-zero code to indicate failure
+```
+
+**2.  Check File Existence and Size Before Opening:**
+
+Before attempting to open the file, verify that it exists and has a non-zero size. This helps catch cases where a file was created but not properly written to.
+
+```python
+if not os.path.exists(worker_file) or os.path.getsize(worker_file) == 0:
+    print(f"Worker file '{worker_file}' does not exist or is empty.")
+    # Handle the error as above
+    return False
+```
+
+**3.  Multiprocessing Considerations:**
+
+If you're using multiprocessing, ensure that each worker process properly handles exceptions and doesn't leave files in an inconsistent state.  A well-structured `try-except` block in your worker function is crucial.  Consider using a `Queue` or other inter-process communication mechanism to report errors from workers back to the main process.
+
+**4.  Logging:**
+
+Implement comprehensive logging to record all file operations, including successes and failures.  This will provide valuable information for debugging.  The `logging` module in Python is excellent for this.
+
+**5.  Recovery (Optional):**
+
+If you want to attempt recovery, you could add logic to check if a backup or partial file exists and use that instead of failing completely.  This is more complex but can be valuable in some situations.
+
+
+**Example incorporating these improvements:**
+
+```python
+import h5py
+import os
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+def process_worker_file(worker_file):
+    try:
+        if not os.path.exists(worker_file) or os.path.getsize(worker_file) == 0:
+            logging.error(f"Worker file '{worker_file}' does not exist or is empty.")
+            return False
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Your existing code to process the HDF5 file here
+            logging.info(f"Successfully processed {worker_file}")
+            # ...
+            return True
+    except OSError as e:
+        logging.error(f"Error opening or reading worker file '{worker_file}': {e}")
+        return False
+    except Exception as e:
+        logging.exception(f"An unexpected error occurred while processing '{worker_file}': {e}")
+        return False
+
+
+# ... in your main loop ...
+for i in range(50): # Process all 50 seeds
+    worker_file = f"worker_file_{i}.h5" # Adjust your filename pattern
+    success = process_worker_file(worker_file)
+    if not success:
+        logging.critical(f"Processing failed for {worker_file}. Exiting.")
+        exit(1)
+```
+
+Remember to adapt the file paths and processing logic to match your specific code.  By implementing these changes, you'll make your script much more robust and less prone to silent failures.  The log files will be invaluable in pinpointing the exact cause of future issues.  Investigate why the HDF5 file was not created correctly in the first place – it is likely a bug in the file writing section of your original code.

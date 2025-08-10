@@ -1,0 +1,89 @@
+This script uses PyWake and Sobol sensitivity analysis to propagate uncertainties in inflow wind speed and visualize their effect on the flow field.  Because generating images for every Sobol sample would be computationally expensive, we'll focus on visualizing the sensitivity itself rather than every individual sample's flow field.  This visualization will show how sensitive the effective wind speed (WS_eff) at each point in the wind farm is to variations in the inflow wind speed.
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake import BastankhahGaussian, NOJ
+from pywake.wind_farm_models import WindFarmModel
+from SALib.analyze import sobol
+from SALib.sample import saltelli
+
+# --- Input parameters ---
+n_wt = 10  # Number of wind turbines
+x_coords = np.linspace(0, 1000, n_wt)  # x-coordinates of wind turbines
+y_coords = np.zeros(n_wt)  # y-coordinates of wind turbines (aligned along x-axis)
+
+# Wind turbine parameters (replace with your actual values)
+# For simplicity, we use identical turbines
+D = 100 # Diameter
+ct = 0.8 # Thrust coefficient
+
+
+# --- Uncertainty definition ---
+problem = {
+    'num_vars': 1,  # Only wind speed uncertainty considered here
+    'names': ['WS_inflow'],
+    'bounds': [[7, 13]]  # Range of inflow wind speed (m/s)
+}
+
+
+# --- Sobol sampling ---
+param_values = saltelli.sample(problem, 1000, calc_second_order=True) # Adjust samples as needed
+
+
+# --- PyWake setup ---
+site = NOJ(1, 0)
+windTurbines = BastankhahGaussian(
+    D, ct,  # Using simplified parameters. Replace with more detailed wind turbine model
+    name='SimpleTurbine'
+)
+
+wfm = WindFarmModel(site, windTurbines)
+
+
+# --- Wind farm simulation and Sobol analysis ---
+
+WS_eff_results = np.zeros((param_values.shape[0], len(x_coords), len(y_coords)))
+
+for i, params in enumerate(param_values):
+    WS_inflow = params[0]
+    results = wfm(x_coords, y_coords, WS_inflow)
+    WS_eff_results[i] = results.WS_eff
+
+# Perform Sobol analysis
+Si = sobol.analyze(problem, WS_eff_results.reshape(param_values.shape[0], -1), print_to_console=True)
+
+
+# --- Visualization of sensitivity ---
+
+# Reshape sensitivity indices to match x,y grid
+first_order_sensitivity = Si['S1'].reshape((len(y_coords), len(x_coords)))
+
+# Plot the first-order sensitivity (replace with other indices as needed)
+plt.figure(figsize=(10, 5))
+plt.imshow(first_order_sensitivity, origin='lower', extent=[x_coords.min(), x_coords.max(), y_coords.min(), y_coords.max()], cmap='viridis')
+plt.colorbar(label='First-order sensitivity index of WS_eff to WS_inflow')
+plt.xlabel('x-coordinate (m)')
+plt.ylabel('y-coordinate (m)')
+plt.title('Sobol Sensitivity of WS_eff to Inflow Wind Speed')
+plt.show()
+
+
+# --- (Optional) Visualization of a single sample flow field---
+
+# Example: Visualize the flow field for the first sample (replace with any sample index)
+sample_index = 0
+results_sample = wfm(x_coords, y_coords, param_values[sample_index, 0])
+
+# Add code here to visualize the flow field using results_sample.WS_eff, for example a contour plot
+plt.figure()
+plt.contourf(x_coords, y_coords, results_sample.WS_eff)
+plt.colorbar(label="WS_eff (m/s)")
+plt.xlabel("x (m)")
+plt.ylabel("y (m)")
+plt.title(f"Flow Field for WS_inflow = {param_values[sample_index, 0]:.2f} m/s")
+plt.show()
+
+```
+
+Remember to install the necessary libraries: `pip install pywake matplotlib SALib`.  You'll need to replace placeholder turbine parameters with your specific wind turbine data for accurate results.  The optional section shows how to visualize a single flow field; adapting this to show multiple fields would require careful consideration of visualization techniques to avoid overwhelming the user. The Sobol indices provide a more efficient way to understand the impact of uncertainty across the entire parameter space.  Consider exploring different sensitivity indices (e.g., total sensitivity) provided by the `Si` dictionary.

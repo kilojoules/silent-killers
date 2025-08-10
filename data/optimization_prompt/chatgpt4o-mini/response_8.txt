@@ -1,0 +1,65 @@
+The error message you're encountering indicates that the script is trying to open an HDF5 file, but it cannot find the proper file signature, suggesting that the file may be corrupted or invalid. This typically leads to an `OSError`, as shown in the traceback. The output also indicates that the script is able to process many worker files successfully before it encounters this issue.
+
+To ensure that the error is detected reliably and that the process stops cleanly when encountering an invalid worker file, you can implement the following modifications to your script:
+
+1. **File Validation**: Before attempting to open each worker file, validate that the file exists and check if it is a valid HDF5 file. You can use a try-except block specifically for this purpose.
+
+2. **Graceful Shutdown**: If an invalid file is detected, log an appropriate error message and exit the processing loop cleanly.
+
+3. **Error Handling**: Handle exceptions when opening files and provide informative logging.
+
+Here's a modified example of how you might implement these changes in your script:
+
+```python
+import h5py
+import os
+import logging
+
+def is_hdf5_file(file_path):
+    try:
+        with h5py.File(file_path, 'r'):
+            return True
+    except (OSError, IOError) as e:
+        logging.error(f"File '{file_path}' is not a valid HDF5 file: {e}")
+        return False
+
+def process_worker_file(worker_file):
+    if not os.path.exists(worker_file):
+        logging.error(f"Worker file '{worker_file}' does not exist.")
+        return False
+    if not is_hdf5_file(worker_file):
+        return False
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Process the HDF5 file
+            pass  # Your processing logic here
+    except Exception as e:
+        logging.error(f"Error processing '{worker_file}': {e}")
+        return False
+    return True
+
+def main():
+    worker_files = [...]  # List of worker files to process
+    for worker_file in worker_files:
+        if not process_worker_file(worker_file):
+            logging.error(f"Stopping processing due to invalid worker file: {worker_file}")
+            break  # Stop processing if an invalid file is found
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    main()
+```
+
+### Key Points in the Code:
+
+1. **Function `is_hdf5_file`**: This function attempts to open the file and checks if it is a valid HDF5 file. If it fails, it logs an error.
+
+2. **Function `process_worker_file`**: This checks for file existence, validates the HDF5 file, and processes it. It logs errors accordingly.
+
+3. **Main Loop**: It iterates through the list of worker files, calling `process_worker_file`. If any file is invalid, it logs an error and breaks the loop to stop processing further.
+
+### Additional Suggestions:
+
+- Ensure that your logging setup captures errors and can be reviewed later.
+- Consider running tests on your worker files to validate their integrity before the main processing begins to prevent runtime errors.
+- If data recovery from corrupted files is an option, you might want to implement a separate function to attempt a recovery or log the corrupted files for later inspection.

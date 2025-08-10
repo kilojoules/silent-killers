@@ -1,0 +1,191 @@
+## Diagnosis
+
+The error indicates that one of the worker HDF5 files is corrupted or incomplete - the "file signature not found" error means the HDF5 file header is missing or damaged. This likely happened because:
+
+1. A worker process crashed or was killed while writing to its HDF5 file
+2. The file was partially written but not properly closed
+3. The main process tried to read the corrupted file during the joining phase
+
+The script completed 2999/3000 optimizations, so one worker file is problematic.
+
+## Solution
+
+Here's how to modify the script to detect and handle corrupted worker files:
+
+```python
+import h5py
+import os
+import logging
+from pathlib import Path
+
+def validate_worker_file(worker_file):
+    """
+    Validate that a worker HDF5 file is readable and contains expected data.
+    Returns (is_valid, error_message, completed_count)
+    """
+    if not os.path.exists(worker_file):
+        return False, f"File does not exist: {worker_file}", 0
+    
+    if os.path.getsize(worker_file) == 0:
+        return False, f"File is empty: {worker_file}", 0
+    
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Check if the file has the expected structure
+            if 'farm_layouts' not in h5_in:
+                return False, f"Missing 'farm_layouts' group in {worker_file}", 0
+            
+            # Count completed optimizations
+            farm_layouts = h5_in['farm_layouts']
+            completed_count = len(farm_layouts.keys())
+            
+            # Optionally validate a few entries
+            for key in list(farm_layouts.keys())[:min(3, completed_count)]:
+                if 'layout' not in farm_layouts[key] or 'objective' not in farm_layouts[key]:
+                    return False, f"Invalid entry structure in {worker_file}: {key}", completed_count
+            
+            return True, "", completed_count
+            
+    except OSError as e:
+        return False, f"Cannot read HDF5 file {worker_file}: {str(e)}", 0
+    except Exception as e:
+        return False, f"Unexpected error reading {worker_file}: {str(e)}", 0
+
+def join_worker_files_safely(output_file, worker_files, expected_total):
+    """
+    Safely join worker files with validation and error handling.
+    """
+    logging.info("Validating worker files before joining...")
+    
+    valid_files = []
+    total_completed = 0
+    corrupted_files = []
+    
+    # Validate all worker files first
+    for worker_file in worker_files:
+        is_valid, error_msg, completed_count = validate_worker_file(worker_file)
+        
+        if is_valid:
+            valid_files.append(worker_file)
+            total_completed += completed_count
+            logging.info(f"✓ {worker_file}: {completed_count} optimizations")
+        else:
+            corrupted_files.append((worker_file, error_msg))
+            logging.error(f"✗ {worker_file}: {error_msg}")
+    
+    # Report validation results
+    logging.info(f"Validation complete: {len(valid_files)} valid files, {len(corrupted_files)} corrupted files")
+    logging.info(f"Total completed optimizations: {total_completed}/{expected_total}")
+    
+    if corrupted_files:
+        logging.error("Corrupted worker files detected:")
+        for worker_file, error_msg in corrupted_files:
+            logging.error(f"  - {worker_file}: {error_msg}")
+        
+        # Decide whether to continue or abort
+        if len(valid_files) == 0:
+            raise RuntimeError("No valid worker files found. Cannot proceed with joining.")
+        
+        missing_count = expected_total - total_completed
+        if missing_count > 0:
+            logging.warning(f"Missing {missing_count} optimizations due to corrupted files")
+            
+            # You can choose to either:
+            # 1. Abort completely
+            # raise RuntimeError(f"Cannot proceed: {missing_count} optimizations missing")
+            
+            # 2. Continue with available data (current approach)
+            response = input(f"Continue with {total_completed}/{expected_total} optimizations? (y/n): ")
+            if response.lower() != 'y':
+                raise RuntimeError("User chose to abort due to missing data")
+    
+    # Proceed with joining valid files
+    logging.info(f"Joining {len(valid_files)} valid worker files...")
+    
+    with h5py.File(output_file, 'w') as h5_out:
+        farm_layouts_out = h5_out.create_group('farm_layouts')
+        
+        joined_count = 0
+        for worker_file in valid_files:
+            try:
+                with h5py.File(worker_file, 'r') as h5_in:
+                    farm_layouts_in = h5_in['farm_layouts']
+                    
+                    for key in farm_layouts_in.keys():
+                        # Copy the entire group
+                        h5_in.copy(farm_layouts_in[key], farm_layouts_out, name=key)
+                        joined_count += 1
+                        
+                logging.info(f"Successfully joined {worker_file}")
+                        
+            except Exception as e:
+                logging.error(f"Error joining {worker_file}: {str(e)}")
+                # Continue with other files rather than failing completely
+                continue
+    
+    logging.info(f"Joining complete: {joined_count} optimizations written to {output_file}")
+    return joined_count, corrupted_files
+
+# Modify your main function's joining section:
+def main():
+    # ... existing code ...
+    
+    try:
+        # Replace the existing joining code with:
+        joined_count, corrupted_files = join_worker_files_safely(
+            output_file, worker_files, len(optimization_tasks)
+        )
+        
+        if corrupted_files:
+            logging.warning("Some worker files were corrupted and excluded from final output")
+            # Save information about corrupted files for recovery
+            corrupted_info_file = output_file.replace('.h5', '_corrupted_files.txt')
+            with open(corrupted_info_file, 'w') as f:
+                f.write("Corrupted worker files:\n")
+                for worker_file, error_msg in corrupted_files:
+                    f.write(f"{worker_file}: {error_msg}\n")
+            logging.info(f"Corrupted file information saved to {corrupted_info_file}")
+        
+    except Exception as e:
+        logging.error(f"Failed to join worker files: {str(e)}")
+        logging.info("Worker files preserved for manual inspection/recovery")
+        raise
+    
+    # Only clean up worker files if joining was successful
+    if not corrupted_files or input("Delete worker files? (y/n): ").lower() == 'y':
+        for worker_file in worker_files:
+            try:
+                os.remove(worker_file)
+            except:
+                pass  # Ignore cleanup errors
+```
+
+## Recovery Options
+
+Since you have the worker files, you can:
+
+1. **Identify the corrupted file:**
+```bash
+# Check file sizes
+ls -la worker_*.h5
+
+# Try to open each file with h5dump or h5ls
+for file in worker_*.h5; do
+    echo "Checking $file..."
+    h5ls "$file" || echo "CORRUPTED: $file"
+done
+```
+
+2. **Recover manually:**
+```python
+# Run just the validation part
+worker_files = glob.glob("worker_*.h5")
+for worker_file in worker_files:
+    is_valid, error_msg, count = validate_worker_file(worker_file)
+    print(f"{worker_file}: {'OK' if is_valid else 'CORRUPTED'} ({count} optimizations)")
+```
+
+3. **Re-run only the missing optimizations:**
+Extract the task information from corrupted files and re-run just those specific seeds.
+
+The modified script will now detect corrupted files early, give you options to proceed with partial data, and preserve worker files for recovery attempts.

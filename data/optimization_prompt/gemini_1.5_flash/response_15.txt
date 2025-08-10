@@ -1,0 +1,76 @@
+The error message "OSError: Unable to synchronously open file (file signature not found)" indicates that the HDF5 file specified by `worker_file` is corrupted or not a valid HDF5 file.  The script likely tried to process a file that was incompletely written, or a file that wasn't created correctly in the first place.  Since this happened after many successful optimizations, a likely culprit is a problem during the writing or creation of the worker files, or perhaps a file system issue.
+
+Here's how to modify the script to handle this more robustly:
+
+```python
+import h5py
+import os
+import sys
+from tqdm import tqdm # Assuming you're using tqdm for the progress bar
+
+# ... other imports and functions ...
+
+def process_worker_file(worker_file):
+    """Processes a single worker file, handling potential errors."""
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Your existing code to process the HDF5 file goes here
+            # ...
+            pass # Replace with your actual processing logic
+
+    except OSError as e:
+        print(f"ERROR: Failed to open or process worker file {worker_file}: {e}", file=sys.stderr)
+        # Optionally log more details, such as the traceback
+        import traceback
+        traceback.print_exc(file=sys.stderr)
+        return False # Indicate failure
+    except Exception as e:  # Catch other potential errors during processing
+        print(f"ERROR: An error occurred while processing {worker_file}: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return False
+    return True # Indicate success
+
+
+def main():
+    # ... your existing code ...
+
+    successful_optimizations = 0
+    total_optimizations = len(worker_files) # Assuming worker_files is a list of file paths
+
+    for worker_file in tqdm(worker_files, desc="Optimizing layouts"):  # Use tqdm for progress
+        if process_worker_file(worker_file):
+            successful_optimizations += 1
+        else:
+            print(f"Stopping processing due to error in worker file: {worker_file}", file=sys.stderr)
+            # Consider adding more sophisticated error handling here, like sending an email alert
+            break # Stop processing if a worker file fails
+
+    print(f"Completed {successful_optimizations}/{total_optimizations} optimizations successfully")
+
+if __name__ == "__main__":
+    main()
+```
+
+**Key improvements:**
+
+* **`process_worker_file` function:** This encapsulates the file processing logic, making error handling cleaner.  It returns `True` for success and `False` for failure.
+* **Error Handling:**  The `try...except` block catches `OSError` (for file opening problems) and a generic `Exception` (for other potential errors during processing). It prints informative error messages to `sys.stderr` (standard error stream), which is crucial for distinguishing errors from normal output.  Adding a traceback helps in debugging.
+* **Stopping on Error:** The `main` function now checks the return value of `process_worker_file`. If a file fails to process, it prints an error message and uses `break` to immediately stop the entire process. This prevents further processing of potentially corrupted files and avoids cascading errors.
+* **Progress Bar:** The `tqdm` progress bar continues to show progress, even with errors.
+* **Clearer Output:**  The final output explicitly states the number of successful and total optimizations.
+
+
+**Debugging and Recovery:**
+
+1. **Investigate Corrupted Files:** Examine the `worker_file` that caused the error.  Try opening it with an HDF5 viewer (like HDFView) to see if you can determine the point of corruption. If the file is partially written, you might be able to recover *some* data, but it might be incomplete or inconsistent.
+
+2. **Check File System:** Ensure that there are no file system errors (e.g., disk space issues, permissions problems) that could have interrupted the writing of worker files.  Run filesystem checks on the relevant storage.
+
+3. **Review File Writing:**  Carefully examine the code that *writes* the HDF5 files. Make sure it's properly handling potential exceptions (like `IOError` or `OSError`) during the write process.  Ensure that the file is properly closed using `h5_out.close()`  (or using a `with` statement).  Flush the buffers frequently (`h5_out.flush()`) during writing, especially for large files, to minimize data loss if a crash occurs.
+
+4. **Run in a Debugger:** Use a debugger (like pdb or ipdb) to step through the code line by line when writing the HDF5 files. This will help you pinpoint exactly where the problem occurs.
+
+5. **Consider Atomic Operations:** For extra reliability, investigate using atomic file operations (e.g., writing to a temporary file and then renaming it) to prevent partial file writes if the process is interrupted.  HDF5 itself doesn't guarantee atomicity, so this would need to be handled at the operating system level.
+
+
+By implementing these changes, your script will be much more robust and less prone to crashing due to invalid worker files.  The improved error reporting will make it significantly easier to diagnose the underlying cause of the problem.

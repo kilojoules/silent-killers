@@ -1,0 +1,229 @@
+## Diagnosis
+
+The error indicates that one of the worker HDF5 files is corrupted or incomplete. The error "file signature not found" typically means:
+
+1. **Incomplete file write**: A worker process was interrupted while writing, leaving a truncated/invalid HDF5 file
+2. **Concurrent access**: Multiple processes tried to write to the same file simultaneously
+3. **System interruption**: Process killed, disk full, or system crash during file creation
+
+The script completed 2999/3000 optimizations but failed when trying to read one of the worker files during the merging phase.
+
+## Solution: Robust Error Detection and Recovery
+
+Here's how to modify your script to detect and handle corrupted files:
+
+```python
+import h5py
+import os
+import logging
+from pathlib import Path
+
+def validate_worker_file(worker_file):
+    """Validate that a worker HDF5 file is readable and contains expected data."""
+    try:
+        if not os.path.exists(worker_file):
+            return False, f"File does not exist: {worker_file}"
+        
+        if os.path.getsize(worker_file) == 0:
+            return False, f"File is empty: {worker_file}"
+        
+        # Try to open and read basic structure
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Check if expected groups/datasets exist
+            if 'optimized_layouts' not in h5_in:
+                return False, f"Missing 'optimized_layouts' group in {worker_file}"
+            
+            # Verify we can read the data
+            layouts_group = h5_in['optimized_layouts']
+            if len(layouts_group.keys()) == 0:
+                return False, f"Empty layouts group in {worker_file}"
+        
+        return True, "Valid"
+    
+    except (OSError, IOError, KeyError) as e:
+        return False, f"File validation failed for {worker_file}: {str(e)}"
+    except Exception as e:
+        return False, f"Unexpected error validating {worker_file}: {str(e)}"
+
+def get_missing_tasks_from_corrupted_files(worker_files, total_tasks):
+    """Identify which tasks are missing due to corrupted files."""
+    missing_tasks = []
+    valid_tasks = set()
+    
+    for worker_file in worker_files:
+        is_valid, error_msg = validate_worker_file(worker_file)
+        if not is_valid:
+            logging.error(error_msg)
+            # Extract worker ID from filename to identify missing tasks
+            # Adjust this based on your naming convention
+            continue
+        
+        # Read valid file to see which tasks it contains
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                layouts_group = h5_in['optimized_layouts']
+                for key in layouts_group.keys():
+                    # Extract task info from key - adjust based on your key format
+                    # e.g., if key is "farm_9_type_4_seed_24"
+                    valid_tasks.add(key)
+        except Exception as e:
+            logging.error(f"Error reading valid file {worker_file}: {e}")
+    
+    # Determine missing tasks (you'll need to adapt this to your task structure)
+    all_expected_tasks = set()  # Generate based on your farm/type/seed combinations
+    missing_tasks = all_expected_tasks - valid_tasks
+    
+    return missing_tasks
+
+def safe_merge_worker_files(output_file, worker_files, cleanup=True):
+    """Safely merge worker files with validation and error recovery."""
+    
+    # First, validate all worker files
+    valid_files = []
+    corrupted_files = []
+    
+    for worker_file in worker_files:
+        is_valid, error_msg = validate_worker_file(worker_file)
+        if is_valid:
+            valid_files.append(worker_file)
+            logging.info(f"Validated worker file: {worker_file}")
+        else:
+            corrupted_files.append(worker_file)
+            logging.error(f"Corrupted worker file: {error_msg}")
+    
+    if corrupted_files:
+        logging.error(f"Found {len(corrupted_files)} corrupted files:")
+        for cf in corrupted_files:
+            logging.error(f"  - {cf}")
+        
+        # Option 1: Fail fast
+        raise RuntimeError(f"Cannot proceed with {len(corrupted_files)} corrupted worker files. "
+                         f"Valid files: {len(valid_files)}, Corrupted: {len(corrupted_files)}")
+    
+    if not valid_files:
+        raise RuntimeError("No valid worker files found!")
+    
+    logging.info(f"Merging {len(valid_files)} valid worker files...")
+    
+    # Proceed with merging only valid files
+    try:
+        with h5py.File(output_file, 'w') as h5_out:
+            layouts_group = h5_out.create_group('optimized_layouts')
+            
+            for i, worker_file in enumerate(valid_files):
+                logging.info(f"Merging file {i+1}/{len(valid_files)}: {worker_file}")
+                
+                try:
+                    with h5py.File(worker_file, 'r') as h5_in:
+                        worker_layouts = h5_in['optimized_layouts']
+                        
+                        for layout_key in worker_layouts.keys():
+                            if layout_key in layouts_group:
+                                logging.warning(f"Duplicate key found: {layout_key}, skipping...")
+                                continue
+                            
+                            # Copy the dataset
+                            h5_in.copy(f'optimized_layouts/{layout_key}', 
+                                     layouts_group, name=layout_key)
+                
+                except Exception as e:
+                    logging.error(f"Error processing {worker_file}: {e}")
+                    raise
+        
+        logging.info(f"Successfully merged {len(valid_files)} files into {output_file}")
+        
+        # Cleanup valid worker files if requested
+        if cleanup:
+            for worker_file in valid_files:
+                try:
+                    os.remove(worker_file)
+                    logging.info(f"Cleaned up: {worker_file}")
+                except Exception as e:
+                    logging.warning(f"Could not remove {worker_file}: {e}")
+    
+    except Exception as e:
+        logging.error(f"Error during merge operation: {e}")
+        # Clean up partial output file
+        if os.path.exists(output_file):
+            try:
+                os.remove(output_file)
+                logging.info(f"Cleaned up partial output file: {output_file}")
+            except:
+                pass
+        raise
+
+def main():
+    # Your existing code...
+    
+    try:
+        # Replace your existing merge logic with:
+        safe_merge_worker_files(output_file, worker_files, cleanup=True)
+        
+    except RuntimeError as e:
+        logging.error(f"Merge failed: {e}")
+        
+        # Option: Attempt recovery by rerunning missing tasks
+        logging.info("Attempting to identify and rerun missing tasks...")
+        missing_tasks = get_missing_tasks_from_corrupted_files(worker_files, total_expected_tasks)
+        
+        if missing_tasks:
+            logging.info(f"Found {len(missing_tasks)} missing tasks. Consider rerunning these:")
+            for task in missing_tasks:
+                logging.info(f"  - {task}")
+            
+            # Optionally, automatically rerun missing tasks
+            # rerun_missing_tasks(missing_tasks)
+        
+        raise  # Re-raise to stop execution
+```
+
+## Additional Preventive Measures
+
+1. **Atomic writes**: Modify worker processes to write to temporary files first:
+
+```python
+def save_worker_results_atomically(results, worker_file):
+    """Save results to a temporary file, then rename to final location."""
+    temp_file = f"{worker_file}.tmp"
+    
+    try:
+        with h5py.File(temp_file, 'w') as h5_out:
+            # Write your data...
+            layouts_group = h5_out.create_group('optimized_layouts')
+            # ... save results ...
+        
+        # Atomic rename (on most filesystems)
+        os.rename(temp_file, worker_file)
+        logging.info(f"Successfully saved worker file: {worker_file}")
+        
+    except Exception as e:
+        # Clean up temp file on error
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
+        raise
+```
+
+2. **Progress checkpointing**: Save progress periodically to allow resume:
+
+```python
+def save_checkpoint(completed_tasks, checkpoint_file):
+    """Save list of completed tasks for recovery."""
+    with open(checkpoint_file, 'w') as f:
+        for task in completed_tasks:
+            f.write(f"{task}\n")
+
+def load_checkpoint(checkpoint_file):
+    """Load previously completed tasks."""
+    if not os.path.exists(checkpoint_file):
+        return set()
+    
+    with open(checkpoint_file, 'r') as f:
+        return {line.strip() for line in f}
+```
+
+This approach will:
+- Detect corrupted files before attempting to merge
+- Provide clear error messages about what went wrong
+- Allow you to identify and rerun only the missing tasks
+- Prevent partial/corrupted output files
+- Enable recovery without losing all progress

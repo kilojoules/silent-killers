@@ -1,0 +1,203 @@
+Looking at this error, the issue is clear: **one of the worker HDF5 files is corrupted or incomplete** (likely due to a worker process crash or interruption during writing). The error "file signature not found" means the HDF5 file header is missing or corrupted.
+
+## Diagnosis
+
+The problem occurs during the file merging phase when the script tries to read worker files. The multiprocessing completed (2999/3000 tasks), but at least one worker file is invalid.
+
+## Solution
+
+Here's how to modify the script to detect and handle corrupted files reliably:
+
+```python
+import h5py
+import os
+import logging
+from pathlib import Path
+
+def validate_worker_file(worker_file):
+    """
+    Validate that a worker HDF5 file is readable and contains expected data.
+    Returns (is_valid, error_message, task_count)
+    """
+    try:
+        if not os.path.exists(worker_file):
+            return False, f"File does not exist: {worker_file}", 0
+        
+        if os.path.getsize(worker_file) == 0:
+            return False, f"File is empty: {worker_file}", 0
+        
+        # Try to open and read basic structure
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Check if file has the expected structure
+            if 'farm_id' not in h5_in or 'farm_type' not in h5_in:
+                return False, f"File missing required datasets: {worker_file}", 0
+            
+            # Count number of tasks in this file
+            task_count = len(h5_in['farm_id'])
+            
+            # Validate that all required datasets have the same length
+            required_datasets = ['farm_id', 'farm_type', 'seed', 'layout', 'aep']
+            lengths = []
+            for dataset_name in required_datasets:
+                if dataset_name not in h5_in:
+                    return False, f"Missing dataset '{dataset_name}' in {worker_file}", task_count
+                lengths.append(len(h5_in[dataset_name]))
+            
+            if len(set(lengths)) > 1:
+                return False, f"Inconsistent dataset lengths in {worker_file}: {lengths}", task_count
+            
+            return True, "", task_count
+            
+    except OSError as e:
+        return False, f"HDF5 error reading {worker_file}: {str(e)}", 0
+    except Exception as e:
+        return False, f"Unexpected error reading {worker_file}: {str(e)}", 0
+
+def main():
+    # ... your existing setup code ...
+    
+    # After multiprocessing completes, validate all worker files
+    logging.info("Validating worker files...")
+    
+    valid_files = []
+    corrupted_files = []
+    total_completed_tasks = 0
+    
+    for worker_file in worker_files:
+        is_valid, error_msg, task_count = validate_worker_file(worker_file)
+        
+        if is_valid:
+            valid_files.append(worker_file)
+            total_completed_tasks += task_count
+            logging.info(f"✓ Valid: {worker_file} ({task_count} tasks)")
+        else:
+            corrupted_files.append((worker_file, error_msg))
+            logging.error(f"✗ Corrupted: {error_msg}")
+    
+    # Report validation results
+    logging.info(f"Validation complete: {len(valid_files)} valid, {len(corrupted_files)} corrupted")
+    logging.info(f"Total completed tasks: {total_completed_tasks}/{len(tasks)}")
+    
+    # Decide how to handle corrupted files
+    if corrupted_files:
+        logging.error(f"Found {len(corrupted_files)} corrupted worker files:")
+        for worker_file, error_msg in corrupted_files:
+            logging.error(f"  - {error_msg}")
+        
+        # Option 1: Stop and exit with error
+        if len(corrupted_files) > MAX_ALLOWED_FAILURES:  # Define your threshold
+            logging.error("Too many corrupted files. Stopping.")
+            # Clean up valid files if desired
+            return False
+        
+        # Option 2: Continue with valid files only
+        logging.warning(f"Continuing with {len(valid_files)} valid files...")
+    
+    # Only merge valid files
+    if not valid_files:
+        logging.error("No valid worker files found. Cannot proceed.")
+        return False
+    
+    # Merge only the valid files
+    logging.info(f"Merging {len(valid_files)} valid worker files...")
+    
+    try:
+        with h5py.File(output_file, 'w') as h5_out:
+            first_file = True
+            total_merged = 0
+            
+            for worker_file in valid_files:
+                try:
+                    with h5py.File(worker_file, 'r') as h5_in:
+                        n_tasks = len(h5_in['farm_id'])
+                        
+                        if first_file:
+                            # Create datasets with appropriate initial size
+                            estimated_total = total_completed_tasks
+                            for dataset_name in h5_in.keys():
+                                dataset = h5_in[dataset_name]
+                                h5_out.create_dataset(
+                                    dataset_name, 
+                                    shape=(estimated_total,) + dataset.shape[1:],
+                                    dtype=dataset.dtype,
+                                    maxshape=(None,) + dataset.shape[1:]
+                                )
+                            first_file = False
+                        
+                        # Copy data from this worker file
+                        for dataset_name in h5_in.keys():
+                            start_idx = total_merged
+                            end_idx = total_merged + n_tasks
+                            h5_out[dataset_name][start_idx:end_idx] = h5_in[dataset_name][:]
+                        
+                        total_merged += n_tasks
+                        logging.info(f"Merged {worker_file}: {n_tasks} tasks")
+                        
+                except Exception as e:
+                    logging.error(f"Error merging {worker_file}: {e}")
+                    continue
+            
+            logging.info(f"Successfully merged {total_merged} tasks to {output_file}")
+            
+    except Exception as e:
+        logging.error(f"Error during merge operation: {e}")
+        return False
+    
+    # Clean up worker files
+    for worker_file in valid_files:
+        try:
+            os.remove(worker_file)
+        except Exception as e:
+            logging.warning(f"Could not remove {worker_file}: {e}")
+    
+    # Report missing tasks if any
+    missing_tasks = len(tasks) - total_completed_tasks
+    if missing_tasks > 0:
+        logging.warning(f"Missing {missing_tasks} tasks due to corrupted files")
+        # Optionally: rerun missing tasks
+        
+    return True
+
+# Add this configuration at the top
+MAX_ALLOWED_FAILURES = 2  # Adjust based on your tolerance
+```
+
+## Recovery Options
+
+For your current situation, you can also create a recovery script:
+
+```python
+def recover_and_identify_missing_tasks():
+    """Identify which tasks are missing and optionally rerun them"""
+    
+    # Load expected tasks
+    expected_tasks = set()  # Your original task list
+    
+    # Load completed tasks from valid files
+    completed_tasks = set()
+    
+    for worker_file in worker_files:
+        is_valid, _, _ = validate_worker_file(worker_file)
+        if is_valid:
+            with h5py.File(worker_file, 'r') as h5_in:
+                for i in range(len(h5_in['farm_id'])):
+                    task_id = (h5_in['farm_id'][i], h5_in['farm_type'][i], h5_in['seed'][i])
+                    completed_tasks.add(task_id)
+    
+    missing_tasks = expected_tasks - completed_tasks
+    
+    logging.info(f"Completed: {len(completed_tasks)}")
+    logging.info(f"Missing: {len(missing_tasks)}")
+    
+    return missing_tasks
+```
+
+## Key Improvements
+
+1. **Pre-merge validation**: Check all files before attempting to merge
+2. **Graceful error handling**: Continue with valid files instead of crashing
+3. **Detailed error reporting**: Know exactly which files and why they failed
+4. **Recovery capability**: Identify missing tasks for potential re-running
+5. **Configurable failure tolerance**: Set thresholds for acceptable failure rates
+
+This approach will prevent the crash and give you much better visibility into what went wrong and what data you can still recover.

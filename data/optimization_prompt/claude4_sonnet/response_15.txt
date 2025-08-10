@@ -1,0 +1,198 @@
+## Diagnosis
+
+The error indicates that one or more HDF5 worker files are corrupted or incomplete. The "file signature not found" error occurs when h5py tries to open a file that either:
+
+1. Is empty/truncated (0 bytes or incomplete write)
+2. Has corrupted HDF5 headers
+3. Was being written to when the process was interrupted
+
+The issue likely occurred during multiprocessing where a worker process was terminated or crashed while writing to its HDF5 file, leaving it in an invalid state.
+
+## Solution
+
+Here's how to modify your script to detect and handle invalid worker files reliably:
+
+```python
+import h5py
+import os
+import logging
+from pathlib import Path
+
+def validate_worker_file(worker_file):
+    """
+    Validate that a worker HDF5 file is readable and contains expected data.
+    Returns (is_valid, error_message, file_size)
+    """
+    try:
+        # Check if file exists and has non-zero size
+        if not os.path.exists(worker_file):
+            return False, "File does not exist", 0
+        
+        file_size = os.path.getsize(worker_file)
+        if file_size == 0:
+            return False, "File is empty (0 bytes)", file_size
+        
+        # Try to open and read basic structure
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Check if file has expected structure
+            # Adjust these checks based on your expected HDF5 structure
+            if len(h5_in.keys()) == 0:
+                return False, "File has no datasets", file_size
+            
+            # Optional: Check specific datasets exist
+            # expected_keys = ['layouts', 'scores', 'metadata']  # adjust as needed
+            # missing_keys = [key for key in expected_keys if key not in h5_in.keys()]
+            # if missing_keys:
+            #     return False, f"Missing expected datasets: {missing_keys}", file_size
+        
+        return True, "Valid", file_size
+    
+    except OSError as e:
+        if "file signature not found" in str(e):
+            return False, "Corrupted HDF5 file (invalid signature)", file_size
+        else:
+            return False, f"HDF5 error: {str(e)}", file_size
+    except Exception as e:
+        return False, f"Unexpected error: {str(e)}", file_size
+
+def cleanup_invalid_files(worker_files, logger):
+    """Remove invalid worker files and return list of valid ones."""
+    valid_files = []
+    invalid_files = []
+    
+    for worker_file in worker_files:
+        is_valid, error_msg, file_size = validate_worker_file(worker_file)
+        
+        if is_valid:
+            valid_files.append(worker_file)
+            logger.info(f"✓ Valid worker file: {worker_file} ({file_size:,} bytes)")
+        else:
+            invalid_files.append((worker_file, error_msg, file_size))
+            logger.error(f"✗ Invalid worker file: {worker_file} - {error_msg} ({file_size:,} bytes)")
+            
+            # Remove the corrupted file
+            try:
+                os.remove(worker_file)
+                logger.info(f"Removed corrupted file: {worker_file}")
+            except Exception as e:
+                logger.error(f"Failed to remove corrupted file {worker_file}: {e}")
+    
+    return valid_files, invalid_files
+
+def main():
+    logger = logging.getLogger('main')
+    
+    # ... your existing code ...
+    
+    # Before the joining phase, validate all worker files
+    logger.info("Validating worker files before joining...")
+    
+    # Get list of worker files (adjust pattern as needed)
+    worker_files = [f for f in os.listdir('.') if f.startswith('worker_') and f.endswith('.h5')]
+    
+    if not worker_files:
+        logger.error("No worker files found!")
+        return
+    
+    # Validate files
+    valid_files, invalid_files = cleanup_invalid_files(worker_files, logger)
+    
+    # Report validation results
+    logger.info(f"Validation complete: {len(valid_files)} valid, {len(invalid_files)} invalid files")
+    
+    if invalid_files:
+        logger.warning("Invalid files found:")
+        for file_path, error, size in invalid_files:
+            logger.warning(f"  - {file_path}: {error} ({size:,} bytes)")
+        
+        # Decide whether to continue or abort
+        if len(valid_files) == 0:
+            logger.error("No valid worker files found! Aborting.")
+            return
+        elif len(invalid_files) > len(valid_files) * 0.1:  # More than 10% invalid
+            logger.error(f"Too many invalid files ({len(invalid_files)}/{len(worker_files)}). Aborting.")
+            return
+        else:
+            logger.warning(f"Continuing with {len(valid_files)} valid files...")
+    
+    # Process only valid files
+    successful_count = 0
+    total_expected = len(valid_files)
+    
+    for worker_file in valid_files:
+        try:
+            logger.info(f"Processing worker file: {worker_file}")
+            
+            with h5py.File(worker_file, 'r') as h5_in:
+                # Your existing file processing code here
+                # ...
+                successful_count += 1
+                
+        except Exception as e:
+            logger.error(f"Error processing {worker_file}: {e}")
+            # Optionally continue with other files or abort
+            continue
+        
+        finally:
+            # Clean up processed file
+            try:
+                os.remove(worker_file)
+                logger.info(f"Cleaned up processed file: {worker_file}")
+            except Exception as e:
+                logger.warning(f"Failed to clean up {worker_file}: {e}")
+    
+    logger.info(f"Completed {successful_count}/{total_expected} worker files successfully")
+    
+    if successful_count == 0:
+        logger.error("No files were processed successfully!")
+        return
+    elif successful_count < total_expected:
+        logger.warning(f"Only {successful_count}/{total_expected} files processed successfully")
+
+# Additional utility function for recovery
+def recover_partial_results(output_file, worker_pattern='worker_*.h5'):
+    """
+    Attempt to recover and merge any valid worker files found.
+    """
+    logger = logging.getLogger('recovery')
+    
+    worker_files = list(Path('.').glob(worker_pattern))
+    
+    if not worker_files:
+        logger.info("No worker files found for recovery")
+        return
+    
+    logger.info(f"Found {len(worker_files)} potential worker files for recovery")
+    
+    valid_files, invalid_files = cleanup_invalid_files(worker_files, logger)
+    
+    if not valid_files:
+        logger.error("No valid worker files found for recovery")
+        return
+    
+    logger.info(f"Recovering data from {len(valid_files)} valid worker files...")
+    
+    # Process valid files (implement your merging logic here)
+    # ...
+
+if __name__ == "__main__":
+    main()
+```
+
+## Key Improvements
+
+1. **Pre-validation**: Check all worker files before attempting to process them
+2. **Detailed error reporting**: Identify specific issues with each file
+3. **Automatic cleanup**: Remove corrupted files to prevent future issues
+4. **Graceful degradation**: Continue with valid files when possible
+5. **Recovery function**: Utility to salvage partial results
+
+## Additional Recommendations
+
+1. **Add file locking** during worker writes to prevent corruption
+2. **Implement atomic writes** (write to temp file, then rename)
+3. **Add periodic validation** during the multiprocessing phase
+4. **Save intermediate checkpoints** more frequently
+5. **Add resume capability** to restart from the last valid state
+
+This approach will help you recover your current results and prevent similar issues in future runs.

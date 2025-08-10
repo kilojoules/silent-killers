@@ -1,0 +1,93 @@
+To generate a script that propagates realistic measurement uncertainties through PyWake and saves a series of flow field images showing the sensitivity of the flow at different times, we'll need to follow these general steps:
+
+1. **Setup the Environment**: Ensure you have Python and necessary libraries installed, including PyWake and Sobol sensitivity analysis tools.
+
+2. **Define the Wind Farm and Simulation Parameters**: Set up the wind farm layout, wind conditions, and other relevant parameters.
+
+3. **Incorporate Measurement Uncertainties**: Introduce uncertainties into the inflow conditions (e.g., wind speed, wind direction).
+
+4. **Run Simulations**: Simulate the wind farm behavior under different conditions using PyWake.
+
+5. **Perform Sobol Sensitivity Analysis**: Analyze how uncertainties in the inflow conditions affect the effective wind speed (WS_eff) at different spatial locations (x, y).
+
+6. **Generate Flow Field Images**: Visualize the sensitivity results using flow field images.
+
+7. **Save the Results**: Save the generated images for further analysis.
+
+Below is a sample Python script outline that demonstrates these steps:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from py_wake import WindFarmModel
+from py_wake.examples.data.hornsrev1 import Hornsrev1Site, V80
+from py_wake.wind_turbines import WindTurbines
+from SALib.sample import saltelli
+from SALib.analyze import sobol
+
+# Define the wind farm site and turbines
+site = Hornsrev1Site()
+windTurbines = V80()
+
+# Define the wind farm model
+wf_model = WindFarmModel(site, windTurbines)
+
+# Define the problem for Sobol sensitivity analysis
+problem = {
+    'num_vars': 2,  # Example: wind speed and direction
+    'names': ['wind_speed', 'wind_direction'],
+    'bounds': [[5, 25], [0, 360]]  # Define realistic bounds
+}
+
+# Generate samples using Saltelli's method
+param_values = saltelli.sample(problem, 1000)
+
+# Placeholder for sensitivity results
+sensitivity_results = []
+
+# Run wind farm simulations with varying inflow conditions
+for params in param_values:
+    wind_speed, wind_direction = params
+
+    # Simulate the wind farm
+    sim_res = wf_model(x=[0], y=[0], ws=wind_speed, wd=wind_direction)
+    
+    # Extract WS_eff (effective wind speed)
+    ws_eff = sim_res.WS_eff.mean()
+
+    # Store results for sensitivity analysis
+    sensitivity_results.append(ws_eff)
+
+# Perform Sobol sensitivity analysis
+sensitivity_analysis = sobol.analyze(problem, np.array(sensitivity_results))
+
+# Visualize and save sensitivity results
+x_coords = np.linspace(0, 1000, 100)  # Example x-coordinates
+y_coords = np.linspace(0, 1000, 100)  # Example y-coordinates
+
+for i, (x, y) in enumerate(zip(x_coords, y_coords)):
+    plt.figure()
+    plt.title(f'Sobol Sensitivity at x={x}, y={y}')
+    plt.bar(problem['names'], sensitivity_analysis['S1'], color='blue', alpha=0.7)
+    plt.xlabel('Input Parameters')
+    plt.ylabel('First-order Sobol index')
+    plt.ylim(0, 1)
+    
+    # Save the figure
+    plt.savefig(f'sensitivity_x{x}_y{y}.png')
+    plt.close()
+
+print("Sensitivity analysis images saved.")
+```
+
+### Notes:
+
+- **PyWake Setup**: Ensure you have PyWake and other required libraries installed (`pip install py_wake`).
+  
+- **Parameters and Bounds**: Adjust the bounds and number of variables in the `problem` dictionary to match your specific measurement uncertainties.
+
+- **Coordinates**: The `x_coords` and `y_coords` variables are placeholders. Adjust them to the spatial resolution you require.
+
+- **Image Saving**: The script saves images using a basic naming convention. Modify the file paths and names as needed.
+
+This script is a starting point and might require adaptation to fit the specifics of your wind farm model and measurement uncertainties.

@@ -1,0 +1,228 @@
+Looking at this error, the issue is that one of the worker HDF5 files is corrupted or incomplete - the "file signature not found" error indicates the HDF5 file header is missing or damaged. This likely happened when a worker process was interrupted or crashed while writing.
+
+Here's how to diagnose and fix this:
+
+## Diagnosis
+
+The error occurs at line 448 when trying to read a worker file:
+```python
+with h5py.File(worker_file, 'r') as h5_in:
+```
+
+One of your worker files is corrupted. Let's identify which one:
+
+```python
+import h5py
+import glob
+import os
+
+def check_worker_files():
+    """Check all worker files for corruption"""
+    worker_files = glob.glob("worker_*.h5")
+    corrupted_files = []
+    valid_files = []
+    
+    for worker_file in worker_files:
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                # Try to read basic info
+                keys = list(h5_in.keys())
+                print(f"✓ {worker_file}: {len(keys)} entries")
+                valid_files.append(worker_file)
+        except Exception as e:
+            print(f"✗ {worker_file}: CORRUPTED - {e}")
+            corrupted_files.append(worker_file)
+            # Check file size
+            size = os.path.getsize(worker_file) if os.path.exists(worker_file) else 0
+            print(f"  File size: {size} bytes")
+    
+    return valid_files, corrupted_files
+
+valid_files, corrupted_files = check_worker_files()
+```
+
+## Modified Script with Error Detection
+
+Here's how to modify your main script to detect and handle corrupted files:
+
+```python
+import h5py
+import glob
+import os
+import logging
+
+def validate_worker_files(worker_files):
+    """Validate all worker files before processing"""
+    corrupted_files = []
+    valid_files = []
+    
+    for worker_file in worker_files:
+        try:
+            # Check if file exists and has reasonable size
+            if not os.path.exists(worker_file):
+                logging.error(f"Worker file not found: {worker_file}")
+                corrupted_files.append(worker_file)
+                continue
+                
+            file_size = os.path.getsize(worker_file)
+            if file_size < 1024:  # Less than 1KB is suspicious
+                logging.error(f"Worker file too small ({file_size} bytes): {worker_file}")
+                corrupted_files.append(worker_file)
+                continue
+            
+            # Try to open and read basic structure
+            with h5py.File(worker_file, 'r') as h5_in:
+                keys = list(h5_in.keys())
+                logging.info(f"Valid worker file: {worker_file} ({len(keys)} entries, {file_size} bytes)")
+                valid_files.append(worker_file)
+                
+        except Exception as e:
+            logging.error(f"Corrupted worker file {worker_file}: {e}")
+            corrupted_files.append(worker_file)
+    
+    return valid_files, corrupted_files
+
+def safe_merge_worker_files(output_file):
+    """Safely merge worker files with validation"""
+    worker_files = glob.glob("worker_*.h5")
+    
+    if not worker_files:
+        raise FileNotFoundError("No worker files found")
+    
+    # Validate all files first
+    logging.info(f"Validating {len(worker_files)} worker files...")
+    valid_files, corrupted_files = validate_worker_files(worker_files)
+    
+    if corrupted_files:
+        logging.error(f"Found {len(corrupted_files)} corrupted files:")
+        for cf in corrupted_files:
+            logging.error(f"  - {cf}")
+        
+        # Decide how to handle corrupted files
+        if len(valid_files) == 0:
+            raise RuntimeError("All worker files are corrupted!")
+        
+        logging.warning(f"Proceeding with {len(valid_files)} valid files, ignoring {len(corrupted_files)} corrupted files")
+    
+    # Merge valid files
+    total_merged = 0
+    with h5py.File(output_file, 'w') as h5_out:
+        for i, worker_file in enumerate(valid_files):
+            logging.info(f"Processing valid file {i+1}/{len(valid_files)}: {worker_file}")
+            
+            try:
+                with h5py.File(worker_file, 'r') as h5_in:
+                    for key in h5_in.keys():
+                        if key in h5_out:
+                            logging.warning(f"Duplicate key {key} in {worker_file}, skipping")
+                            continue
+                        
+                        # Copy dataset
+                        h5_in.copy(key, h5_out)
+                        total_merged += 1
+                        
+            except Exception as e:
+                logging.error(f"Error processing {worker_file}: {e}")
+                # Continue with other files rather than failing completely
+                continue
+    
+    logging.info(f"Successfully merged {total_merged} datasets from {len(valid_files)} files")
+    return total_merged, len(corrupted_files)
+
+def main():
+    try:
+        # Your existing code here...
+        
+        # Replace the merge section with:
+        logging.info("Starting safe merge of worker files...")
+        merged_count, corrupted_count = safe_merge_worker_files("precomputed_farm_layouts.h5")
+        
+        if corrupted_count > 0:
+            logging.warning(f"Merge completed with {corrupted_count} corrupted files ignored")
+            logging.warning("Consider re-running the missing optimizations")
+        else:
+            logging.info("All worker files merged successfully")
+            
+        # Clean up valid worker files only
+        valid_files, _ = validate_worker_files(glob.glob("worker_*.h5"))
+        for worker_file in valid_files:
+            os.remove(worker_file)
+            
+    except Exception as e:
+        logging.error(f"Fatal error in main: {e}")
+        raise
+
+if __name__ == "__main__":
+    main()
+```
+
+## Recovery Strategy
+
+1. **Check which files are corrupted:**
+```bash
+ls -la worker_*.h5  # Check file sizes
+```
+
+2. **Identify missing data:** The corrupted files represent lost work. You'll need to:
+   - Determine which farm/type/seed combinations are missing
+   - Re-run just those specific optimizations
+
+3. **Create a recovery script:**
+```python
+def find_missing_combinations():
+    """Find which combinations are missing due to corrupted files"""
+    expected_combinations = set()
+    found_combinations = set()
+    
+    # Generate expected combinations
+    for farm_id in range(10):  # Adjust range
+        for farm_type in range(6):  # Adjust range  
+            for seed in range(50):  # Your target
+                expected_combinations.add((farm_id, farm_type, seed))
+    
+    # Check what we have in valid files
+    valid_files, _ = validate_worker_files(glob.glob("worker_*.h5"))
+    for worker_file in valid_files:
+        with h5py.File(worker_file, 'r') as h5_in:
+            for key in h5_in.keys():
+                # Parse key to extract farm_id, farm_type, seed
+                # Adjust parsing based on your key format
+                parts = key.split('_')
+                if len(parts) >= 3:
+                    try:
+                        farm_id = int(parts[1])
+                        farm_type = int(parts[2]) 
+                        seed = int(parts[3])
+                        found_combinations.add((farm_id, farm_type, seed))
+                    except ValueError:
+                        continue
+    
+    missing = expected_combinations - found_combinations
+    return missing
+```
+
+## Prevention for Future Runs
+
+Add this to your worker processes:
+```python
+def safe_write_result(worker_id, results):
+    """Safely write results with atomic operation"""
+    temp_file = f"worker_{worker_id}.h5.tmp"
+    final_file = f"worker_{worker_id}.h5"
+    
+    try:
+        with h5py.File(temp_file, 'w') as h5_out:
+            # Write all your data
+            for key, data in results.items():
+                h5_out.create_dataset(key, data=data)
+        
+        # Atomic move
+        os.rename(temp_file, final_file)
+        
+    except Exception as e:
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
+        raise e
+```
+
+Run the diagnostic script first to see exactly which files are corrupted, then you can decide whether to re-run just the missing work or restart from a checkpoint.

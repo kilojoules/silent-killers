@@ -1,0 +1,203 @@
+## Diagnosis
+
+The issue is that one or more worker HDF5 files are **corrupted or incomplete**. The error "file signature not found" indicates that the HDF5 file header is missing or damaged, likely because:
+
+1. A worker process crashed or was killed while writing
+2. The system ran out of disk space during writing
+3. A worker process was interrupted before properly closing the file
+4. File system issues corrupted the data
+
+The script completed 2999/3000 optimizations but failed when trying to read the worker files for merging.
+
+## Solution: Add Robust File Validation
+
+Here's how to modify your script to detect and handle invalid worker files:
+
+```python
+import h5py
+import os
+import logging
+from pathlib import Path
+
+def validate_worker_file(worker_file):
+    """
+    Validate that a worker HDF5 file is readable and contains expected data.
+    Returns (is_valid, error_message)
+    """
+    try:
+        if not os.path.exists(worker_file):
+            return False, f"File does not exist: {worker_file}"
+        
+        if os.path.getsize(worker_file) == 0:
+            return False, f"File is empty: {worker_file}"
+        
+        # Try to open and read basic structure
+        with h5py.File(worker_file, 'r') as h5_file:
+            # Check if file has expected structure
+            if len(h5_file.keys()) == 0:
+                return False, f"File contains no datasets: {worker_file}"
+            
+            # Optionally check for specific expected datasets/groups
+            # Add your specific validation logic here
+            
+        return True, "Valid"
+        
+    except OSError as e:
+        return False, f"Cannot open file {worker_file}: {str(e)}"
+    except Exception as e:
+        return False, f"Unexpected error reading {worker_file}: {str(e)}"
+
+def cleanup_invalid_files(worker_files):
+    """Remove invalid worker files and return list of valid ones."""
+    valid_files = []
+    invalid_files = []
+    
+    for worker_file in worker_files:
+        is_valid, error_msg = validate_worker_file(worker_file)
+        if is_valid:
+            valid_files.append(worker_file)
+            logging.info(f"✓ Valid worker file: {worker_file}")
+        else:
+            invalid_files.append(worker_file)
+            logging.error(f"✗ Invalid worker file: {error_msg}")
+            
+            # Remove the corrupted file
+            try:
+                os.remove(worker_file)
+                logging.info(f"Removed corrupted file: {worker_file}")
+            except Exception as e:
+                logging.error(f"Failed to remove {worker_file}: {e}")
+    
+    return valid_files, invalid_files
+
+def main():
+    # Your existing code...
+    
+    # After multiprocessing completes, validate all worker files
+    worker_files = [f"worker_{i}.h5" for i in range(num_workers)]  # Adjust pattern as needed
+    
+    logging.info("Validating worker files...")
+    valid_files, invalid_files = cleanup_invalid_files(worker_files)
+    
+    if invalid_files:
+        logging.error(f"Found {len(invalid_files)} corrupted worker files:")
+        for invalid_file in invalid_files:
+            logging.error(f"  - {invalid_file}")
+        
+        # Decide how to handle missing data
+        if len(valid_files) == 0:
+            logging.error("No valid worker files found. Cannot proceed with merge.")
+            return False
+        
+        # Calculate missing work
+        total_expected = 3000  # Your target
+        completed_work = sum(count_optimizations_in_file(f) for f in valid_files)
+        missing_work = total_expected - completed_work
+        
+        if missing_work > 0:
+            logging.warning(f"Missing {missing_work} optimizations due to corrupted files")
+            
+            # Option 1: Continue with partial data
+            user_input = input(f"Continue with {completed_work}/{total_expected} optimizations? (y/n): ")
+            if user_input.lower() != 'y':
+                logging.info("User chose to abort due to incomplete data")
+                return False
+            
+            # Option 2: Re-run missing work (implement this based on your needs)
+            # rerun_missing_optimizations(missing_work)
+    
+    # Proceed with merging only valid files
+    logging.info(f"Merging {len(valid_files)} valid worker files...")
+    
+    for worker_file in valid_files:  # Only process valid files
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                # Your existing merge logic...
+                pass
+        except Exception as e:
+            logging.error(f"Error processing {worker_file}: {e}")
+            continue
+    
+    # Clean up valid worker files after successful merge
+    for worker_file in valid_files:
+        try:
+            os.remove(worker_file)
+        except Exception as e:
+            logging.warning(f"Failed to clean up {worker_file}: {e}")
+
+def count_optimizations_in_file(filename):
+    """Count how many optimizations are stored in a worker file."""
+    try:
+        with h5py.File(filename, 'r') as h5_file:
+            # Adjust this based on your file structure
+            return len(h5_file.keys())  # or however you count completed work
+    except:
+        return 0
+
+# Additional: Add this to your worker process function
+def safe_worker_write(worker_file, data):
+    """Safely write worker data with atomic operations."""
+    temp_file = f"{worker_file}.tmp"
+    
+    try:
+        # Write to temporary file first
+        with h5py.File(temp_file, 'w') as h5_out:
+            # Write your data...
+            pass
+        
+        # Atomically rename temp file to final name
+        os.rename(temp_file, worker_file)
+        
+    except Exception as e:
+        # Clean up temp file on error
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
+        raise e
+```
+
+## Recovery Options
+
+Since you have the worker files, you can:
+
+1. **Identify the corrupted file(s)**:
+```bash
+# Check which files are corrupted
+for file in worker_*.h5; do
+    echo -n "$file: "
+    h5dump -n "$file" >/dev/null 2>&1 && echo "OK" || echo "CORRUPTED"
+done
+```
+
+2. **Recover partial data**:
+```python
+# Quick recovery script
+def recover_data():
+    valid_count = 0
+    for i in range(num_workers):
+        worker_file = f"worker_{i}.h5"
+        is_valid, _ = validate_worker_file(worker_file)
+        if is_valid:
+            valid_count += count_optimizations_in_file(worker_file)
+    
+    print(f"Recoverable optimizations: {valid_count}")
+    return valid_count
+```
+
+3. **Re-run only missing work**:
+```python
+def get_missing_seeds(target_seeds, completed_files):
+    """Determine which seeds still need to be processed."""
+    completed_seeds = set()
+    for file in completed_files:
+        # Extract completed seeds from valid files
+        # This depends on how you track seeds in your files
+        pass
+    
+    return set(target_seeds) - completed_seeds
+```
+
+The key improvements are:
+- **Validate before processing**: Check all files before attempting to merge
+- **Graceful degradation**: Continue with partial data if acceptable  
+- **Atomic writes**: Prevent corruption during writing
+- **Better error reporting**: Know exactly what failed and why

@@ -1,0 +1,51 @@
+The error message you're encountering indicates a problem with opening an HDF5 file using the `h5py` library. Specifically, the error "Unable to synchronously open file (file signature not found)" suggests that the file you're trying to open is either corrupted, not an HDF5 file, or perhaps the path to the file is incorrect.
+
+To address this issue, you can modify your script to include error handling that detects when a worker file is invalid and stops the process cleanly. Here's how you can do it:
+
+1. **Add Exception Handling:** Wrap the file opening operation in a `try-except` block to catch the `OSError` and handle it gracefully.
+
+2. **Log Errors:** Make sure you log any errors encountered so you can diagnose issues later.
+
+3. **Exit Cleanly:** If an error is detected, you can choose to stop the process or skip the problematic file, depending on your requirements.
+
+Here's an example of how you might implement this:
+
+```python
+import h5py
+import logging
+import sys
+
+def main():
+    # Setup logging
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger('main')
+
+    # Example worker files list (replace with your actual logic to get worker files)
+    worker_files = ['file1.h5', 'file2.h5', 'invalid_file.h5', 'file3.h5']
+
+    for worker_file in worker_files:
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                # Perform your operations on the opened file
+                logger.info(f"Successfully opened {worker_file}")
+        except OSError as e:
+            logger.error(f"Failed to open {worker_file}: {e}")
+            # Depending on your needs, decide whether to exit or continue
+            # sys.exit(1)  # Uncomment to stop the script on error
+            continue  # Skip the current file and continue with the next
+
+    logger.info("Completed processing of worker files.")
+
+if __name__ == '__main__':
+    main()
+```
+
+### Key Points:
+- **Error Handling:** The `try-except` block around the file opening operation ensures that any `OSError` is caught and handled.
+- **Logging:** Errors are logged using the `logging` module, which provides a record of what went wrong.
+- **Process Control:** By using `sys.exit(1)`, you can terminate the script if an error is encountered. Alternatively, using `continue` allows you to skip the problematic file and proceed with the rest.
+
+### Recovery of Missing Data:
+If the files that failed to open contain important data, you may need to inspect them manually to determine why they're invalid. If they are corrupted, you may need to regenerate them if possible.
+
+By incorporating these error handling practices, you can ensure your script handles invalid files more robustly, allowing for easier troubleshooting and potentially avoiding complete process failures.

@@ -1,0 +1,81 @@
+Creating a script to propagate measurement uncertainties through PyWake and generate sensitivity flow field images involves several steps. Below is a template script that accomplishes this task. The script will perform uncertainty propagation, compute Sobol sensitivity indices, and save flow field images showing sensitivity at different times. This example assumes you have a basic understanding of Python, PyWake, and sensitivity analysis.
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from py_wake import WindFarmModel
+from py_wake.examples.data.hornsrev1 import Hornsrev1Site, HornsrevV80
+from py_wake.wind_turbines import WindTurbines
+from py_wake.deficit_models import NOJ
+from py_wake.wind_farm_models import All2AllIterative
+from py_wake.sensitivity_analysis import SensitivityAnalysis
+from SALib.sample import saltelli
+from SALib.analyze import sobol
+
+# Configuration
+n_samples = 1000  # Number of samples for uncertainty propagation
+x_range = np.linspace(0, 2000, 100)  # Define your x-range for flow field
+y_range = np.linspace(0, 2000, 100)  # Define your y-range for flow field
+parameters = ['wind_speed', 'wind_direction']
+parameter_bounds = {'wind_speed': [8, 12], 'wind_direction': [250, 290]}
+
+# Initialize Wind Farm Model
+site = Hornsrev1Site()
+windTurbines = HornsrevV80()
+wake_deficit_model = NOJ()
+windFarmModel = All2AllIterative(site, windTurbines, wake_deficit_model)
+
+# Sensitivity Analysis Setup
+problem = {
+    'num_vars': len(parameters),
+    'names': parameters,
+    'bounds': [parameter_bounds[param] for param in parameters]
+}
+
+# Generate samples
+param_values = saltelli.sample(problem, n_samples)
+
+# Run simulation for each sample
+ws_eff_results = np.zeros((n_samples, len(x_range), len(y_range)))
+for i, params in enumerate(param_values):
+    wind_speed, wind_direction = params
+    flow_map = windFarmModel(wind_speed, wind_direction).flow_map(x_range, y_range)
+    ws_eff_results[i, :, :] = flow_map.WS_eff
+
+# Calculate Sobol sensitivity indices
+sensitivity_results = np.zeros((len(x_range), len(y_range), problem['num_vars']))
+
+for ix in range(len(x_range)):
+    for iy in range(len(y_range)):
+        Si = sobol.analyze(problem, ws_eff_results[:, ix, iy])
+        sensitivity_results[ix, iy, :] = Si['S1']
+
+# Plot and save sensitivity maps
+for i, param in enumerate(parameters):
+    plt.figure(figsize=(10, 8))
+    plt.title(f'Sobol Sensitivity of WS_eff to {param}')
+    plt.xlabel('x [m]')
+    plt.ylabel('y [m]')
+    plt.contourf(x_range, y_range, sensitivity_results[:, :, i], levels=20, cmap='RdYlBu')
+    plt.colorbar(label=f'Sobol Index for {param}')
+    plt.savefig(f'sobol_sensitivity_{param}.png')
+    plt.close()
+
+print("Sensitivity analysis and plotting complete.")
+```
+
+### Key Points:
+
+1. **Configuration**: Adjust `n_samples`, `x_range`, and `y_range` as needed for your simulation domain and resolution.
+
+2. **Wind Farm Model Setup**: Initialize the wind farm model using PyWake components. Adjust the site and turbine specifications as needed for your specific setup.
+
+3. **Sensitivity Analysis Setup**: Use the SALib library to set up and perform Sobol sensitivity analysis. You need to define the range of parameters over which to perform the sensitivity analysis.
+
+4. **Simulation**: Run the wind farm model for each parameter sample, storing results for the effective wind speed (`WS_eff`).
+
+5. **Sensitivity Calculation**: Compute Sobol sensitivity indices for each point in the domain.
+
+6. **Plotting**: Generate and save contour plots showing Sobol sensitivity indices for each parameter.
+
+Ensure you have all the necessary libraries installed (`py_wake`, `SALib`, `matplotlib`, `numpy`) before running the script. Adjust paths and parameters as necessary for your specific application.

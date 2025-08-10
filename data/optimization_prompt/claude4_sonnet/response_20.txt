@@ -1,0 +1,177 @@
+## Diagnosis
+
+The issue is that one or more worker HDF5 files are corrupted or invalid (the "file signature not found" error indicates the file doesn't have a valid HDF5 header). This likely happened during the multiprocessing execution - a worker process may have:
+
+1. Crashed while writing to the file, leaving it incomplete
+2. Been killed/interrupted during file creation
+3. Encountered a disk space or I/O error
+
+The script only discovers this corruption during the final merge step, after all 3000 optimizations have "completed", wasting significant computation time.
+
+## Solution
+
+Here's how to modify the script to detect invalid files early and handle errors gracefully:
+
+```python
+import h5py
+import os
+import logging
+from pathlib import Path
+
+def validate_hdf5_file(filepath):
+    """Validate that an HDF5 file is readable and has expected structure."""
+    try:
+        if not os.path.exists(filepath):
+            return False, "File does not exist"
+        
+        if os.path.getsize(filepath) == 0:
+            return False, "File is empty"
+            
+        with h5py.File(filepath, 'r') as f:
+            # Check if file has the expected structure
+            # Adjust these checks based on your expected file structure
+            if len(f.keys()) == 0:
+                return False, "File has no datasets"
+            
+            # Add more specific validation based on your data structure
+            # For example:
+            # if 'layouts' not in f:
+            #     return False, "Missing 'layouts' dataset"
+            
+        return True, "Valid"
+    except (OSError, IOError) as e:
+        return False, f"HDF5 error: {str(e)}"
+    except Exception as e:
+        return False, f"Unexpected error: {str(e)}"
+
+def cleanup_worker_files(worker_files):
+    """Clean up worker files, logging any issues."""
+    for worker_file in worker_files:
+        try:
+            if os.path.exists(worker_file):
+                os.remove(worker_file)
+                logging.info(f"Cleaned up {worker_file}")
+        except Exception as e:
+            logging.warning(f"Failed to clean up {worker_file}: {e}")
+
+def main():
+    # Your existing setup code...
+    
+    try:
+        # Your existing multiprocessing code...
+        
+        # After multiprocessing completes, validate all worker files BEFORE merging
+        logging.info("Validating worker files before merging...")
+        invalid_files = []
+        
+        for i, worker_file in enumerate(worker_files):
+            is_valid, message = validate_hdf5_file(worker_file)
+            if not is_valid:
+                logging.error(f"Worker file {worker_file} is invalid: {message}")
+                invalid_files.append((worker_file, message))
+            else:
+                logging.info(f"Worker file {worker_file} validated successfully")
+        
+        if invalid_files:
+            logging.error(f"Found {len(invalid_files)} invalid worker files:")
+            for filepath, error in invalid_files:
+                logging.error(f"  {filepath}: {error}")
+            
+            # Clean up all worker files
+            cleanup_worker_files(worker_files)
+            
+            # Exit with error
+            raise RuntimeError(f"Process failed due to {len(invalid_files)} corrupted worker files. "
+                             f"This may be due to worker crashes, disk space issues, or I/O errors. "
+                             f"Consider reducing the number of workers or checking system resources.")
+        
+        logging.info("All worker files validated successfully. Proceeding with merge...")
+        
+        # Your existing merge code, but with additional error handling:
+        with h5py.File(output_file, 'w') as h5_out:
+            for i, worker_file in enumerate(worker_files):
+                try:
+                    with h5py.File(worker_file, 'r') as h5_in:
+                        # Your existing merge logic...
+                        pass
+                except Exception as e:
+                    logging.error(f"Failed to process {worker_file} during merge: {e}")
+                    # Clean up and exit
+                    cleanup_worker_files(worker_files)
+                    raise RuntimeError(f"Merge failed on {worker_file}: {e}")
+        
+        # Clean up worker files after successful merge
+        cleanup_worker_files(worker_files)
+        logging.info("Successfully completed all optimizations and merged results")
+        
+    except KeyboardInterrupt:
+        logging.info("Process interrupted by user")
+        cleanup_worker_files(worker_files)
+        raise
+    except Exception as e:
+        logging.error(f"Process failed: {e}")
+        cleanup_worker_files(worker_files)
+        raise
+
+# Additional improvement: Add validation to worker processes
+def worker_process_with_validation(args):
+    """Wrapper for worker process that validates output."""
+    try:
+        # Your existing worker function
+        result = your_existing_worker_function(args)
+        
+        # Validate the output file was created successfully
+        worker_file = args.get('output_file')  # Adjust based on your args structure
+        if worker_file:
+            is_valid, message = validate_hdf5_file(worker_file)
+            if not is_valid:
+                logging.error(f"Worker produced invalid file {worker_file}: {message}")
+                # Remove the invalid file
+                try:
+                    os.remove(worker_file)
+                except:
+                    pass
+                return None  # or raise an exception
+        
+        return result
+    except Exception as e:
+        logging.error(f"Worker process failed: {e}")
+        return None
+```
+
+## Additional Recommendations
+
+1. **Add periodic validation**: If the process runs for a long time, consider adding periodic checks of completed worker files:
+
+```python
+def periodic_validation_check(worker_files, check_interval=100):
+    """Periodically check completed worker files during processing."""
+    completed_files = [f for f in worker_files if os.path.exists(f)]
+    
+    if len(completed_files) % check_interval == 0:
+        for worker_file in completed_files:
+            is_valid, message = validate_hdf5_file(worker_file)
+            if not is_valid:
+                logging.error(f"Detected corrupted file during processing: {worker_file}")
+                # Could implement early termination here
+```
+
+2. **Add resource monitoring**:
+
+```python
+import psutil
+
+def check_system_resources():
+    """Check if system has adequate resources."""
+    disk_usage = psutil.disk_usage('/')
+    memory = psutil.virtual_memory()
+    
+    if disk_usage.percent > 95:
+        logging.warning(f"Disk usage high: {disk_usage.percent}%")
+    if memory.percent > 90:
+        logging.warning(f"Memory usage high: {memory.percent}%")
+```
+
+3. **Implement resume capability**: Save progress information so you can resume from where you left off if the process fails.
+
+This approach will catch corrupted files immediately after the multiprocessing phase completes, before attempting the merge, saving you from discovering the issue only at the very end.

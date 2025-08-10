@@ -1,0 +1,82 @@
+To generate a script that propagates realistic measurement uncertainties through PyWake and saves a series of flow field images showing the Sobol sensitivity of effective wind speed (WS_eff) as a function of x and y, we can break this task down into several steps. The script will need to:
+
+1. Set up the PyWake environment with a wind farm layout.
+2. Define the measurement uncertainties for inflow parameters.
+3. Propagate the uncertainties through the PyWake model.
+4. Calculate the Sobol sensitivity indices for WS_eff.
+5. Visualize the results and save the flow field images.
+
+Here’s an example Python script that accomplishes these tasks. Note that you'll need to have PyWake installed and properly configured, as well as any necessary dependencies for handling images and Sobol sensitivity analysis.
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake import PyWake
+from pywake.flow_map import FlowMap
+from SALib.sample import saltelli
+from SALib.analyze import sobol
+
+# Define the problem for Sobol sensitivity analysis
+problem = {
+    'num_vars': 3,  # Number of uncertain parameters
+    'names': ['wind_speed', 'air_density', 'turbulence_intensity'],  # Parameter names
+    'bounds': [[5, 15],  # Wind speed range (m/s)
+               [1.0, 1.3],  # Air density range (kg/m^3)
+               [0.05, 0.15]]  # Turbulence intensity range (fraction)
+}
+
+# Sample from the parameter space using Saltelli's sampling
+param_values = saltelli.sample(problem, 1000)
+
+# Initialize PyWake with your wind farm layout
+# This is a placeholder; you should replace it with your actual wind farm specifications
+wind_farm = PyWake('path/to/wind_farm_layout')
+
+# Placeholder for storing WS_eff results
+ws_eff_results = []
+
+# Propagate uncertainties through the model
+for i, params in enumerate(param_values):
+    wind_speed, air_density, turbulence_intensity = params
+    
+    # Update the wind farm model with the current parameters
+    wind_farm.set_parameters(wind_speed=wind_speed, air_density=air_density, turbulence_intensity=turbulence_intensity)
+    
+    # Run the simulation
+    flow_map = FlowMap(wind_farm)
+    ws_eff = flow_map.calculate_ws_eff()  # Calculate effective wind speed
+    
+    ws_eff_results.append(ws_eff)
+
+# Convert results to a NumPy array for analysis
+ws_eff_array = np.array(ws_eff_results)
+
+# Perform Sobol sensitivity analysis
+sobol_indices = sobol.analyze(problem, ws_eff_array)
+
+# Visualize the results
+x = np.linspace(0, 1000, 100)  # Define x-coordinates
+y = np.linspace(0, 1000, 100)  # Define y-coordinates
+X, Y = np.meshgrid(x, y)
+
+# Assuming ws_eff_array is reshaped to match the grid
+for i in range(ws_eff_array.shape[1]):
+    plt.figure(figsize=(10, 6))
+    plt.contourf(X, Y, ws_eff_array[:, i].reshape((100, 100)), levels=20, cmap='viridis')
+    plt.colorbar(label='Effective Wind Speed (m/s)')
+    plt.title(f'Sobol Sensitivity of WS_eff (Param: {problem["names"][i]})')
+    plt.xlabel('X (m)')
+    plt.ylabel('Y (m)')
+    plt.savefig(f'ws_eff_sensitivity_{problem["names"][i]}.png')
+    plt.close()
+
+print("Flow field images saved successfully.")
+```
+
+### Key Points:
+- **Parameter Uncertainties**: This example assumes uncertainties in wind speed, air density, and turbulence intensity. You should adjust the parameters based on your specific application.
+- **Wind Farm Setup**: Replace the `PyWake` initialization with your wind farm layout and parameters.
+- **Sensitivity Analysis**: The Sobol sensitivity indices are calculated for the effective wind speed, showing how sensitive it is to each parameter.
+- **Visualization**: The flow fields are visualized using contour plots, which are saved as PNG images.
+
+Make sure to adapt the script to your specific needs, including the wind farm model and the locations of the turbines. The script assumes that the output `ws_eff` can be reshaped into a grid for visualization, which may require additional adjustments based on how your data is structured.

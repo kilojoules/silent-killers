@@ -1,0 +1,95 @@
+Your code is quite comprehensive and appears to be aimed at optimizing the parameters of a wind farm model using Bayesian optimization. Your approach covers multiple aspects, including the setup of the simulation, optimization process, and visualization of results. Here are some observations and suggestions for improvement:
+
+### Observations
+
+1. **Modularization**: You mentioned wanting to rewrite the code to better modularize the instantiation of the wind farm model (WFM). This is a good idea because it will improve readability and maintainability. You could create separate functions for setting up the WFM, running the simulation, and evaluating results.
+
+2. **Error Metrics**: You noted you want to report average and p90 errors instead of just RMSE. This is a useful addition, as it provides more insights into the error distribution, especially in cases where there are significant outliers.
+
+3. **Data Handling**: The use of xarray for handling multi-dimensional data is appropriate, but ensure that you're consistently checking for NaN values and handling them appropriately where necessary.
+
+4. **Visualization**: Your plotting section is well-structured, but consider adding labels, legends, and titles to make the plots more interpretable. Also, saving plots with meaningful filenames can help in organizing the output.
+
+5. **Parameter Handling**: The parameter bounds and defaults are hard-coded in multiple places. It would be better to define them in a structured way (e.g., dictionaries) at the start of the script to avoid duplication and make it easier to adjust in the future.
+
+6. **Comments and Documentation**: While there are some comments, more detailed documentation, especially for functions, would be beneficial. This will help future users (including yourself) understand the code better.
+
+7. **Performance**: Depending on the size of your datasets and number of iterations, the optimization process could be computationally expensive. Consider profiling the code to identify bottlenecks.
+
+### Suggestions for Modularization
+
+Here is a possible outline for how you could modularize your code:
+
+```python
+import numpy as np
+import xarray as xr
+from py_wake import HorizontalGrid
+from py_wake.wind_farm_models import All2AllIterative
+from bayes_opt import BayesianOptimization
+import matplotlib.pyplot as plt
+
+def load_data(file_path):
+    return xr.load_dataset(file_path)
+
+def setup_wind_farm(site, turbine, model_params, deficit_model):
+    return All2AllIterative(site, turbine,
+                             wake_deficitModel=deficit_model,
+                             superpositionModel=LinearSum(),
+                             turbulenceModel=CrespoHernandez(**model_params))
+
+def run_simulation(wfm, ws, ti, wd):
+    return wfm([0], [0], ws=ws, TI=ti, wd=wd, time=True)
+
+def evaluate_rmse(sim_res, observed_data):
+    # Calculate RMSE or other metrics here
+    return rmse
+
+def update_plot(optimizer):
+    # Handle plotting logic here
+    pass
+
+def main():
+    # Load data
+    dat = load_data('./DTU10MW.nc')
+    turbine = DTU10MW()
+    
+    # Setup simulation parameters
+    site = Hornsrev1Site()
+    model_params = {...}  # Define your model parameters here
+    
+    # Setup wind farm
+    wfm = setup_wind_farm(site, turbine, model_params, deficit_model)
+    
+    # Run optimization
+    optimizer = BayesianOptimization(f=evaluate_rmse, pbounds=pbounds)
+    optimizer.maximize()
+    
+    # Update plots
+    update_plot(optimizer)
+
+# Entry point
+if __name__ == "__main__":
+    main()
+```
+
+### Error Reporting
+
+To implement the error reporting for average and p90 errors, you can extend your evaluation function like this:
+
+```python
+def evaluate_rmse(sim_res, observed_data):
+    pred = (sim_res.WS - observed_data) / sim_res.WS
+    mse = (pred ** 2).mean()
+    rmse = np.sqrt(mse)
+    
+    avg_error = pred.mean()
+    p90_error = np.percentile(pred, 90)
+    
+    return -rmse, avg_error, p90_error
+```
+
+You can then modify your optimization process to capture these additional metrics.
+
+### Conclusion
+
+Overall, your approach seems solid but can be significantly improved with modularization, better error reporting, and improved documentation. By breaking down the components into functions, you'll make your code cleaner and easier to manage, and adjusting parameters will be much more straightforward.

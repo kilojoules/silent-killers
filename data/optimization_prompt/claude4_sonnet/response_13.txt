@@ -1,0 +1,208 @@
+Looking at this error, the issue is that one of the worker HDF5 files is corrupted or incomplete (likely due to a worker process failing or being interrupted). The error "file signature not found" indicates the HDF5 file header is missing or corrupted.
+
+## Diagnosis
+
+The problem occurs during the file merging phase when the script tries to read from worker files. One or more worker processes likely:
+1. Crashed or were killed before completing their writes
+2. Had their output files truncated or corrupted
+3. Left behind empty or partially written files
+
+## Solution
+
+Here's how to modify the script to detect and handle this reliably:
+
+```python
+import h5py
+import os
+import logging
+from pathlib import Path
+
+def validate_hdf5_file(filepath):
+    """
+    Validate that an HDF5 file is readable and contains expected data.
+    Returns (is_valid, error_message)
+    """
+    try:
+        if not os.path.exists(filepath):
+            return False, f"File does not exist: {filepath}"
+        
+        if os.path.getsize(filepath) == 0:
+            return False, f"File is empty: {filepath}"
+        
+        # Try to open and read basic structure
+        with h5py.File(filepath, 'r') as f:
+            # Check if file has any groups/datasets
+            if len(f.keys()) == 0:
+                return False, f"File contains no data: {filepath}"
+            
+            # Optionally check for expected structure
+            # For example, if you expect certain groups:
+            # if 'expected_group' not in f:
+            #     return False, f"Missing expected group in {filepath}"
+        
+        return True, "Valid"
+        
+    except OSError as e:
+        if "file signature not found" in str(e):
+            return False, f"Corrupted HDF5 file (no signature): {filepath}"
+        else:
+            return False, f"HDF5 read error: {filepath} - {str(e)}"
+    except Exception as e:
+        return False, f"Unexpected error reading {filepath}: {str(e)}"
+
+def cleanup_worker_files(worker_files):
+    """Clean up worker files, with error handling"""
+    for worker_file in worker_files:
+        try:
+            if os.path.exists(worker_file):
+                os.remove(worker_file)
+                logging.info(f"Cleaned up worker file: {worker_file}")
+        except Exception as e:
+            logging.warning(f"Failed to remove worker file {worker_file}: {e}")
+
+def main():
+    # ... your existing code ...
+    
+    # Before the merging phase, validate all worker files
+    logging.info("Validating worker files before merging...")
+    invalid_files = []
+    
+    for i, worker_file in enumerate(worker_files):
+        is_valid, error_msg = validate_hdf5_file(worker_file)
+        if not is_valid:
+            logging.error(f"Worker file {i} is invalid: {error_msg}")
+            invalid_files.append((i, worker_file, error_msg))
+        else:
+            logging.info(f"Worker file {i} validated successfully")
+    
+    # Handle invalid files
+    if invalid_files:
+        logging.error(f"Found {len(invalid_files)} invalid worker files:")
+        for worker_idx, filepath, error in invalid_files:
+            logging.error(f"  Worker {worker_idx}: {error}")
+        
+        # Option 1: Stop completely and let user investigate
+        cleanup_worker_files([f for _, f, _ in invalid_files])  # Clean up only invalid files
+        raise RuntimeError(f"Cannot proceed due to {len(invalid_files)} corrupted worker files. "
+                         f"You may need to re-run the optimization for the affected workers.")
+        
+        # Option 2: Continue with valid files only (uncomment if preferred)
+        # logging.warning("Continuing with valid files only...")
+        # valid_worker_files = [f for f in worker_files 
+        #                      if f not in [filepath for _, filepath, _ in invalid_files]]
+        # cleanup_worker_files([f for _, f, _ in invalid_files])
+        # worker_files = valid_worker_files
+    
+    # Proceed with merging (your existing merge code)
+    logging.info("All worker files validated. Proceeding with merge...")
+    
+    try:
+        # Your existing merge logic here
+        for i, worker_file in enumerate(worker_files):
+            logging.info(f"Merging worker file {i+1}/{len(worker_files)}")
+            with h5py.File(worker_file, 'r') as h5_in:
+                # ... your merge logic ...
+                pass
+        
+        # Clean up worker files after successful merge
+        cleanup_worker_files(worker_files)
+        logging.info("Successfully merged all worker files and cleaned up temporary files")
+        
+    except Exception as e:
+        logging.error(f"Error during merge process: {e}")
+        # Keep worker files for debugging
+        logging.info("Keeping worker files for debugging due to merge error")
+        raise
+
+# Additional helper function to recover partial results
+def recover_partial_results(worker_files, output_file):
+    """
+    Attempt to recover and merge only the valid worker files
+    """
+    logging.info("Attempting to recover partial results...")
+    
+    valid_files = []
+    recovered_count = 0
+    
+    for i, worker_file in enumerate(worker_files):
+        is_valid, error_msg = validate_hdf5_file(worker_file)
+        if is_valid:
+            valid_files.append(worker_file)
+            # Count how many optimizations this file contains
+            try:
+                with h5py.File(worker_file, 'r') as f:
+                    # Adjust this based on your file structure
+                    count = len([k for k in f.keys() if k.startswith('optimization_')])
+                    recovered_count += count
+            except:
+                pass
+        else:
+            logging.warning(f"Skipping corrupted worker file {i}: {error_msg}")
+    
+    logging.info(f"Found {len(valid_files)} valid worker files with ~{recovered_count} optimizations")
+    
+    # Proceed with merging valid files only
+    # ... merge logic here ...
+    
+    return recovered_count
+```
+
+## Recovery Options
+
+Since you have the worker files, you can try to recover data:
+
+```bash
+# Check which worker files exist and their sizes
+ls -la worker_*.h5
+
+# Try to identify the corrupted file(s)
+for f in worker_*.h5; do 
+    echo "Checking $f:"
+    h5dump -H "$f" 2>&1 | head -5
+done
+```
+
+## Prevention for Future Runs
+
+Add these improvements to prevent the issue:
+
+```python
+def robust_worker_save(data, filepath, max_retries=3):
+    """Save worker data with validation and retries"""
+    temp_filepath = filepath + '.tmp'
+    
+    for attempt in range(max_retries):
+        try:
+            # Write to temporary file first
+            with h5py.File(temp_filepath, 'w') as f:
+                # ... save your data ...
+                f.flush()  # Force write to disk
+            
+            # Validate the temporary file
+            is_valid, error_msg = validate_hdf5_file(temp_filepath)
+            if is_valid:
+                # Atomic move to final location
+                os.rename(temp_filepath, filepath)
+                logging.info(f"Successfully saved and validated {filepath}")
+                return True
+            else:
+                logging.warning(f"Validation failed for {temp_filepath}: {error_msg}")
+                if attempt < max_retries - 1:
+                    logging.info(f"Retrying save operation (attempt {attempt + 2}/{max_retries})")
+                
+        except Exception as e:
+            logging.error(f"Save attempt {attempt + 1} failed: {e}")
+            if attempt < max_retries - 1:
+                time.sleep(1)  # Brief delay before retry
+    
+    logging.error(f"Failed to save {filepath} after {max_retries} attempts")
+    return False
+```
+
+The key improvements are:
+1. **Validation before merge**: Check all files before attempting to merge
+2. **Graceful error handling**: Clean shutdown with informative error messages
+3. **Recovery options**: Ability to continue with valid files only
+4. **Robust saving**: Atomic writes with validation for worker processes
+
+This will prevent the script from crashing during merge and give you clear information about which worker files are problematic.

@@ -1,0 +1,79 @@
+The error message "OSError: Unable to synchronously open file (file signature not found)" indicates that the script is trying to open a HDF5 file (`worker_file`) that is either corrupt or doesn't exist.  The script likely failed during the creation or writing of one of the worker files during the parallel processing.  Because the script continues to run for a while after a single file failure, it's likely the error isn't handled properly, and it tries to process subsequent files.
+
+
+Here's how to modify the script to reliably detect and handle invalid worker files:
+
+```python
+import h5py
+import multiprocessing
+import os
+from tqdm import tqdm # Assuming you're using tqdm for the progress bar
+
+# ... other imports and functions ...
+
+def process_worker_file(worker_file):
+    """Processes a single worker file.  Handles potential errors."""
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Your existing processing code here...
+            # ... process data from h5_in ...
+            return True # Indicate success
+    except OSError as e:
+        print(f"Error processing file {worker_file}: {e}")
+        return False # Indicate failure
+
+
+def main():
+    # ... your existing code ...
+
+    num_workers = 3000 # Or however many worker files you have
+    results = []
+    with multiprocessing.Pool(processes=multiprocessing.cpu_count()) as pool:
+      results = list(tqdm(pool.imap(process_worker_file, worker_files), total=len(worker_files), desc="Optimizing layouts"))
+
+
+    # Check for failures
+    failed_files = [i for i, success in enumerate(results) if not success]
+    if failed_files:
+        print(f"Processing failed for {len(failed_files)} files.  Indices: {failed_files}")
+        # Optionally:  List the names of the failed files for better debugging
+        failed_file_names = [worker_files[i] for i in failed_files]
+        print(f"Failed file names: {failed_file_names}")
+        # Clean up partially completed results (if necessary)
+        # ... your cleanup code here ...
+        exit(1) # Exit with an error code to indicate failure
+
+
+    # ... rest of your main function ...
+
+
+if __name__ == "__main__":
+    main()
+```
+
+**Key improvements:**
+
+* **Error Handling within `process_worker_file`:** The `try...except` block catches `OSError` exceptions specifically during file opening.  This isolates errors to individual files, preventing a single bad file from crashing the entire process.  The function returns `True` for success and `False` for failure.
+
+* **Multiprocessing with `imap` and `tqdm`:**  The code uses `pool.imap` to process files concurrently and `tqdm` to display a progress bar. `imap` returns an iterator, and the `list()` function is used to ensure all results are gathered before proceeding.
+
+* **Failure Detection and Reporting:** The code checks the `results` list after processing all files. If any file processing failed (`False` returned), it prints informative messages, including indices and optionally, file names of the failed files.
+
+* **Graceful Exit:** The script exits with a non-zero exit code (`exit(1)`) if any worker file processing fails.  This signals to the calling environment (e.g., a shell script or job scheduler) that the process terminated with an error.
+
+* **Cleanup (Optional):**  Add code within the `if failed_files:` block to remove partially written output files or other cleanup actions.  This is crucial to prevent inconsistencies in your data.
+
+
+**To recover missing data (if possible):**
+
+1. **Identify the problematic files:** The improved script will tell you *which* files caused the errors.
+
+2. **Inspect the files:** Carefully examine the problematic files (if they exist) using tools like `h5ls` (if they are HDF5 files). Look for signs of corruption or incomplete data.
+
+3. **Re-run the failed tasks:** If possible, rerun the script focusing *only* on the failed tasks.  You might need to adjust the code to process only specific files or ranges of seeds.
+
+4. **Check for disk space:** Ensure you have sufficient disk space available.  A full disk can lead to file writing errors.
+
+5. **Check file permissions:** Make sure the script has the necessary read/write permissions for all files and directories involved.
+
+Remember to adapt the cleanup and re-running strategies based on the specifics of your workflow and data.  The improved error handling and reporting will make debugging and recovery significantly easier.

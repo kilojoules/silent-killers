@@ -1,0 +1,61 @@
+The error you encountered, "OSError: Unable to synchronously open file (file signature not found)," typically indicates that the script attempted to open an HDF5 file that is either corrupted or not a valid HDF5 file. This issue often arises when working with multiple worker files, and one or more of them are invalid.
+
+To diagnose and handle this issue effectively, you can modify your script to include error checking and handling. The goal is to detect invalid files before attempting to process them, and to stop the process cleanly if any are found. Here's how you can modify your script:
+
+1. **Validate the File Before Opening**: Implement a function that checks whether a file is a valid HDF5 file.
+
+2. **Exception Handling**: Use try-except blocks to catch errors when attempting to open the file.
+
+3. **Logging**: Add logging to record which files are invalid and ensure you can trace back the issue.
+
+4. **Graceful Exit**: Ensure the script exits gracefully if an invalid file is detected.
+
+Here is an example of how you might modify your script:
+
+```python
+import h5py
+import logging
+import sys
+
+logging.basicConfig(level=logging.INFO)
+
+def is_valid_hdf5_file(filepath):
+    try:
+        with h5py.File(filepath, 'r') as _:
+            return True
+    except OSError:
+        return False
+
+def main():
+    worker_files = []  # Assume this is a list of your worker files
+    for worker_file in worker_files:
+        logging.info(f"Checking file: {worker_file}")
+        if not is_valid_hdf5_file(worker_file):
+            logging.error(f"Invalid worker file detected: {worker_file}")
+            sys.exit("Terminating process due to invalid worker file.")
+        
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                # Process the file
+                logging.info(f"Successfully processed: {worker_file}")
+        except OSError as e:
+            logging.error(f"Error processing file {worker_file}: {e}")
+            sys.exit("Terminating process due to file processing error.")
+
+        # Continue with further processing
+
+if __name__ == "__main__":
+    main()
+```
+
+### Explanation:
+
+1. **`is_valid_hdf5_file` Function**: This function attempts to open a file in read mode. If it fails with an `OSError`, the file is deemed invalid.
+
+2. **Logging**: The script logs which files are being checked and processed. Errors are also logged for easier debugging.
+
+3. **Graceful Exit**: If an invalid file is detected, the script logs an error message and exits immediately using `sys.exit()`. This prevents further processing and potential data corruption or loss.
+
+4. **Try-Except Block**: This captures any unexpected errors during file processing, allowing you to stop the script if something goes wrong.
+
+By implementing these changes, your script will be more robust and capable of handling invalid worker files gracefully.

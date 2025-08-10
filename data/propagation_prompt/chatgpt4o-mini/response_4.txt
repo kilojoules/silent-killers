@@ -1,0 +1,87 @@
+To create a script that propagates realistic measurement uncertainties through PyWake, computes the Sobol sensitivity of the effective wind speed \(WS_{\text{eff}}\) as a function of \(x\) and \(y\), and saves flow field images, you can follow the structure below. This script assumes you have PyWake and the necessary libraries installed in your Python environment.
+
+Here's a template for your script:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake import PyWake
+from SALib.sample import saltelli
+from SALib.analyze import sobol
+import os
+
+# Define the problem for Sobol sensitivity analysis
+problem = {
+    'num_vars': 2,
+    'names': ['wind_speed', 'turbulence_intensity'],
+    'bounds': [[8, 12],  # Wind speed range (m/s)
+               [0.1, 0.3]]  # Turbulence intensity range
+}
+
+# Generate samples
+param_values = saltelli.sample(problem, 1000)
+
+# Initialize PyWake
+pywake_model = PyWake()
+
+# Define the grid for flow field analysis
+x = np.linspace(0, 1000, 100)  # x-coordinates (m)
+y = np.linspace(0, 1000, 100)  # y-coordinates (m)
+X, Y = np.meshgrid(x, y)
+
+# Function to simulate flow field and calculate WS_eff
+def simulate_flow(wind_speed, turbulence_intensity):
+    # Run your PyWake model with the given parameters
+    # For example: pywake_model.run(wind_speed, turbulence_intensity)
+    # This is a placeholder for the actual flow computation
+    WS_eff = wind_speed * (1 + turbulence_intensity * np.random.uniform(-0.1, 0.1, size=X.shape))
+    return WS_eff
+
+# Store results for Sobol analysis
+WS_eff_results = np.zeros((param_values.shape[0], X.shape[0], X.shape[1]))
+
+# Loop through the parameter samples
+for i, params in enumerate(param_values):
+    wind_speed, turbulence_intensity = params
+    WS_eff_results[i] = simulate_flow(wind_speed, turbulence_intensity)
+
+# Calculate Sobol sensitivity indices
+sobol_indices = sobol.analyze(problem, WS_eff_results, print_to_console=True)
+
+# Create a directory to save images if it doesn't exist
+output_dir = 'flow_field_images'
+os.makedirs(output_dir, exist_ok=True)
+
+# Plot and save flow fields for different parameter sets
+for i, params in enumerate(param_values):
+    plt.figure(figsize=(10, 6))
+    plt.contourf(X, Y, WS_eff_results[i], levels=50, cmap='viridis')
+    plt.colorbar(label='Effective Wind Speed (m/s)')
+    plt.title(f'Flow Field for Wind Speed {params[0]:.2f} m/s and TI {params[1]:.2f}')
+    plt.xlabel('X (m)')
+    plt.ylabel('Y (m)')
+    plt.savefig(os.path.join(output_dir, f'flow_field_{i}.png'))
+    plt.close()
+
+# Save Sobol indices to a file
+np.save('sobol_indices.npy', sobol_indices)
+```
+
+### Explanation:
+1. **Problem Definition**: The script defines the problem for the Sobol sensitivity analysis, specifying the number of variables and their bounds.
+
+2. **Sampling**: It uses the Saltelli method to generate samples from the specified parameter space.
+
+3. **PyWake Initialization**: You initialize the PyWake model, which you can customize based on your specific setup.
+
+4. **Flow Simulation**: The `simulate_flow` function runs the PyWake simulation for each set of parameters and computes the effective wind speed, including some randomness to simulate measurement uncertainty.
+
+5. **Sensitivity Analysis**: After collecting results, it calculates the Sobol sensitivity indices using the `sobol` function.
+
+6. **Plotting**: It generates contour plots of the effective wind speed for each parameter set and saves them as images.
+
+7. **Saving Results**: Finally, the Sobol indices are saved to a NumPy file for further analysis.
+
+### Note:
+- Ensure that you replace the placeholder code in `simulate_flow` with actual code that interfaces with the PyWake library to compute the flow fields based on your wind farm configuration.
+- Adjust the parameters in the `problem` dictionary as needed to reflect realistic uncertainties in your measurements.

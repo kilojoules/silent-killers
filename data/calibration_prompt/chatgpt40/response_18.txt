@@ -1,0 +1,120 @@
+Your code is quite comprehensive, but there are a few areas where you can improve modularity, readability, and functionality. Here's a structured approach to refactor and improve your code:
+
+### 1. Modularization and Organization
+
+Break down the code into smaller functions to make it more manageable and easier to understand. This includes separating tasks such as data loading, model instantiation, and evaluation.
+
+### 2. Flow Field Plot Adjustments
+
+You mentioned changing the flow field plots and reporting average and P90s of the errors. Ensure plots clearly differentiate between observed and predicted values and highlight significant differences.
+
+### 3. Code Refactoring
+
+#### a. Import Statements
+
+Group imports: standard libraries, third-party libraries, and local imports.
+
+#### b. Constants and Configurations
+
+Define constants and configurations at the top of the script for easy adjustments.
+
+```python
+# Constants
+DOWNWIND = True
+MODEL = 2
+X_LB = 2 if DOWNWIND else -2
+X_UB = 10 if DOWNWIND else -1
+ROI_Y_RANGE = 2
+```
+
+#### c. Data Loading
+
+Encapsulate the dataset loading in a function.
+
+```python
+def load_dataset(filepath, diameter):
+    dat = xr.load_dataset(filepath)
+    dat = dat.assign_coords(x=dat.x * diameter, y=dat.y * diameter)
+    return dat
+```
+
+#### d. Model Configuration
+
+Encapsulate the model configuration logic.
+
+```python
+def configure_model(downwind, model):
+    if model not in {1, 2}:
+        raise ValueError("Invalid Model Number")
+
+    if downwind:
+        x_lb, x_ub = 2, 10
+    else:
+        x_lb, x_ub = -2, -1
+
+    return x_lb, x_ub
+```
+
+#### e. Evaluation Function
+
+Separate the evaluation logic to compute RMSE, P90, etc.
+
+```python
+def evaluate_rmse(sim_res, all_obs, target_x, target_y):
+    flow_map = sim_res.flow_map(HorizontalGrid(x=target_x, y=target_y))
+    
+    # Compute RMSE and P90
+    rmse_values, p90_values = [], []
+    for t in range(flow_map.time.size):
+        this_pred_sim = sim_res.isel(time=t)
+        observed_deficit = flow_roi.deficits.interp(ct=this_pred_sim.CT, ti=this_pred_sim.TI, z=0).isel(wt=0)
+        pred = (this_pred_sim.WS - flow_map.WS_eff.isel(h=0, time=t)) / this_pred_sim.WS
+        diff = observed_deficit.T - pred
+        rmse_values.append(np.sqrt(np.mean(diff**2)))
+        p90_values.append(np.percentile(diff, 90))
+    
+    overall_rmse = np.mean(rmse_values)
+    overall_p90 = np.mean(p90_values)
+    
+    return overall_rmse, overall_p90
+```
+
+### 4. Code Simplification
+
+- Use list comprehensions and numpy operations for efficiency.
+- Use more descriptive variable names for clarity.
+
+### 5. Plotting Enhancements
+
+- Use subplots to compare observed and predicted values side-by-side.
+- Highlight significant differences using annotations or color bars.
+
+### 6. Final Refactored Structure
+
+```python
+def main():
+    # Constants and configurations
+    DOWNWIND = True
+    MODEL = 2
+    X_LB, X_UB = configure_model(DOWNWIND, MODEL)
+    
+    # Load dataset
+    dat = load_dataset('./DTU10MW.nc', DTU10MW().diameter())
+    
+    # Configure region of interest
+    flow_roi = dat.sel(x=slice(X_LB * D, X_UB * D), y=slice(-ROI_Y_RANGE * D, ROI_Y_RANGE * D))
+    
+    # Instantiate and evaluate model
+    site = Hornsrev1Site()
+    turbine = DTU10MW()
+    sim_res = run_simulation(site, turbine, MODEL, DOWNWIND)
+    
+    # Evaluate and plot results
+    overall_rmse, overall_p90 = evaluate_rmse(sim_res, flow_roi, flow_roi.x, flow_roi.y)
+    plot_results(overall_rmse, overall_p90)
+
+if __name__ == "__main__":
+    main()
+```
+
+By organizing your code in this way, you make it more maintainable, easier to read, and simpler to modify or extend in the future.

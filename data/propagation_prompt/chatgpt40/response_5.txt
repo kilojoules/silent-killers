@@ -1,0 +1,88 @@
+To create a script that propagates realistic measurement uncertainties through PyWake and saves a series of flow field images showing the Sobol sensitivity of the effective wind speed (`WS_eff`) as a function of x and y, you'll need to follow these general steps:
+
+1. **Set up the environment and import necessary libraries.**
+2. **Define the wind farm and inflow conditions.**
+3. **Introduce uncertainties in the inflow conditions.**
+4. **Perform Sobol sensitivity analysis.**
+5. **Compute the flow field and sensitivity indices.**
+6. **Visualize and save the flow field images.**
+
+Below is a Python script implementing these steps. This script assumes you have PyWake and other necessary packages installed.
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from py_wake import YawOptimizationWindFarmModel
+from py_wake.examples.data.hornsrev1 import Hornsrev1Site, HornsrevV80
+from py_wake.deficit_models.gaussian import BastankhahGaussian
+from py_wake.wind_turbines import WindTurbine
+from SALib.sample import saltelli
+from SALib.analyze import sobol
+from py_wake import WindFarmModel
+from py_wake.site import UniformSite
+from py_wake.flow_map import HorizontalGrid
+
+# Step 1: Define the problem for sensitivity analysis
+problem = {
+    'num_vars': 3,
+    'names': ['wind_speed', 'wind_direction', 'turbulence_intensity'],
+    'bounds': [[6, 15], [0, 360], [0.05, 0.15]]
+}
+
+# Step 2: Create samples
+param_values = saltelli.sample(problem, 100)
+
+# Step 3: Set up wind farm model
+site = Hornsrev1Site()
+windTurbines = HornsrevV80()
+wf_model = YawOptimizationWindFarmModel(site, windTurbines, BastankhahGaussian())
+
+# Step 4: Initialize storage for results
+sobol_indices_x = []
+sobol_indices_y = []
+
+# Step 5: Conduct experiments and propagate uncertainties
+for i, params in enumerate(param_values):
+    ws, wd, ti = params
+    site = UniformSite(p_wd=[wd], ti=ti, ws=ws)
+    sim_res = wf_model(x=[0], y=[0], wd=[wd], ws=[ws])
+    flow_map = sim_res.flow_map(grid=HorizontalGrid(x=np.linspace(-500, 500, 100), y=np.linspace(-500, 500, 100)))
+    WS_eff = flow_map.WS_eff
+
+    # Step 6: Compute Sobol indices for current settings
+    Si = sobol.analyze(problem, WS_eff.flatten())
+    sobol_indices_x.append(Si['S1'][0])
+    sobol_indices_y.append(Si['S1'][1])
+
+    # Step 7: Plot and save each flow field
+    plt.figure()
+    flow_map.plot_wake_map()
+    plt.title(f'WS_eff Sensitivity (Run {i+1})')
+    plt.savefig(f'flow_field_sensitivity_{i+1}.png')
+    plt.close()
+
+# Step 8: Analyze the results
+plt.figure()
+plt.plot(param_values[:, 0], sobol_indices_x, label='Sensitivity to Wind Speed')
+plt.plot(param_values[:, 1], sobol_indices_y, label='Sensitivity to Wind Direction')
+plt.xlabel('Parameter Value')
+plt.ylabel('Sobol Sensitivity Index')
+plt.legend()
+plt.title('Sobol Sensitivity Analysis')
+plt.savefig('sobol_sensitivity_analysis.png')
+plt.show()
+```
+
+### Key Points:
+
+- **PyWake**: This library is used to model wind farms and calculate flow fields.
+- **SALib**: This library is used for conducting sensitivity analysis using Sobol indices.
+- **Wind Farm Model**: Set up a wind farm model using PyWake with specific site and turbine models.
+- **Uncertainty Propagation**: Use the Saltelli sampling method to generate combinations of uncertain parameters.
+- **Sensitivity Analysis**: Calculate Sobol indices to determine the sensitivity of the effective wind speed (`WS_eff`) to changes in input parameters.
+- **Visualization**: Save flow field images for each set of parameters and create plots showing sensitivity indices over different conditions.
+
+### Notes:
+- Make sure you have all the necessary libraries installed, including `py_wake`, `SALib`, and `matplotlib`.
+- The script assumes you have access to necessary data, such as turbine specifications and site data, through PyWake's examples.
+- Adjust the range and number of samples for the sensitivity analysis as needed based on your specific application and computational resources.

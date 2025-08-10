@@ -1,0 +1,85 @@
+The error message "OSError: Unable to synchronously open file (file signature not found)" indicates that the HDF5 file specified by `worker_file` is corrupted or not a valid HDF5 file.  The script likely failed to properly handle the creation or writing of one of the worker files, leading to an incomplete or damaged file.  Because the error occurs only at the end, it's likely a race condition or a problem with the file I/O in a multiprocessing context.
+
+
+Here's how to modify the script to reliably detect and handle invalid worker files:
+
+**1. Error Handling during File Access:**
+
+Wrap the `h5py.File(worker_file, 'r') as h5_in:` line in a `try...except` block to catch the `OSError`.  This will prevent the script from crashing and allow for graceful handling of the error.
+
+```python
+import h5py
+import os
+import multiprocessing
+
+# ... other code ...
+
+def process_worker_file(worker_file):
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # ... your existing code to process the h5 file ...
+    except OSError as e:
+        print(f"Error opening or reading worker file {worker_file}: {e}")
+        # Optionally, log the error to a file for later analysis
+        return None  # Or raise the exception if you prefer to stop immediately
+    except Exception as e: # Catch other potential exceptions during processing
+        print(f"An error occurred while processing {worker_file}: {e}")
+        return None
+    # ...return processed data...
+
+
+if __name__ == "__main__":
+    # ... other code ...
+    with multiprocessing.Pool(processes=num_processes) as pool:
+        results = pool.map(process_worker_file, worker_files)
+
+    # Process the results, handling potential None values (from errors)
+    valid_results = [r for r in results if r is not None]
+    if len(valid_results) < len(worker_files):
+        print(f"Warning: {len(worker_files) - len(valid_results)} worker files were not processed successfully.")
+    # ... further processing of valid_results ...
+
+```
+
+**2. File Validation (Optional but Recommended):**
+
+Before attempting to open the file, you can add a check to verify its existence and file size.  An empty or zero-size file is a strong indicator of a problem.
+
+```python
+    if not os.path.exists(worker_file) or os.path.getsize(worker_file) == 0:
+        print(f"Warning: Worker file {worker_file} is missing or empty. Skipping.")
+        return None
+```
+
+**3. Improved Logging:**
+
+The current logging is minimal.  Add more detailed logging to track progress, including the names of files being processed and any errors encountered. This will help in debugging.  Use the `logging` module for better structured logging.
+
+```python
+import logging
+
+logging.basicConfig(level=logging.INFO, filename='precompute_log.txt', filemode='w',
+                    format='%(asctime)s - %(levelname)s - %(message)s')
+
+# ... later in your code ...
+logging.info(f"Processing worker file: {worker_file}")
+# ... inside the try...except block ...
+logging.error(f"Error opening or reading worker file {worker_file}: {e}")
+```
+
+**4. Investigate the Root Cause:**
+
+The error is likely due to a problem with how the worker files are created or written.  Review the code that generates these files.  Common causes include:
+
+* **Race conditions:** Multiple processes might be trying to write to the same file simultaneously.  Ensure proper synchronization using locks or other mechanisms if multiple processes write to the same file.
+* **Interrupted writes:** If the process is terminated unexpectedly (e.g., due to a signal or power failure), the HDF5 file might be left in an inconsistent state.  Consider using more robust file I/O techniques, potentially with transactional capabilities if possible.
+* **Insufficient disk space:** Make sure there's enough disk space available to write all worker files.
+* **Permissions issues:** Verify that the process has the necessary permissions to create and write to the files in the designated location.
+
+
+**5.  Recover Missing Data (If Possible):**
+
+The provided files might not be enough to recover the missing data.  If the data is crucial, consider implementing checkpointing or more frequent saving of intermediate results to mitigate data loss in case of failures.  If you have multiple runs with similar parameters, check if the missing data is consistent across runs, indicating a pattern in the error.
+
+
+By implementing these changes, your script will be more robust and less prone to crashing due to invalid worker files.  The improved logging will provide valuable information for diagnosing the underlying cause of the file corruption. Remember to handle exceptions appropriately, allowing for partial success rather than a complete failure if some files are invalid.

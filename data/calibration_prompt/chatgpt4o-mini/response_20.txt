@@ -1,0 +1,63 @@
+Your code appears to be a comprehensive implementation of a wind farm simulation using the PyWake library and Bayesian optimization for parameter tuning. Here are some thoughts on your approach, particularly regarding the flow field plots, error reporting, and the potential code rewrite for better modularity:
+
+### 1. Flow Field Plots and Error Reporting
+- **Flow Field Plots**: Currently, it seems like you're visualizing the observed deficits, predictions, and their differences at each time step. This is a good approach to understand model performance visually. However, to implement your idea of reporting averages and P90s (90th percentiles) of errors, you could consider modifying the plotting section to include these statistics. This could be particularly useful for understanding the distribution of errors and identifying outliers.
+
+- **Error Metrics**: Instead of focusing solely on RMSE, you might want to calculate and report the mean, median, and P90 of the prediction errors. You could store these metrics in a list or a dictionary and output them after the simulation. This would give a more comprehensive view of the model's performance.
+
+### 2. Code Modularity
+- **Modularization**: The code could benefit from being more modular. Here are some suggestions for refactoring:
+  - **Function Definitions**: Break down the code into reusable functions. For example, you could have separate functions for:
+    - Loading data and preparing the site.
+    - Setting up the wind farm model (`wfm`).
+    - Running simulations and calculating errors.
+    - Plotting results.
+  - **Parameter Handling**: Create a function that handles the parameter bounds and default values based on the model type and wind farm conditions. This could streamline the optimization parameter setup.
+
+### 3. Implementation Example
+Here is a rough example of how you might start to modularize your code. This is a simplified version and would need to be expanded based on your full requirements:
+
+```python
+def load_data(filepath):
+    dat = xr.load_dataset(filepath)
+    turbine = DTU10MW()
+    D = turbine.diameter()
+    dat = dat.assign_coords(x=dat.x * D, y=dat.y * D)
+    return dat, turbine
+
+def setup_roi(dat, downwind, d):
+    if downwind:
+        roi_x = slice(2 * d, 10 * d)
+    else:
+        roi_x = slice(-2 * d, -1 * d
+    roi_y = slice(-2 * d, 2 * d)
+    return dat.sel(x=roi_x, y=roi_y)
+
+def create_wfm(site, turbine, model_params, blockage_params):
+    return All2AllIterative(site, turbine,
+                            wake_deficitModel=BlondelSuperGaussianDeficit2020(**model_params),
+                            turbulenceModel=CrespoHernandez(**blockage_params))
+
+def evaluate_rmse(sim_res, flow_map, all_obs):
+    pred = (sim_res.WS - flow_map.WS_eff) / sim_res.WS
+    rmse = np.sqrt(np.mean((all_obs - pred) ** 2))
+    return rmse
+
+def plot_results(target_x, target_y, observed_deficit, pred, diff, t):
+    fig, ax = plt.subplots(3, 1, figsize=(5, 15))
+    # Plotting code here...
+    plt.savefig(f'figs/downsream_err_{t}')
+    plt.clf()
+
+# Example of using the functions
+dat, turbine = load_data('./DTU10MW.nc')
+flow_roi = setup_roi(dat, DOWNWIND, D)
+# Continue with the rest of your logic...
+```
+
+### 4. Additional Considerations
+- **Documentation**: Adding comments and docstrings to your functions will be beneficial for long-term maintenance and for others who might read your code.
+- **Error Handling**: Implement error handling and logging to catch potential issues during data loading and processing.
+- **Performance Optimization**: Depending on the size of your datasets, consider optimizing the performance of your simulations, especially in the evaluation loop.
+
+Overall, your approach seems solid, but refactoring for better modularity and enhancing your error analysis will likely improve both the maintainability of your code and the quality of your simulation results.

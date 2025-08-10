@@ -1,0 +1,96 @@
+The error "OSError: Unable to synchronously open file (file signature not found)" indicates that the HDF5 file specified by `worker_file` is corrupt or not a valid HDF5 file.  This is happening during the final stages of your process (after 2999 successful optimizations), suggesting a problem with the creation or writing of one of the worker files.  The fact that it occurs during the final step of the joining operation makes it highly likely that the problem originated during the parallel processing stage, even if the error only manifests itself at the end.
+
+Here's how to modify the script to reliably detect and handle invalid worker files:
+
+**1. Robust File Handling and Error Checking:**
+
+The core problem is that the script tries to open and read a potentially corrupted HDF5 file without proper error handling. Wrap the file opening and processing within a `try-except` block:
+
+```python
+import h5py
+import os
+
+def process_worker_file(worker_file):
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Your existing code to process the HDF5 file goes here
+            # ...
+    except OSError as e:
+        print(f"ERROR: Could not open or process worker file '{worker_file}': {e}")
+        # Optionally log more details about the error for debugging
+        return None  # Indicate failure
+    except Exception as e: # Catch other potential exceptions during processing
+        print(f"ERROR: An error occurred while processing '{worker_file}': {e}")
+        return None
+    return # Return if successful
+
+
+def main():
+    # ... your existing code ...
+
+    results = []
+    for worker_file in worker_files:  # Assuming worker_files is a list of file paths
+        result = process_worker_file(worker_file)
+        if result is None:
+            print("Exiting due to a failed worker file.")
+            return # Stop execution if a file fails
+
+    # ... rest of your code to combine results ...
+
+if __name__ == "__main__":
+    main()
+
+```
+
+**2.  Check File Existence and Size Before Opening:**
+
+Before attempting to open the file, add checks to ensure the file exists and has a non-zero size.  An empty or zero-sized file is often a sign of a problem during its creation.
+
+```python
+import os
+
+def process_worker_file(worker_file):
+    if not os.path.exists(worker_file):
+        print(f"ERROR: Worker file '{worker_file}' does not exist.")
+        return None
+    if os.path.getsize(worker_file) == 0:
+        print(f"ERROR: Worker file '{worker_file}' is empty.")
+        return None
+    # ... (rest of the try-except block from above) ...
+```
+
+**3.  Improved Parallel Processing (if applicable):**
+
+If your parallel processing uses a library like `multiprocessing`, consider using a `Pool` with error handling:
+
+```python
+from multiprocessing import Pool
+
+def process_worker(worker_data): # worker_data is a tuple (worker_file, other_params)
+    try:
+        return process_worker_file(worker_data[0], *worker_data[1:]) # unpack other parameters
+    except Exception as e:
+        print(f"Error in worker process: {e}")
+        return None
+
+with Pool(processes=num_processes) as pool:
+    results = pool.map(process_worker, worker_data_list)
+
+# Check for errors in the results
+if any(r is None for r in results):
+    print("Exiting due to errors in worker processes.")
+    exit(1) # Exit with an error code
+
+```
+
+**4. Debugging the HDF5 creation:**
+
+The most important step is to investigate *why* the HDF5 file is becoming corrupt.  Add logging or print statements within the part of your code that *creates* the HDF5 files to check:
+
+* **Data validation:** Are you checking the input data before writing it to the HDF5 file?  Invalid or corrupted input data can lead to problems when writing to HDF5.
+* **HDF5 library version:** Ensure that the version of the h5py library used to create and read the files is consistent.
+* **Resource exhaustion:**  Is there a chance that your worker processes are running out of memory or disk space? This can lead to partial or corrupted file writes.
+* **Interrupted writes:**  If the process creating the HDF5 file is interrupted (e.g., by a signal or power outage), the file might be left in an inconsistent state.
+
+
+By implementing these changes, your script will be more robust, providing informative error messages and preventing the process from silently failing due to a single invalid worker file. Remember to thoroughly investigate the root cause of the file corruption to prevent it from recurring.  The provided logs and file information are not enough to pinpoint the exact source of the problem without seeing the code that creates the HDF5 files.

@@ -1,0 +1,74 @@
+To create a script that propagates measurement uncertainties through PyWake and generates a series of flow field images showing the sensitivity of the flow at different times, you can follow these general steps. The script will focus on conducting a Sobol sensitivity analysis of the wind speed efficiency (`WS_eff`) as a function of the spatial coordinates `x` and `y`.
+
+Before you begin, ensure you have the necessary Python packages installed: `pywake`, `salib` (for Sobol sensitivity analysis), `numpy`, `matplotlib`, and any other dependencies.
+
+Here is a sample script to guide you through the process:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from py_wake import WindFarmModel
+from py_wake.examples.data.hornsrev1 import Hornsrev1Site, HornsrevV80
+from py_wake.examples.data import hornsrev1
+from py_wake.wind_turbines import WindTurbines
+from py_wake.site import UniformSite
+from SALib.sample import sobol_sequence
+from SALib.analyze import sobol
+
+# Define the wind farm site and turbine model
+site = Hornsrev1Site()
+wind_turbines = HornsrevV80()
+
+# Initialize the wind farm model
+wf_model = WindFarmModel(site, wind_turbines)
+
+# Define the problem for Sobol sensitivity analysis
+problem = {
+    'num_vars': 2,  # Assuming 2 uncertain parameters: wind direction and speed
+    'names': ['wind_direction', 'wind_speed'],
+    'bounds': [[-5, 5], [8, 12]]  # Example bounds for uncertainties
+}
+
+# Generate Sobol sequence samples
+num_samples = 1000  # Adjust as needed for sufficient sampling
+param_values = sobol_sequence.sample(num_samples, problem['num_vars'])
+
+# Arrays to hold the results
+x_coords = np.linspace(0, 1000, 50)  # Example x-coordinates
+y_coords = np.linspace(0, 1000, 50)  # Example y-coordinates
+sensitivity_map = np.zeros((len(x_coords), len(y_coords)))
+
+# Propagate uncertainties and compute sensitivity
+for i, x in enumerate(x_coords):
+    for j, y in enumerate(y_coords):
+        ws_eff_samples = []
+        for params in param_values:
+            wd = params[0]
+            ws = params[1]
+            # Propagate through PyWake model
+            simulation_result = wf_model(x=[x], y=[y], wd=[wd], ws=[ws])
+            ws_eff = simulation_result.WS_eff.values[0]
+            ws_eff_samples.append(ws_eff)
+        
+        # Perform Sobol sensitivity analysis on WS_eff
+        si = sobol.analyze(problem, np.array(ws_eff_samples))
+        sensitivity_map[i, j] = si['S1'][0]  # Sobol index for first parameter
+
+# Plot the sensitivity map
+plt.figure(figsize=(10, 8))
+plt.contourf(x_coords, y_coords, sensitivity_map, 20, cmap='viridis')
+plt.colorbar(label='Sobol Sensitivity Index')
+plt.xlabel('X Coordinate (m)')
+plt.ylabel('Y Coordinate (m)')
+plt.title('Sobol Sensitivity of WS_eff')
+plt.savefig('sobol_sensitivity_map.png')
+plt.show()
+```
+
+### Key Points to Consider:
+- **Measurement Uncertainties**: Adjust the bounds of the uncertain parameters (`wind_direction` and `wind_speed`) to reflect realistic measurement uncertainties specific to your study.
+- **Sampling**: The number of samples (`num_samples`) in the Sobol sequence should be sufficient to capture the variability. You may need to adjust this based on your computational resources.
+- **Coordinates**: Modify `x_coords` and `y_coords` to reflect the spatial grid of your study area.
+- **Output**: The script saves a contour plot of the sensitivity map. Adjust the plotting parameters as needed for better visualization.
+
+Make sure to adapt the script further to match your specific requirements and dataset characteristics.

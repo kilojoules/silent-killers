@@ -1,0 +1,187 @@
+Looking at your error, the issue is that one or more of your worker HDF5 files got corrupted (likely the file that was being written when the process was interrupted). The error "file signature not found" indicates the HDF5 file header is invalid or missing.
+
+## Diagnosis
+
+The problem occurs in the file joining/merging phase after multiprocessing completes. The script tries to read all worker files but encounters a corrupted one. Since you completed 2999/3000 optimizations, you're very close to having all the data.
+
+## Solution
+
+Here's how to modify your script to handle this robustly:
+
+```python
+import h5py
+import os
+import logging
+
+def validate_worker_file(worker_file):
+    """Validate that a worker file can be opened and read."""
+    try:
+        with h5py.File(worker_file, 'r') as h5_test:
+            # Try to access the keys to ensure file is readable
+            list(h5_test.keys())
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+def get_valid_worker_files(base_filename, num_workers):
+    """Get list of valid worker files and report any issues."""
+    valid_files = []
+    invalid_files = []
+    
+    for worker_id in range(num_workers):
+        worker_file = f"{base_filename}_worker_{worker_id}.h5"
+        if os.path.exists(worker_file):
+            is_valid, error = validate_worker_file(worker_file)
+            if is_valid:
+                valid_files.append(worker_file)
+                logging.info(f"Worker file {worker_file} is valid")
+            else:
+                invalid_files.append((worker_file, error))
+                logging.error(f"Worker file {worker_file} is corrupted: {error}")
+        else:
+            logging.warning(f"Worker file {worker_file} does not exist")
+    
+    return valid_files, invalid_files
+
+def merge_worker_files_safely(output_file, base_filename, num_workers):
+    """Safely merge worker files, skipping corrupted ones."""
+    
+    # Get valid worker files
+    valid_files, invalid_files = get_valid_worker_files(base_filename, num_workers)
+    
+    if invalid_files:
+        logging.error(f"Found {len(invalid_files)} corrupted worker files:")
+        for file, error in invalid_files:
+            logging.error(f"  {file}: {error}")
+        
+        # Decide whether to continue or abort
+        response = input(f"Continue with {len(valid_files)} valid files out of {num_workers}? (y/n): ")
+        if response.lower() != 'y':
+            logging.error("Aborting due to corrupted files")
+            return False
+    
+    if not valid_files:
+        logging.error("No valid worker files found!")
+        return False
+    
+    # Merge valid files
+    logging.info(f"Merging {len(valid_files)} valid worker files...")
+    
+    with h5py.File(output_file, 'w') as h5_out:
+        total_merged = 0
+        
+        for worker_file in valid_files:
+            try:
+                with h5py.File(worker_file, 'r') as h5_in:
+                    file_count = 0
+                    for key in h5_in.keys():
+                        # Copy dataset to output file
+                        h5_in.copy(key, h5_out)
+                        file_count += 1
+                    
+                    total_merged += file_count
+                    logging.info(f"Merged {file_count} datasets from {worker_file}")
+                    
+            except Exception as e:
+                logging.error(f"Error reading {worker_file} during merge: {e}")
+                continue
+    
+    logging.info(f"Successfully merged {total_merged} total datasets")
+    return True
+
+# In your main function, replace the merging section with:
+def main():
+    # ... your existing code ...
+    
+    # After multiprocessing completes
+    logging.info("Starting safe merge of worker files...")
+    
+    success = merge_worker_files_safely(
+        output_file=output_file,
+        base_filename=base_filename, 
+        num_workers=num_workers
+    )
+    
+    if not success:
+        logging.error("Merge failed - check worker files")
+        return
+    
+    # Clean up valid worker files
+    valid_files, _ = get_valid_worker_files(base_filename, num_workers)
+    for worker_file in valid_files:
+        try:
+            os.remove(worker_file)
+            logging.info(f"Cleaned up {worker_file}")
+        except Exception as e:
+            logging.warning(f"Could not remove {worker_file}: {e}")
+    
+    logging.info("Merge completed successfully!")
+```
+
+## Recovery Steps
+
+1. **Identify the corrupted file(s)**:
+```bash
+# Check which worker files exist and their sizes
+ls -la *worker*.h5
+
+# Try to identify corrupted files
+python -c "
+import h5py
+import glob
+for f in glob.glob('*worker*.h5'):
+    try:
+        with h5py.File(f, 'r') as h:
+            print(f'{f}: OK ({len(h.keys())} datasets)')
+    except Exception as e:
+        print(f'{f}: CORRUPTED - {e}')
+"
+```
+
+2. **Run the recovery merge**:
+```python
+# Add this to your script to recover existing data
+def recover_existing_data():
+    """Recover data from existing worker files."""
+    base_filename = "your_base_filename"  # adjust this
+    num_workers = 8  # adjust this
+    output_file = "recovered_layouts.h5"
+    
+    return merge_worker_files_safely(output_file, base_filename, num_workers)
+
+if __name__ == "__main__":
+    recover_existing_data()
+```
+
+3. **Identify missing seeds**:
+```python
+def find_missing_seeds(recovered_file, expected_total=3000):
+    """Find which seeds are missing from recovered data."""
+    completed_seeds = set()
+    
+    with h5py.File(recovered_file, 'r') as h5:
+        for key in h5.keys():
+            # Extract seed from key (adjust parsing based on your key format)
+            # Example: if key is "farm_9_type_4_seed_24"
+            parts = key.split('_')
+            if 'seed' in parts:
+                seed_idx = parts.index('seed')
+                seed = int(parts[seed_idx + 1])
+                completed_seeds.add(seed)
+    
+    all_seeds = set(range(50))  # or whatever your seed range is
+    missing_seeds = all_seeds - completed_seeds
+    
+    print(f"Completed: {len(completed_seeds)} seeds")
+    print(f"Missing: {len(missing_seeds)} seeds: {sorted(missing_seeds)}")
+    
+    return missing_seeds
+```
+
+This approach will:
+- Validate each worker file before attempting to read it
+- Skip corrupted files and continue with valid ones
+- Give you a clear report of what data was recovered
+- Allow you to identify exactly which seeds need to be rerun
+
+You should be able to recover most of your 2999 completed optimizations and only need to rerun the missing ones!

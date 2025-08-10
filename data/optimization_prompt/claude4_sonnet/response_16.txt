@@ -1,0 +1,203 @@
+## Diagnosis
+
+The issue is that one of the worker HDF5 files is **corrupted** - it has an invalid file signature, making it unreadable. This likely happened because:
+
+1. A worker process was killed/crashed while writing to the file
+2. The process ran out of disk space during writing
+3. There was a system interruption during file I/O
+
+The error occurs during the **joining phase** when trying to read all worker files to merge them into the final output.
+
+## Solution
+
+Here's how to modify your script to detect and handle corrupted files reliably:
+
+### 1. Add File Validation Function
+
+```python
+import h5py
+import os
+import logging
+
+def validate_worker_file(worker_file):
+    """
+    Validate that a worker file is readable and contains expected data.
+    Returns (is_valid, error_message, recoverable_data)
+    """
+    if not os.path.exists(worker_file):
+        return False, f"File {worker_file} does not exist", None
+    
+    if os.path.getsize(worker_file) == 0:
+        return False, f"File {worker_file} is empty", None
+    
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Check if file has expected structure
+            if 'farm_layouts' not in h5_in:
+                return False, f"File {worker_file} missing 'farm_layouts' group", None
+            
+            # Count valid entries
+            farm_layouts = h5_in['farm_layouts']
+            valid_keys = []
+            for key in farm_layouts.keys():
+                try:
+                    # Try to access the data to ensure it's not corrupted
+                    data = farm_layouts[key][:]
+                    if len(data) > 0:  # Has actual layout data
+                        valid_keys.append(key)
+                except Exception as e:
+                    logging.warning(f"Corrupted dataset {key} in {worker_file}: {e}")
+            
+            return True, f"File valid with {len(valid_keys)} layouts", valid_keys
+            
+    except Exception as e:
+        return False, f"Cannot read {worker_file}: {str(e)}", None
+```
+
+### 2. Modified Joining Logic with Recovery
+
+```python
+def join_worker_files_with_validation(worker_files, output_file):
+    """
+    Join worker files with validation and error recovery.
+    """
+    valid_files = []
+    corrupted_files = []
+    total_recovered_layouts = 0
+    
+    # First pass: validate all files
+    logging.info("Validating worker files...")
+    for i, worker_file in enumerate(worker_files):
+        is_valid, message, recoverable_data = validate_worker_file(worker_file)
+        
+        if is_valid:
+            valid_files.append((worker_file, recoverable_data))
+            total_recovered_layouts += len(recoverable_data)
+            logging.info(f"Worker {i}: {message}")
+        else:
+            corrupted_files.append((worker_file, message))
+            logging.error(f"Worker {i}: {message}")
+    
+    # Report validation results
+    if corrupted_files:
+        logging.error(f"Found {len(corrupted_files)} corrupted files:")
+        for worker_file, error in corrupted_files:
+            logging.error(f"  - {worker_file}: {error}")
+        
+        # Decide whether to continue or abort
+        if len(valid_files) == 0:
+            raise RuntimeError("All worker files are corrupted. Cannot proceed.")
+        
+        logging.warning(f"Continuing with {len(valid_files)} valid files "
+                       f"({total_recovered_layouts} layouts)")
+        
+        # Optionally prompt user
+        response = input(f"Continue with partial data? ({len(valid_files)}/{len(worker_files)} files) [y/N]: ")
+        if response.lower() != 'y':
+            raise RuntimeError("User chose to abort due to corrupted files")
+    
+    # Second pass: merge valid files
+    logging.info(f"Merging {len(valid_files)} valid worker files...")
+    
+    with h5py.File(output_file, 'w') as h5_out:
+        farm_layouts_out = h5_out.create_group('farm_layouts')
+        merged_count = 0
+        
+        for worker_file, valid_keys in valid_files:
+            try:
+                with h5py.File(worker_file, 'r') as h5_in:
+                    farm_layouts_in = h5_in['farm_layouts']
+                    
+                    for key in valid_keys:
+                        try:
+                            # Copy the dataset
+                            h5_in.copy(f'farm_layouts/{key}', farm_layouts_out)
+                            merged_count += 1
+                        except Exception as e:
+                            logging.error(f"Failed to copy {key} from {worker_file}: {e}")
+                            
+            except Exception as e:
+                logging.error(f"Failed to read {worker_file} during merge: {e}")
+        
+        logging.info(f"Successfully merged {merged_count} farm layouts")
+        
+        # Store metadata about the merge
+        h5_out.attrs['total_layouts'] = merged_count
+        h5_out.attrs['valid_worker_files'] = len(valid_files)
+        h5_out.attrs['corrupted_worker_files'] = len(corrupted_files)
+        h5_out.attrs['corrupted_files_list'] = [f for f, _ in corrupted_files]
+```
+
+### 3. Update Your Main Function
+
+```python
+def main():
+    try:
+        # ... your existing optimization code ...
+        
+        # Join worker files with validation
+        logging.info("Starting file validation and joining process...")
+        join_worker_files_with_validation(worker_files, output_file)
+        
+        # Clean up valid worker files only after successful merge
+        for worker_file, _ in valid_files:
+            try:
+                os.remove(worker_file)
+            except Exception as e:
+                logging.warning(f"Could not remove {worker_file}: {e}")
+                
+    except Exception as e:
+        logging.error(f"Process failed: {e}")
+        
+        # Keep worker files for manual inspection
+        logging.info("Worker files preserved for manual recovery:")
+        for i, worker_file in enumerate(worker_files):
+            if os.path.exists(worker_file):
+                logging.info(f"  Worker {i}: {worker_file}")
+        
+        raise
+```
+
+### 4. Add Periodic Validation During Processing
+
+```python
+def save_worker_checkpoint(worker_file, temp_suffix=".tmp"):
+    """
+    Save to temporary file first, then rename to avoid corruption.
+    """
+    temp_file = worker_file + temp_suffix
+    
+    # Write to temporary file first
+    # ... your saving logic using temp_file ...
+    
+    # Validate the temporary file
+    is_valid, message, _ = validate_worker_file(temp_file)
+    if not is_valid:
+        raise RuntimeError(f"Generated corrupted worker file: {message}")
+    
+    # Only rename if validation passes
+    os.rename(temp_file, worker_file)
+    logging.debug(f"Successfully saved and validated {worker_file}")
+```
+
+## Recovery Options
+
+Since you have the worker files, you can:
+
+1. **Identify the corrupted file**:
+```bash
+ls -la worker_*.h5
+# Check file sizes - corrupted file might be 0 bytes or unusually small
+```
+
+2. **Manual recovery script**:
+```python
+# Run this to see which files are recoverable
+for i, worker_file in enumerate(worker_files):
+    is_valid, message, data = validate_worker_file(worker_file)
+    print(f"Worker {i}: {message}")
+```
+
+3. **Partial recovery**: Use the modified joining function above to merge only the valid files.
+
+This approach will make your script much more robust and allow you to recover most of your work even when individual worker files are corrupted.

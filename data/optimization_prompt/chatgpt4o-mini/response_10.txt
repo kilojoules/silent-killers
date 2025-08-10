@@ -1,0 +1,59 @@
+The error message you're receiving indicates that the script is attempting to open an HDF5 file, but it cannot find a valid file signature. This typically suggests that the file is either corrupted or not in the expected HDF5 format. The error occurs during a file operation, which can be problematic if the process doesn't handle it gracefully.
+
+To ensure that the script detects this error reliably and stops the process cleanly when any worker file is invalid, you can take the following steps:
+
+1. **Error Handling**: Use try-except blocks around the file opening operations. This will allow you to catch exceptions and handle them appropriately.
+
+2. **Validation Check**: Before attempting to open a file, you can implement a preliminary check to see if the file exists and if it is a valid HDF5 file. This can be done using the `h5py` library.
+
+3. **Logging**: Add logging statements to record any errors that occur, including the specific file that caused the error.
+
+4. **Graceful Exit**: Ensure that the script exits cleanly after logging the error, rather than allowing it to continue running and potentially causing further issues.
+
+Here's an example of how you might modify the script to incorporate these suggestions:
+
+```python
+import h5py
+import os
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+
+def open_hdf5_file(worker_file):
+    """Open an HDF5 file with error handling."""
+    if not os.path.exists(worker_file):
+        logging.error(f"File not found: {worker_file}")
+        return None
+
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Process the file
+            # ...
+            return h5_in
+    except OSError as e:
+        logging.error(f"Error opening file {worker_file}: {e}")
+        return None
+
+def main():
+    worker_files = [...]  # List of worker files to process
+    for worker_file in worker_files:
+        result = open_hdf5_file(worker_file)
+        if result is None:
+            logging.error("Aborting process due to file error.")
+            return  # Exit the main function if there was an error
+
+        # Continue processing if the file was opened successfully
+        # ...
+
+if __name__ == "__main__":
+    main()
+```
+
+### Explanation:
+- **Error Handling**: The `open_hdf5_file` function attempts to open the HDF5 file and returns `None` if it encounters an error.
+- **File Existence Check**: The script checks if the file exists before trying to open it.
+- **Logging**: Any errors are logged with the file's name, and the script logs when it aborts due to an error.
+- **Graceful Exit**: The script exits the main processing loop if there is an error, preventing further operations that could lead to additional issues.
+
+By implementing these changes, you should be able to detect errors related to invalid worker files more reliably and ensure that the process stops cleanly when such errors occur.

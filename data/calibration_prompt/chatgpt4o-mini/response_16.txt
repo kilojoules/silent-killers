@@ -1,0 +1,80 @@
+Your code is quite extensive and appears to be focused on simulating wind farm performance and optimizing various parameters related to wake deficit models. Here are some observations and suggestions regarding your approach, particularly concerning modularization and error reporting:
+
+### General Observations
+1. **Modularity**: Your code could benefit from increased modularization. Functions could be defined for repetitive tasks, such as setting up the wind farm model (`wfm`), running simulations, and plotting results. This would improve readability and maintainability.
+
+2. **Error Reporting**: You mentioned wanting to report average and 90th percentile errors (p90). This is a good idea for understanding the performance of your models better. You can compute these metrics after obtaining your RMSE values.
+
+3. **Flow Field Plots**: If you are generating plots of the flow field, ensure that they are clear and easy to interpret. Adding titles, labels, and legends to plots can enhance their effectiveness.
+
+4. **Variable Naming**: Consider using more descriptive variable names (e.g., `sim_res` could be `simulation_results`, `wfm` could be `wind_farm_model`, etc.) for better clarity.
+
+5. **Documentation**: Adding comments and docstrings can help others (and your future self) understand the purpose of different sections of the code.
+
+### Suggested Modularization
+Here’s a potential structure to modularize your code better:
+
+1. **Initialization Functions**: Create a function to initialize your wind farm model based on the parameters set by `MODEL` and `DOWNWIND`.
+
+2. **Simulation Function**: Write a function to handle the simulation process. This function should take in parameters like wind speeds, turbulence intensities, etc., and return the simulation results.
+
+3. **Error Calculation Function**: Define a function to calculate RMSE and any other error metrics you wish to track.
+
+4. **Plotting Functions**: Create separate functions for generating plots, such as `plot_optimization_convergence`, `plot_flow_field`, etc.
+
+5. **Main Execution Flow**: Organize your main execution flow into a `main()` function that orchestrates the initialization, simulation, evaluation, and plotting.
+
+### Example of Refactored Code Structure
+Here’s a simplified structure to give you an idea of how to modularize:
+
+```python
+def initialize_wfm(site, turbine, model, downwind, kwargs):
+    # Instantiate the wind farm model based on parameters
+    if downwind:
+        # Setup for downwind model
+        wfm = All2AllIterative(site, turbine,
+                               wake_deficitModel=BlondelSuperGaussianDeficit2020(**kwargs),
+                               ...
+                               )
+    else:
+        # Setup for non-downwind model
+        wfm = All2AllIterative(site, turbine,
+                               wake_deficitModel=TurboGaussianDeficit(**kwargs),
+                               ...
+                               )
+    return wfm
+
+def run_simulation(wfm, full_ws, full_ti):
+    return wfm([0], [0], ws=full_ws, TI=full_ti, wd=[270] * full_ti.size, time=True)
+
+def calculate_rmse(obs_values, pred_values):
+    # Calculate RMSE and other metrics
+    rmse = np.sqrt(np.mean((obs_values - pred_values) ** 2, axis=(0, 1)))
+    return rmse, np.percentile(pred_values, 90)
+
+def update_plot(...):
+    # Update plotting logic
+
+def main():
+    # Load data, initialize parameters, etc.
+    site = Hornsrev1Site()
+    turbine = DTU10MW()
+    
+    # Initialize wind farm model
+    wfm = initialize_wfm(site, turbine, MODEL, DOWNWIND, kwargs)
+    
+    # Run simulations and calculate errors
+    sim_res = run_simulation(wfm, full_ws, full_ti)
+    
+    # Calculate RMSE and other error metrics
+    rmse, p90 = calculate_rmse(all_obs, pred)
+    
+    # Plot results
+    update_plot(...)
+    
+if __name__ == "__main__":
+    main()
+```
+
+### Conclusion
+By modularizing your code into functions, you can enhance readability, maintainability, and reusability. Make sure to incorporate average and p90 error reporting into your evaluation logic. This will help you gain deeper insights into the performance of your models. If you want, I can help you rewrite specific parts of the code based on the suggestions above.

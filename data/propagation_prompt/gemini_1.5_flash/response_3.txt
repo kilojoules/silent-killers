@@ -1,0 +1,89 @@
+This script requires several libraries: PyWake, NumPy, SciPy, Matplotlib, and potentially others depending on your PyWake setup and desired image format.  Make sure you have them installed (`pip install pywake numpy scipy matplotlib`).  You'll also need to adapt file paths and parameters to match your specific PyWake project.
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake.wind_farm_models import PropagateDownwind
+from pywake.turbulence_models import GCLTurbulence
+from pywake.flow_map import FlowMap
+from pywake.utils.sensitivity import SobolSensitivityAnalysis
+from pywake.examples.data.hornsrev1 import Hornsrev1Site
+from pywake.wind_farm_models.engineering_models import EngineeringModel
+
+# --- Parameters ---
+n_wt = 10  # Number of wind turbines (adjust as needed)
+x_coords = np.linspace(0, 1000, n_wt)  # Example x-coordinates
+y_coords = np.zeros(n_wt)  # Example y-coordinates (aligned along x-axis)
+WS_eff_unc = 0.1  # Uncertainty in effective wind speed (e.g., 10%)
+time_steps = [0, 10, 20]  # Time steps for flow field visualization
+
+# ---  PyWake Setup ---
+
+site = Hornsrev1Site() # Replace with your site data
+windTurbines = site.windTurbines
+
+# Define the flow model - replace with your chosen model
+fm = EngineeringModel(site, windTurbines)
+
+# --- Sobol Sensitivity Analysis ---
+
+# Define the parameters for sensitivity analysis.  Here we only consider WS_eff uncertainty.
+parameters = {
+    'WS_eff': {'distribution': 'uniform', 'low': 1 - WS_eff_unc, 'high': 1 + WS_eff_unc}
+}
+
+# Initialize the Sobol analysis
+sobol = SobolSensitivityAnalysis(fm, parameters)
+
+# Run the sensitivity analysis (this might take some time depending on the number of samples)
+sobol_results = sobol.analyze(n_samples=100, method='saltelli') # Adjust n_samples as needed
+
+# --- Flow Field Visualization ---
+
+def plot_flow_field(flow_map, time_step, title):
+    plt.figure(figsize=(10, 6))
+    flow_map.plot_wake_map(WS_eff=flow_map.WS_eff, levels=np.linspace(4, 12, 8), cmap='viridis')  # Adjust levels as needed
+    plt.title(f'Flow Field at Time Step {time_step} ({title})')
+    plt.xlabel('x [m]')
+    plt.ylabel('y [m]')
+    plt.colorbar(label='Effective Wind Speed [m/s]')
+    plt.savefig(f'flow_field_time_{time_step}_{title}.png')  # Save the image
+    plt.close() # close to free up memory
+
+
+# Create flow maps for each time step and each Sobol sample (example - modify as needed for your model)
+for i, time in enumerate(time_steps):
+    #This part requires adaptation to your specific PyWake model.  The example below assumes a simple time-dependent wind speed scaling.
+    #Replace this section with the correct way to generate time-dependent flow maps with your chosen model.
+    for sample in range(sobol.n_samples):
+        WS_eff_sample = sobol.parameters['WS_eff'][sample]
+        # Example: Scale the WS_eff for each time step (replace with your time-dependent model)
+        flow_map = fm.calc_flow_map(x_coords, y_coords, WS_eff=WS_eff_sample * site.default_wd_WS[time])
+        plot_flow_field(flow_map, time, f'Sobol_Sample_{sample}')
+
+
+
+# ---  Print Sobol Indices ---
+print(sobol_results)
+
+
+```
+
+**Explanation and Important Considerations:**
+
+1. **Parameters:** Adjust `n_wt`, `x_coords`, `y_coords`, `WS_eff_unc`, and `time_steps` to match your wind farm layout and simulation requirements.
+
+2. **PyWake Setup:** Replace the example `Hornsrev1Site` and `EngineeringModel` with your actual site data and chosen PyWake wind farm model (e.g., `BastankhahUnifiedWakeModel`, `JensenWakeModel`).  You might need to adjust the model initialization based on your specific needs.
+
+3. **Sobol Sensitivity Analysis:** The code performs a Sobol sensitivity analysis using the `SobolSensitivityAnalysis` class.  The `n_samples` parameter controls the number of model runs – increasing it improves accuracy but increases computation time.  The `method='saltelli'` uses the Saltelli sampling method.
+
+4. **Flow Field Visualization:** The `plot_flow_field` function generates and saves images of the flow field.  Adjust `levels` and `cmap` for optimal visualization.  The example uses a simple scaling of `WS_eff` for different time steps; you'll likely need to modify this part to incorporate your time-dependent wind speed model correctly within the PyWake framework. This is the most crucial part to adapt to your specific problem.
+
+5. **Time-Dependent Modeling:** The most significant challenge is correctly integrating time dependence into your PyWake simulation.  The example provides a *placeholder* for time-dependent wind speed. You must replace it with the correct method to generate flow maps at different time steps using your chosen PyWake model. This may involve using time-series wind data as input or modifying the model itself to handle temporal variations.
+
+6. **Error Handling:**  Add error handling (e.g., `try-except` blocks) to gracefully handle potential issues during the simulation.
+
+7. **Computational Cost:**  Sobol sensitivity analysis and flow field visualization for multiple time steps can be computationally expensive, especially with many wind turbines and high resolution. Consider using parallel processing if necessary.
+
+
+Remember to replace the placeholder comments with your specific PyWake model and data.  This revised script provides a more complete framework, but adapting it to your specific PyWake setup will require careful attention to the details of your chosen model and data.

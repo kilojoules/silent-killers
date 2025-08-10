@@ -1,0 +1,104 @@
+Your code appears to be a well-structured implementation of a wind farm optimization workflow using Python and specific libraries for wake modeling and optimization. Here are some observations and suggestions for improvement, particularly focusing on modularizing the code and enhancing the flow field plots with average and P90 error metrics.
+
+### General Observations
+1. **Modularity**: The code can benefit from breaking down into smaller, reusable functions. This would improve readability, maintainability, and testability.
+   
+2. **Error Reporting**: You mentioned that you want to report average and P90 errors. This is a great idea for providing more insight into the performance of your model, especially in the context of understanding the tail end of the error distribution.
+
+3. **Documentation**: Adding docstrings to functions and comments explaining the logic behind key sections would help others (and yourself in the future) understand the code better.
+
+4. **Variable Naming**: Ensure variable names are descriptive enough to understand their purpose without needing to refer back to the documentation.
+
+### Suggested Refactoring
+Here's a basic outline of how you could modularize the code and incorporate the error reporting:
+
+```python
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import xarray as xr
+from py_wake import HorizontalGrid
+from py_wake.examples.data.dtu10mw._dtu10mw import DTU10MW
+from py_wake.wind_farm_models import All2AllIterative
+from py_wake.deficit_models import BlondelSuperGaussianDeficit2020, TurboGaussianDeficit
+from py_wake.turbulence_models import CrespoHernandez
+from bayes_opt import BayesianOptimization
+
+def load_data(file_path):
+    return xr.load_dataset(file_path)
+
+def setup_turbine():
+    turbine = DTU10MW()
+    return turbine.diameter()
+
+def create_roi(dat, D, downwind):
+    X_LB, X_UB = (2, 10) if downwind else (-2, -1)
+    roi_x = slice(X_LB * D, X_UB * D)
+    roi_y = slice(-2 * D, 2 * D)
+    return dat.sel(x=roi_x, y=roi_y)
+
+def run_simulation(site, turbine, full_ws, full_ti, model_params):
+    wfm = All2AllIterative(
+        site, turbine,
+        wake_deficitModel=model_params['wake_deficitModel'],
+        superpositionModel=model_params['superpositionModel'],
+        turbulenceModel=CrespoHernandez(**model_params['turbulence_args'])
+    )
+    return wfm([0], [0], ws=full_ws, TI=full_ti, wd=[270] * full_ti.size, time=True)
+
+def evaluate_rmse(all_obs, sim_res, flow_map):
+    pred = (sim_res.WS - flow_map.WS_eff) / sim_res.WS
+    rmse = np.sqrt(np.mean((all_obs - pred) ** 2))
+    return rmse
+
+def report_errors(rmse_values):
+    avg_rmse = np.mean(rmse_values)
+    p90_rmse = np.percentile(rmse_values, 90)
+    print(f"Average RMSE: {avg_rmse}, P90 RMSE: {p90_rmse}")
+
+def plot_results(target_x, target_y, observed_deficit, pred, diff, t):
+    fig, ax = plt.subplots(3, 1, figsize=(5, 15))
+    ax[0].contourf(target_x, target_y, observed_deficit.T)
+    ax[1].contourf(target_x, target_y, pred)
+    ax[2].contourf(target_x, target_y, diff)
+    plt.tight_layout()
+    plt.savefig(f'figs/downstream_err_{t}.png')
+    plt.clf()
+
+def main():
+    dat = load_data('./DTU10MW.nc')
+    D = setup_turbine()
+    flow_roi = create_roi(dat, D, downwind=True)
+    # ... (rest of your setup code)
+
+    # Run optimization and simulations
+    optimizer = BayesianOptimization(f=evaluate_rmse, pbounds=pbounds, random_state=1)
+    # ... (rest of your optimizer setup)
+    optimizer.maximize(init_points=50, n_iter=200)
+
+    # Analyze results
+    rmse_values = []
+    for t in range(flow_map.time.size):
+        # Get prediction and observed deficit
+        observed_deficit = flow_roi.deficits.interp(ct=this_pred_sim.CT, ti=this_pred_sim.TI, z=0)
+        diff = observed_deficit.T - pred
+        rmse_values.append(np.sqrt(np.mean(diff ** 2)))
+        plot_results(target_x, target_y, observed_deficit, pred, diff, t)
+
+    report_errors(rmse_values)
+
+if __name__ == "__main__":
+    main()
+```
+
+### Key Changes Made
+- **Modular Functions**: Each key operation is encapsulated within its own function, making it easier to follow the workflow and debug.
+- **Error Reporting**: Added a function to calculate and report average and P90 RMSE values.
+- **Plotting Function**: Created a dedicated function for generating plots.
+
+### Next Steps
+- **Integrate All Changes**: Implement the outlined modularity in your codebase, ensuring to keep your original logic intact.
+- **Test Each Function**: After refactoring, run unit tests to ensure that each function behaves as expected.
+- **Enhance Visualizations**: Consider refining the visualizations of your results to better communicate the findings.
+
+This approach will enhance the clarity and maintainability of your code while allowing for easy adjustments in the future.

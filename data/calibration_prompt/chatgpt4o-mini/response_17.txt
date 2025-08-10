@@ -1,0 +1,68 @@
+Your code is quite comprehensive and seems to cover a lot of ground in terms of simulating wind farm performance and optimizing parameters for wake deficit models. Here are some thoughts on your approach and suggestions for improvement:
+
+### General Observations
+1. **Modularity**: You mentioned a desire to modularize the instantiation of the wind farm model (WFM). This is a great idea as it can improve the readability and maintainability of your code. You could create separate functions or classes for different models and their configurations.
+
+2. **Error Reporting**: You noted the need to report average and 90th percentile (P90) errors instead of just RMSE. This is a valuable addition as it can provide more insight into the performance of your model, especially in terms of tail risks.
+
+3. **Flow Field Plots**: Updating the flow field plots to better visualize the differences between predictions and observations is important. Make sure you are capturing meaningful statistics and visualizations that highlight model performance.
+
+4. **Use of Xarray**: You're leveraging `xarray` effectively for handling multi-dimensional datasets. This is beneficial for operations like interpolation and concatenation.
+
+### Suggestions for Improvement
+
+#### 1. Code Structure
+- **Functions for Repeated Code**: Consider creating functions for repeated code blocks, such as generating the `wfm` instance, running simulations, and plotting results. For example, a function that takes parameters and returns the configured WFM could be created:
+    ```python
+    def create_wfm(site, turbine, wake_deficitModel, turbulenceModel, blockageModel):
+        return All2AllIterative(site, turbine,
+                                  wake_deficitModel=wake_deficitModel,
+                                  superpositionModel=LinearSum(),
+                                  deflectionModel=None,
+                                  turbulenceModel=turbulenceModel,
+                                  blockage_deficitModel=blockageModel)
+    ```
+
+#### 2. Error Reporting
+- **Implement Average and P90 Calculations**: You can add functions to compute the average and P90 of errors. Here's a simple way to do that:
+    ```python
+    def compute_error_statistics(errors):
+        average_error = np.mean(errors)
+        p90_error = np.percentile(errors, 90)
+        return average_error, p90_error
+    ```
+
+#### 3. Plotting Improvements
+- **Enhanced Visualization**: When plotting the observed and predicted deficits, consider adding titles, axes labels, and legends to make the plots more informative. You could also use color maps that are more perceptually uniform.
+- **Combine Plots**: Instead of creating separate figures for each time step, you could create an animation or a grid of subplots to represent changes over time.
+
+#### 4. Configuration Management
+- **Configuration Dictionary**: Instead of using multiple variables for parameters and bounds, consider using dictionaries for better organization. This can make it easier to manage parameters and pass them around.
+
+#### 5. Documentation and Comments
+- **In-Line Documentation**: Adding comments and documentation strings (docstrings) to your functions will improve the code's readability and help others (or your future self) understand the purpose and structure of the code.
+
+### Example Refactor
+Here's a small refactor of the WFM instantiation logic to illustrate modularization:
+
+```python
+def get_wake_deficit_model(model, params):
+    if model == 1:
+        return BlondelSuperGaussianDeficit2020(**params)
+    elif model == 2:
+        return TurboGaussianDeficit(A=params['A'],
+                                    cTI=[params['cti1'], params['cti2']],
+                                    ctlim=params['ctlim'],
+                                    ceps=params['ceps'],
+                                    ct2a=ct2a_mom1d,
+                                    groundModel=Mirror(),
+                                    rotorAvgModel=GaussianOverlapAvgModel())
+    else:
+        raise ValueError("Unsupported model number")
+
+# Example usage
+wake_deficit_model = get_wake_deficit_model(MODEL, best_params)
+```
+
+### Conclusion
+Your code is well-structured for its purpose but could benefit from increased modularity and clarity. Implementing these suggestions will improve maintainability, readability, and the overall quality of your analysis. If you'd like, I can help you with the specific implementation of these changes in your code.

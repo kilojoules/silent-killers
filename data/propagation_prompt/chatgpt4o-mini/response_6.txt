@@ -1,0 +1,83 @@
+To create a script that propagates realistic measurement uncertainties through PyWake and saves flow field images showing the Sobol sensitivity of effective wind speed (`WS_eff`) as a function of `x` and `y`, we need to follow a structured approach. Below is a sample Python script that outlines the necessary steps to achieve this.
+
+### Python Script
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+import pywake
+from pywake import WindFarm
+from pywake.flow_map import FlowMap
+from SALib.sample import saltelli
+from SALib.analyze import sobol
+
+# Define the problem for Sobol sensitivity analysis
+problem = {
+    'num_vars': 3,  # Adjust based on the number of uncertain parameters
+    'names': ['param1', 'param2', 'param3'],  # Replace with actual parameter names
+    'bounds': [[0, 1], [0, 1], [0, 1]]  # Replace with actual bounds for parameters
+}
+
+# Generate samples using Saltelli sampling method
+param_values = saltelli.sample(problem, 1000)  # Adjust the number of samples
+
+# Placeholder for storing results
+WS_eff_results = []
+
+# Load your wind farm layout and other configurations
+# Example: wind_farm = WindFarm.from_layout("path_to_layout_file.yaml")
+
+# Loop over each sample to run the simulations
+for i, params in enumerate(param_values):
+    # Update parameters based on sampled values
+    # Example: wind_farm.set_parameters(params)
+
+    # Run the simulation
+    # Example: flow_map = FlowMap(wind_farm, ...)
+
+    # Calculate effective wind speed (WS_eff)
+    # WS_eff = flow_map.calculate_WS_eff()
+
+    # Append the result to the list
+    WS_eff_results.append(WS_eff)
+
+# Calculate Sobol sensitivity indices
+sobol_indices = sobol.analyze(problem, np.array(WS_eff_results))
+
+# Create a grid for x and y coordinates for plotting
+x = np.linspace(0, 10, 100)  # Adjust according to your simulation domain
+y = np.linspace(0, 10, 100)  # Adjust according to your simulation domain
+X, Y = np.meshgrid(x, y)
+
+# Create a series of flow field images showing sensitivity
+for i, time in enumerate(np.linspace(0, 10, num=10)):  # Adjust time steps as necessary
+    plt.figure(figsize=(10, 6))
+    
+    # Plotting logic for WS_eff based on x and y
+    plt.contourf(X, Y, WS_eff_results[i].reshape(X.shape), levels=50, cmap='viridis')
+    plt.colorbar(label='Effective Wind Speed (WS_eff)')
+    plt.title(f'Effective Wind Speed at time {time:.2f}')
+    plt.xlabel('X Coordinate')
+    plt.ylabel('Y Coordinate')
+    
+    # Save the figure
+    plt.savefig(f'flow_field_sensitivity_time_{i}.png')
+    plt.close()
+
+print("Flow field images saved successfully.")
+```
+
+### Key Notes:
+1. **Parameter Definitions**: Adjust `param1`, `param2`, and `param3` in the `problem` dictionary to reflect the uncertain parameters you want to analyze. Modify the bounds accordingly.
+
+2. **Wind Farm Setup**: Replace the placeholder for loading the wind farm layout and configurations with your actual setup. The methods for setting parameters and running simulations may differ based on your specific implementation of PyWake.
+
+3. **Efficiency Calculation**: The way you calculate `WS_eff` will depend on how your wind farm model is set up. Make sure to replace that part with your specific calculations.
+
+4. **Sensitivity Analysis**: The Sobol sensitivity indices will be calculated based on the results of the effective wind speed for each parameter sample.
+
+5. **Plotting**: The script generates contour plots of `WS_eff` over a grid defined by `x` and `y`. Adjust the grid size and ranges based on your specific requirements.
+
+6. **Image Saving**: Images are saved in the current directory with a naming convention that indicates the time step. Adjust this as needed.
+
+Make sure to have the required libraries (`numpy`, `matplotlib`, `pywake`, `SALib`) installed in your Python environment. Adjust the script based on your specific requirements and setup.

@@ -1,0 +1,274 @@
+## Diagnosis
+
+The issue is a **corrupted or incomplete HDF5 file** that's causing the file joining process to fail. The error "file signature not found" indicates that one of the worker files doesn't have a valid HDF5 header, likely because:
+
+1. A worker process was interrupted while writing
+2. The file was truncated or corrupted during the multiprocessing operation
+3. A worker process crashed without properly closing the file
+
+The script completed 2999/3000 optimizations but failed during the file merging phase when trying to read one of the worker files.
+
+## Solution
+
+Here's how to modify the script to detect and handle invalid worker files:
+
+```python
+import h5py
+import os
+import logging
+from pathlib import Path
+
+def validate_hdf5_file(filepath):
+    """
+    Validate if an HDF5 file is readable and not corrupted.
+    Returns (is_valid, error_message)
+    """
+    try:
+        with h5py.File(filepath, 'r') as f:
+            # Try to access basic file info to ensure it's readable
+            list(f.keys())  # This will fail if file is corrupted
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+def get_file_info(filepath):
+    """Get basic file information for debugging."""
+    try:
+        stat = os.stat(filepath)
+        return {
+            'size': stat.st_size,
+            'exists': True,
+            'readable': os.access(filepath, os.R_OK)
+        }
+    except Exception as e:
+        return {
+            'size': 0,
+            'exists': False,
+            'readable': False,
+            'error': str(e)
+        }
+
+def main():
+    # ... your existing code ...
+    
+    # After multiprocessing is complete, validate all worker files
+    logging.info("Validating worker files before merging...")
+    
+    invalid_files = []
+    valid_files = []
+    
+    for i in range(num_workers):
+        worker_file = output_dir / f"temp_worker_{i}.h5"
+        
+        # Check if file exists and get basic info
+        file_info = get_file_info(worker_file)
+        logging.info(f"Worker file {i}: {file_info}")
+        
+        if not file_info['exists']:
+            logging.error(f"Worker file {worker_file} does not exist")
+            invalid_files.append((i, worker_file, "File does not exist"))
+            continue
+            
+        if file_info['size'] == 0:
+            logging.error(f"Worker file {worker_file} is empty")
+            invalid_files.append((i, worker_file, "File is empty"))
+            continue
+        
+        # Validate HDF5 format
+        is_valid, error_msg = validate_hdf5_file(worker_file)
+        
+        if is_valid:
+            valid_files.append((i, worker_file))
+            logging.info(f"Worker file {i} is valid (size: {file_info['size']} bytes)")
+        else:
+            logging.error(f"Worker file {i} is corrupted: {error_msg}")
+            invalid_files.append((i, worker_file, error_msg))
+    
+    # Handle invalid files
+    if invalid_files:
+        logging.error(f"Found {len(invalid_files)} invalid worker files:")
+        for worker_id, filepath, error in invalid_files:
+            logging.error(f"  Worker {worker_id}: {filepath} - {error}")
+        
+        # Decision point: fail completely or try to recover
+        user_choice = input(f"\nFound {len(invalid_files)} corrupted files out of {num_workers}. Options:\n"
+                           f"1. Exit and fix the issues (recommended)\n"
+                           f"2. Continue with only valid files (data loss)\n"
+                           f"3. Attempt to recover missing data\n"
+                           f"Choice (1/2/3): ")
+        
+        if user_choice == "1":
+            logging.info("Exiting to allow manual investigation")
+            return
+        elif user_choice == "2":
+            logging.warning(f"Continuing with only {len(valid_files)} valid files")
+            worker_files_to_process = [f for _, f in valid_files]
+        elif user_choice == "3":
+            logging.info("Attempting recovery...")
+            # Implement recovery logic (see below)
+            return attempt_recovery(invalid_files, valid_files)
+        else:
+            logging.error("Invalid choice, exiting")
+            return
+    else:
+        logging.info("All worker files are valid")
+        worker_files_to_process = [output_dir / f"temp_worker_{i}.h5" for i in range(num_workers)]
+    
+    # Continue with merging only valid files
+    logging.info(f"Merging {len(worker_files_to_process)} valid worker files...")
+    
+    try:
+        merge_worker_files(worker_files_to_process, final_output_file)
+        logging.info("Successfully merged all valid worker files")
+    except Exception as e:
+        logging.error(f"Error during merging: {e}")
+        return
+    
+    # Cleanup valid worker files only
+    for worker_file in worker_files_to_process:
+        try:
+            os.remove(worker_file)
+            logging.info(f"Removed temporary file: {worker_file}")
+        except Exception as e:
+            logging.warning(f"Could not remove {worker_file}: {e}")
+
+def attempt_recovery(invalid_files, valid_files):
+    """
+    Attempt to recover data from corrupted files or recompute missing data.
+    """
+    logging.info("Starting recovery process...")
+    
+    # Option 1: Check for backup files or partial data
+    recovered_files = []
+    
+    for worker_id, filepath, error in invalid_files:
+        # Check if there's a backup or partial file
+        backup_file = filepath.with_suffix('.h5.backup')
+        partial_file = filepath.with_suffix('.h5.partial')
+        
+        if backup_file.exists():
+            is_valid, _ = validate_hdf5_file(backup_file)
+            if is_valid:
+                logging.info(f"Found valid backup for worker {worker_id}")
+                # Copy backup to main file
+                os.rename(backup_file, filepath)
+                recovered_files.append((worker_id, filepath))
+                continue
+        
+        if partial_file.exists():
+            is_valid, _ = validate_hdf5_file(partial_file)
+            if is_valid:
+                logging.info(f"Found valid partial file for worker {worker_id}")
+                os.rename(partial_file, filepath)
+                recovered_files.append((worker_id, filepath))
+                continue
+        
+        # Option 2: Determine what data is missing and recompute
+        logging.warning(f"No recovery option found for worker {worker_id}")
+        # You could implement logic here to:
+        # 1. Determine which farm/type/seed combinations were assigned to this worker
+        # 2. Recompute just those combinations
+        # 3. Create a new worker file with the recomputed data
+    
+    if recovered_files:
+        logging.info(f"Recovered {len(recovered_files)} files")
+        # Restart the main merging process
+        main()
+    else:
+        logging.error("No files could be recovered. Manual intervention required.")
+
+def merge_worker_files(worker_files, output_file):
+    """
+    Merge multiple worker HDF5 files into a single output file.
+    Enhanced with better error handling.
+    """
+    with h5py.File(output_file, 'w') as h5_out:
+        total_entries = 0
+        
+        for i, worker_file in enumerate(worker_files):
+            try:
+                logging.info(f"Merging worker file {i+1}/{len(worker_files)}: {worker_file}")
+                
+                with h5py.File(worker_file, 'r') as h5_in:
+                    # Copy all datasets from worker file
+                    for key in h5_in.keys():
+                        if key in h5_out:
+                            # Append to existing dataset
+                            existing_data = h5_out[key][:]
+                            new_data = h5_in[key][:]
+                            
+                            # Resize and append
+                            h5_out[key].resize((len(existing_data) + len(new_data),) + existing_data.shape[1:])
+                            h5_out[key][len(existing_data):] = new_data
+                            total_entries += len(new_data)
+                        else:
+                            # Copy entire dataset
+                            h5_in.copy(key, h5_out)
+                            total_entries += len(h5_in[key])
+                            
+            except Exception as e:
+                logging.error(f"Error processing worker file {worker_file}: {e}")
+                raise
+        
+        logging.info(f"Successfully merged {total_entries} total entries")
+
+# Enhanced worker function with better error handling
+def worker_function_enhanced(args):
+    """Enhanced worker function with atomic file writing."""
+    worker_id, tasks, output_dir = args
+    worker_file = output_dir / f"temp_worker_{worker_id}.h5"
+    temp_file = output_dir / f"temp_worker_{worker_id}.h5.tmp"
+    
+    try:
+        # Write to temporary file first
+        with h5py.File(temp_file, 'w') as h5_file:
+            # ... your existing optimization code ...
+            pass
+        
+        # Only rename to final name if write was successful
+        os.rename(temp_file, worker_file)
+        logging.info(f"Worker {worker_id} completed successfully")
+        
+    except Exception as e:
+        logging.error(f"Worker {worker_id} failed: {e}")
+        # Clean up temporary file
+        if temp_file.exists():
+            os.remove(temp_file)
+        raise
+```
+
+## Key Improvements:
+
+1. **File Validation**: Check each worker file before attempting to merge
+2. **Atomic Writes**: Workers write to `.tmp` files first, then rename on success
+3. **Recovery Options**: Attempt to recover from backups or partial files
+4. **Graceful Degradation**: Option to continue with valid files only
+5. **Better Error Reporting**: Detailed information about what went wrong
+6. **User Choice**: Let the user decide how to handle corruption
+
+## Immediate Recovery:
+
+To recover your current situation, you can run this diagnostic script:
+
+```python
+import h5py
+import os
+from pathlib import Path
+
+output_dir = Path("your_output_directory")  # Update this path
+
+print("Checking worker files:")
+for i in range(num_workers):  # Update num_workers
+    worker_file = output_dir / f"temp_worker_{i}.h5"
+    if worker_file.exists():
+        try:
+            with h5py.File(worker_file, 'r') as f:
+                keys = list(f.keys())
+                print(f"Worker {i}: OK ({worker_file.stat().st_size} bytes, {len(keys)} datasets)")
+        except Exception as e:
+            print(f"Worker {i}: CORRUPTED - {e}")
+    else:
+        print(f"Worker {i}: MISSING")
+```
+
+This will help you identify which specific worker file is corrupted so you can either delete it and rerun just that worker's tasks, or exclude it from the merge process.

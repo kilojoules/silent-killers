@@ -1,0 +1,64 @@
+Based on the error log you've provided, it seems that the script is encountering an issue when trying to open a file using the `h5py` library, specifically an OSError indicating that the file signature is not found. This suggests that the file being accessed is either corrupted, missing, or not in the expected HDF5 format.
+
+To ensure that this error is detected reliably and that the process stops cleanly if any worker file is invalid, you can modify your script with the following steps:
+
+### 1. **File Validation Before Opening:**
+   Before attempting to open each file, check if the file exists and is indeed a valid HDF5 file. You can use the `h5py.is_hdf5()` function to check if the file is a valid HDF5 file.
+
+### 2. **Error Handling with Try-Except Block:**
+   Wrap the file opening logic in a try-except block to catch any exceptions that may arise when trying to open the file. This allows you to handle errors gracefully and log them appropriately.
+
+### 3. **Logging and Exiting:**
+   Upon catching an error, log the error message and exit the process cleanly.
+
+### Example Code Modification:
+Here’s a modified version of the relevant part of your script:
+
+```python
+import os
+import h5py
+import sys
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+
+def process_worker_file(worker_file):
+    # Check if the file exists
+    if not os.path.isfile(worker_file):
+        logging.error(f"Worker file not found: {worker_file}")
+        sys.exit(1)
+
+    # Check if the file is a valid HDF5 file
+    if not h5py.is_hdf5(worker_file):
+        logging.error(f"Invalid HDF5 file: {worker_file}")
+        sys.exit(1)
+
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Process the file
+            pass  # Your file processing logic here
+    except OSError as e:
+        logging.error(f"Failed to open file {worker_file}: {e}")
+        sys.exit(1)
+
+def main():
+    # Assuming worker_files is a list of files to be processed
+    for worker_file in worker_files:
+        process_worker_file(worker_file)
+
+if __name__ == "__main__":
+    main()
+```
+
+### Explanation of Modifications:
+1. **File Existence Check:** The script checks if the file exists before attempting to open it.
+2. **HDF5 Validity Check:** The script checks if the file is a valid HDF5 file using `h5py.is_hdf5()`.
+3. **Error Handling:** The try-except block captures any `OSError` and logs an appropriate message. The process is then exited cleanly using `sys.exit(1)`, which indicates an error occurred.
+
+### Additional Suggestions:
+- **Log All Errors:** Make sure to log all errors to help in diagnosing issues later.
+- **Batch Processing:** If you're processing multiple files, you might want to aggregate errors and handle them after all files have been attempted, depending on your specific needs.
+- **Recovery Mechanism:** If you have backup files, consider implementing a recovery mechanism that attempts to use these files if the primary ones fail.
+
+By implementing these modifications, you should be able to detect invalid worker files more reliably and handle errors in a cleaner manner.

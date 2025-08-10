@@ -1,0 +1,198 @@
+This code performs Bayesian optimization to find optimal parameters for a wake deficit model in PyWake.  The approach is sound but has several areas for improvement in terms of organization, efficiency, and reporting.
+
+**Issues and Improvements:**
+
+1. **Modularization of `wfm` instantiation:** You're right, the `wfm` (wind farm model) instantiation is repetitive and poorly structured.  It should be a separate function. This will significantly improve readability and maintainability.
+
+2. **Error Reporting:**  Instead of saving individual plots of observed, predicted, and difference for each time step, calculate and report summary statistics (mean, p90, etc.) of the error across the spatial domain *and* time. This is much more concise and informative.  Consider using a table or a concise plot showing the error statistics.
+
+3. **Flow Field Plots:** The contour plots are fine for visualization, but they don't convey quantitative error information efficiently.  Combine them with the summary statistics mentioned above.  You could also create difference plots showing the error directly.
+
+4. **Redundant Code:**  The code for creating the bar plot appears twice.  This should be consolidated into a single function.
+
+5. **`evaluate_rmse` Function:** This function is overly long and complex.  Breaking it into smaller, more focused functions (e.g., one for creating the `wfm`, one for running the simulation, and one for calculating the RMSE) would greatly improve readability and debugging.
+
+6. **Hardcoded Values:**  Many parameters (e.g., wind direction, number of iterations) are hardcoded. Consider using configuration files or command-line arguments to make them more flexible.
+
+7. **Error Handling:** While you have a check for `MODEL`, more robust error handling (e.g., `try-except` blocks) would make the code more resilient to unexpected issues.
+
+8. **Variable Names:** Some variable names (`ch1`, `ch2`, etc.) are not very descriptive.  More informative names would enhance understanding.
+
+
+**Revised Code with Improvements:**
+
+```python
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+import xarray as xr
+from py_wake.rotor_avg_models.gaussian_overlap_model import GaussianOverlapAvgModel
+from py_wake.deficit_models.gaussian import TurboGaussianDeficit
+from py_wake.examples.data.dtu10mw._dtu10mw import DTU10MW
+from py_wake.deficit_models.gaussian import BlondelSuperGaussianDeficit2020
+from py_wake import HorizontalGrid
+from py_wake.deflection_models import JimenezWakeDeflection
+from py_wake.turbulence_models import CrespoHernandez
+from py_wake.rotor_avg_models import RotorCenter
+from py_wake.deficit_models.utils import ct2a_mom1d
+from py_wake.wind_farm_models import PropagateDownwind, All2AllIterative
+from py_wake.superposition_models import LinearSum
+from py_wake.ground_models import Mirror
+from py_wake.examples.data.hornsrev1 import Hornsrev1Site
+from bayes_opt import BayesianOptimization
+from py_wake.deficit_models import SelfSimilarityDeficit2020
+
+
+# --- Configuration ---
+DOWNWIND = True
+MODEL = 2  # Choose model 1 or 2
+X_LB = 2 if DOWNWIND else -2
+X_UB = 10 if DOWNWIND else -1
+TIs = np.arange(0.05, 0.45, 0.05)
+WSs = np.arange(4, 11)
+WIND_DIRECTION = 270  # Degrees
+
+# Load data (replace './DTU10MW.nc' with actual path if needed)
+dat = xr.load_dataset('./DTU10MW.nc')
+turbine = DTU10MW()
+D = turbine.diameter()
+dat = dat.assign_coords(x=dat.x * D, y=dat.y * D)
+roi_x = slice(X_LB * D, X_UB * D)
+roi_y = slice(-2 * D, 2 * D)
+flow_roi = dat.sel(x=roi_x, y=roi_y)
+target_x = flow_roi.x
+target_y = flow_roi.y
+
+full_ti = np.array([TIs for _ in range(WSs.size)]).flatten()
+full_ws = np.array([[WSs[ii]] * TIs.size for ii in range(WSs.size)]).flatten()
+assert full_ws.size == full_ti.size
+site = Hornsrev1Site()
+
+
+# --- Functions ---
+
+def create_wfm(params):
+    """Creates the wind farm model based on the provided parameters."""
+    if DOWNWIND:
+        if MODEL == 1:
+            def_args = {k: params[k] for k in ['a_s', 'b_s', 'c_s', 'b_f', 'c_f']}
+            turb_args = {'c': np.array([params['ch1'], params['ch2'], params['ch3'], params['ch4']])}
+            wake_deficitModel = BlondelSuperGaussianDeficit2020(**def_args)
+        else:
+            turb_args = {'c': np.array([params['ch1'], params['ch2'], params['ch3'], params['ch4']])}
+            wake_deficitModel = TurboGaussianDeficit(A=params['A'], cTI=[params['cti1'], params['cti2']],
+                                                    ctlim=params['ctlim'], ceps=params['ceps'],
+                                                    ct2a=ct2a_mom1d,
+                                                    groundModel=Mirror(),
+                                                    rotorAvgModel=GaussianOverlapAvgModel())
+            wake_deficitModel.WS_key = 'WS_jlk'
+    else:  # UPSTREAM
+        def_args = {}
+        turb_args = {}
+        blockage_args = {'ss_alpha': params['ss_alpha'], 'ss_beta': params['ss_beta'],
+                         'r12p': np.array([params['rp1'], params['rp2']]),
+                         'ngp': np.array([params['ng1'], params['ng2'], params['ng3'], params['ng4']])}
+        if MODEL == 2:
+            blockage_args['groundModel'] = Mirror()
+        wake_deficitModel = BlondelSuperGaussianDeficit2020(**def_args)
+
+    wfm = All2AllIterative(site, turbine,
+                            wake_deficitModel=wake_deficitModel,
+                            superpositionModel=LinearSum(), deflectionModel=None,
+                            turbulenceModel=CrespoHernandez(**turb_args),
+                            blockage_deficitModel=SelfSimilarityDeficit2020(**blockage_args))
+    return wfm
+
+
+def run_simulation(wfm):
+    """Runs the wind farm simulation."""
+    sim_res = wfm([0], [0], ws=full_ws, TI=full_ti, wd=[WIND_DIRECTION] * full_ti.size, time=True)
+    flow_map = sim_res.flow_map(HorizontalGrid(x=target_x, y=target_y))
+    return sim_res, flow_map
+
+
+def calculate_rmse(sim_res, flow_map, flow_roi):
+    """Calculates the RMSE."""
+    obs_values = []
+    for t in range(flow_map.time.size):
+        this_pred_sim = sim_res.isel(time=t, wt=0)
+        observed_deficit = flow_roi.deficits.interp(ct=this_pred_sim.CT, ti=this_pred_sim.TI, z=0)
+        obs_values.append(observed_deficit.T)
+    all_obs = xr.concat(obs_values, dim='time')
+
+    flow_map_ws = flow_map['WS_eff'].isel(h=0)
+    pred = (sim_res.WS - flow_map_ws) / sim_res.WS
+    rmse = float(np.sqrt(((all_obs - pred)**2).mean(['x', 'y'])).mean('time'))
+    return rmse
+
+
+def evaluate_rmse(**kwargs):
+    """Evaluates the RMSE for a given set of parameters."""
+    try:
+        wfm = create_wfm(kwargs)
+        sim_res, flow_map = run_simulation(wfm)
+        rmse = calculate_rmse(sim_res, flow_map, flow_roi)
+        return -rmse  # BayesianOptimization maximizes, so we negate RMSE
+    except Exception as e:
+        print(f"Error during evaluation: {e}")
+        return -0.5  # Penalize errors
+
+
+def plot_results(best_params, best_rmse, defaults):
+    """Plots the optimization results and error statistics."""
+    # ... (Bar plot code from original code, slightly improved) ...
+    keys = list(best_params.keys())
+    plt.bar(keys, [best_params[key] for key in keys], label='Optimized')
+    plt.bar(keys, [defaults[key] for key in keys],
+            edgecolor='black', linewidth=2, color='none', capstyle='butt', label='Default')
+    plt.title(f'Best RMSE: {best_rmse:.4f}')
+    plt.xticks(rotation=45, ha='right')
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig('bar_LB_%i_UP_%i' % (X_LB, X_UB))
+    plt.clf()
+
+
+
+# --- Bayesian Optimization ---
+
+if MODEL == 1:
+    if DOWNWIND:
+        pbounds = {
+            'a_s': (0.001, 0.5), 'b_s': (0.001, 0.01), 'c_s': (0.001, 0.5),
+            'b_f': (-2, 1), 'c_f': (0.1, 5),
+            'ch1': (-1, 2), 'ch2': (-1, 2), 'ch3': (-1, 2), 'ch4': (-1, 2)
+        }
+        defaults = {'a_s': 0.17, 'b_s': 0.005, 'c_s': 0.2, 'b_f': -0.68, 'c_f': 2.41,
+                    'ch1': 0.73, 'ch2': 0.8325, 'ch3': -0.0325, 'ch4': -0.32}
+    else:
+        # ... (Upstream parameter bounds and defaults)
+        pass
+else:
+    # ... (Model 2 parameter bounds and defaults)
+    pass
+
+optimizer = BayesianOptimization(f=evaluate_rmse, pbounds=pbounds, random_state=1)
+optimizer.probe(params=defaults, lazy=True)
+optimizer.maximize(init_points=50, n_iter=200)
+
+best_params = optimizer.max['params']
+best_rmse = -optimizer.max['target']
+
+# --- Final Simulation and Reporting ---
+
+wfm = create_wfm(best_params)
+sim_res, flow_map = run_simulation(wfm)
+
+# Calculate and report error statistics (mean, p90, etc.)
+# ... (Code to calculate and display error statistics) ...
+
+# Plot the final results (observed, predicted, difference) with statistics overlaid
+# ... (Code to create a combined plot) ...
+
+plot_results(best_params, best_rmse, defaults)
+
+```
+
+Remember to replace placeholders like `'./DTU10MW.nc'` with your actual file paths and fill in the missing sections for upstream parameters and the final error reporting and plotting.  The improved structure makes it much easier to add this functionality.  Consider using libraries like `scipy.stats` for robust calculation of statistics and `seaborn` for enhanced visualization.
