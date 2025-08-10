@@ -176,7 +176,7 @@ def plot_statistical_analysis(df: pd.DataFrame):
     
     # Use only successfully parsed runs that contained at least one try/except block
     # This makes the "bad rate" statistic more meaningful.
-    plot_df = df[(df["has_try"] == True)].copy()
+    plot_df = df#[(df["has_try"] == True)].copy()
 
     # Get the order of difficulties
     difficulty_order = ["Easy", "Medium", "Hard"]
