@@ -48,6 +48,7 @@ class _CodeMetricsVisitor(ast.NodeVisitor):
         self.pass_exception_blocks = 0
         self.uses_traceback       = False
         self.total_pass_statements = 0
+        self.bad_exception_locations = [] 
 
     def visit_Pass(self, node):
         self.total_pass_statements += 1
@@ -69,6 +70,7 @@ class _CodeMetricsVisitor(ast.NodeVisitor):
     
             if is_bad:
                 self.bad_excepts += 1
+                self.bad_exception_locations.append(handler.lineno)
             if len(handler.body) == 1 and isinstance(handler.body[0], ast.Pass):
                 self.pass_exception_blocks += 1
             tb_finder = _TracebackFinderVisitor()
@@ -91,7 +93,6 @@ def _handler_reraises(handler: ast.ExceptHandler) -> bool:
             return True
     return False
 
-
 def code_metrics(code: str) -> list[MetricResult]:
     """
     Return metrics for a single code_<n>.py file.
@@ -101,20 +102,21 @@ def code_metrics(code: str) -> list[MetricResult]:
         visitor  = _CodeMetricsVisitor()
         visitor.visit(tree)
         return [
-            MetricResult("loc",                        len(code.splitlines())),
-            MetricResult("exception_handling_blocks",  visitor.total_excepts),
-            MetricResult("bad_exception_blocks",       visitor.bad_excepts),
-            MetricResult("pass_exception_blocks",      visitor.pass_exception_blocks),
-            MetricResult("total_pass_statements",      visitor.total_pass_statements),
+            MetricResult("loc",                       len(code.splitlines())),
+            MetricResult("exception_handling_blocks", visitor.total_excepts),
+            MetricResult("bad_exception_blocks",      visitor.bad_excepts),
+            # 3. Return the new metric
+            MetricResult("bad_exception_locations",   visitor.bad_exception_locations), 
+            MetricResult("pass_exception_blocks",     visitor.pass_exception_blocks),
+            MetricResult("total_pass_statements",     visitor.total_pass_statements),
             MetricResult("bad_exception_rate",
                          round(visitor.bad_excepts / visitor.total_excepts, 2)
                          if visitor.total_excepts else 0.0),
-            MetricResult("uses_traceback",             visitor.uses_traceback),
-            MetricResult("parsing_error",              ""),
+            MetricResult("uses_traceback",            visitor.uses_traceback),
+            MetricResult("parsing_error",             ""),
         ]
     except SyntaxError as e:
         return [
             MetricResult("loc", 0),
             MetricResult("parsing_error", f"SyntaxError: {e}"),
         ]
-
