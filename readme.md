@@ -44,51 +44,7 @@ $
 ```
 
 
-### 2.1  Generate metrics CSVs
-
-```bash
-python scripts/process_files.py --base-dir data/propagation_prompt
-python scripts/process_files.py --base-dir data/calibration_prompt
-python scripts/process_files.py --base-dir data/optimization_prompt
-```
-
-Each run creates
-
-```
-data/<prompt_dir>/
-    llm_code_metrics.csv
-    llm_response_metrics.csv
-```
-
-### 2.2  Plots & summary tables
-
-```bash
-python scripts/post_processing.py --root data
-```
-
-Creates:
-
-```
-plots_grid_refactored/
-    grid_status_3color.png
-    grid_loc_continuous.png
-    grid_bad_exception_rate.png
-    grid_bad_exception_count.png
-    bar_parsed_ok_by_difficulty.png
-    summary_by_model.csv
-    summary_by_difficulty.csv
-```
-
-<details>
-<summary>Example output</summary>
-
-| code‑status | bad‑rate heatmap |
-|-------------|------------------|
-| <img src="data/figures/grid_status_3color.png" width="380"> | <img src="data/figures/grid_bad_exception_rate.png" width="380"> |
-
-</details>
-
-### 2.3  Library usage
+### 2.1  Library usage
 
 ```python
 from silent_killers.metrics_definitions import code_metrics
@@ -98,7 +54,7 @@ for metric in code_metrics(python_code):
     print(metric.name, metric.value)
 ```
 
-### 2.4  Use in pre-commit
+### 2.2  Use in pre-commit
 ```
 - repo: https://github.com/kilojoules/silent-killers
   rev: v0.1.7
