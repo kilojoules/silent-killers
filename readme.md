@@ -35,11 +35,12 @@ The full paper is on my portfolio:
 
 ```
 $ # generate example scripts to analyze
-$ printf "try:\n    print(10 / 0)\nexcept:\n    pass\n" > example.py
-$ silent-killers-audit example.py
-
-❌ example.py: 1 bad exception block(s)
-
+$ printf "try:\n    print(10 / 0)\nexcept:\n    pass\n" > bad_block_example.py
+$ silent-killers-audit bad_block_example.py
+❌ example.py: 1 bad exception block(s) found on line(s): 3
+$ printf "print('this is a line') ; new_variable = 123 ; print('this code is fine')" > safe_example.py
+$ silent-killers-audit safe_example.py
+$ 
 ```
 
 
