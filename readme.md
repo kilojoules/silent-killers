@@ -100,7 +100,7 @@ for metric in code_metrics(python_code):
 ### 2.4  Use in pre-commit
 ```
 - repo: https://github.com/kilojoules/silent-killers
-  rev: v0.1.3 # Use the appropriate tag
+  rev: v0.1.7
   hooks:
     - id: silent-killers-audit
 
