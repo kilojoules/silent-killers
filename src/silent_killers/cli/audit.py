@@ -7,11 +7,6 @@ def main(argv=None):
         description="Audit Python files for unsafe exception handling."
     )
     parser.add_argument("files", nargs="+", help="Python source files to audit")
-    parser.add_argument(
-        "-q", "--quiet",
-        action="store_true",
-        help="Only report on files that have errors."
-    )
     args = parser.parse_args(argv)
 
     bad_found = False
@@ -34,7 +29,6 @@ def main(argv=None):
             count = metrics['bad_exception_blocks']
             print(f"❌ {file_path}: {count} bad exception block(s) found on line(s): {loc_str}")
             
-        elif not args.quiet:
-            print(f"✅ {file_path}: no unsafe exception handling found")
+        # otherwise there are no issues and we exit gracefully
 
     sys.exit(1 if bad_found else 0)
