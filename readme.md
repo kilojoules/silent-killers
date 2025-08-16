@@ -25,6 +25,9 @@ $
 ```
 
 ### 1.1  Use in pre-commit
+
+Add this to `.pre-commit-config.yaml`:
+
 ```
 - repo: https://github.com/kilojoules/silent-killers
   rev: v0.1.7
