@@ -24,8 +24,16 @@ $ silent-killers-audit safe_example.py
 $ 
 ```
 
+### 1.1  Use in pre-commit
+```
+- repo: https://github.com/kilojoules/silent-killers
+  rev: v0.1.7
+  hooks:
+    - id: silent-killers-audit
 
-### 1.1  Library usage
+```
+
+### 1.2  Library usage
 
 ```python
 from silent_killers.metrics_definitions import code_metrics
@@ -35,14 +43,6 @@ for metric in code_metrics(python_code):
     print(metric.name, metric.value)
 ```
 
-### 1.2  Use in pre-commit
-```
-- repo: https://github.com/kilojoules/silent-killers
-  rev: v0.1.7
-  hooks:
-    - id: silent-killers-audit
-
-```
 
 ---
 
