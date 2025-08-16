@@ -12,26 +12,7 @@
 ---
 
 
-## 1  Scope of this study
-
-Modern LLMs can write Python that “runs”, but *how* it fails matters.
-A **bare** `except:` or a blanket `except Exception:` with no
-re‑raise can mask fatal bugs, leading to silent data corruption or
-debugging nightmares—these are the **silent killers**.
-
-We collected **5 seeds × 8 models × 3 prompts** (easy → hard rewrite
-tasks) and asked:
-
-* How often do models inject `try/except` at all?  
-* Of those, how many are “bad” under a strict re‑raise rule?  
-* Does difficulty exacerbate the problem?
-
-The full paper is on my portfolio: 
-[https://julianquick.com/ML/llm-audit.html](https://julianquick.com/ML/llm-audit.html).
-
----
-
-## 2 Quick start
+## 1 Quick start
 
 ```
 $ printf "try:\n    print(10 / 0)\nexcept:\n    pass\n" > bad_block_example.py
@@ -44,7 +25,7 @@ $
 ```
 
 
-### 2.1  Library usage
+### 1.1  Library usage
 
 ```python
 from silent_killers.metrics_definitions import code_metrics
@@ -54,7 +35,7 @@ for metric in code_metrics(python_code):
     print(metric.name, metric.value)
 ```
 
-### 2.2  Use in pre-commit
+### 1.2  Use in pre-commit
 ```
 - repo: https://github.com/kilojoules/silent-killers
   rev: v0.1.7
@@ -66,7 +47,7 @@ for metric in code_metrics(python_code):
 ---
 
 
-## 3  Repository layout
+## 2  Repository layout
 
 ```
 repo-root/
@@ -95,8 +76,27 @@ repo-root/
 └─ README.md
 ```
 
+---
+
+## 3  Scope of this study
+
+Modern LLMs can write Python that “runs”, but *how* it fails matters.
+A **bare** `except:` or a blanket `except Exception:` with no
+re‑raise can mask fatal bugs, leading to silent data corruption or
+debugging nightmares—these are the **silent killers**.
+
+We collected **5 seeds × 8 models × 3 prompts** (easy → hard rewrite
+tasks) and asked:
+
+* How often do models inject `try/except` at all?  
+* Of those, how many are “bad” under a strict re‑raise rule?  
+* Does difficulty exacerbate the problem?
+
+The full paper is on my portfolio: 
+[https://julianquick.com/ML/llm-audit.html](https://julianquick.com/ML/llm-audit.html).
 
 ---
+
 
 ## 4  Installation
 
