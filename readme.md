@@ -46,6 +46,18 @@ for metric in code_metrics(python_code):
     print(metric.name, metric.value)
 ```
 
+```
+loc 4
+exception_handling_blocks 1
+bad_exception_blocks 1
+bad_exception_locations [3]
+pass_exception_blocks 1
+total_pass_statements 1
+bad_exception_rate 1.0
+uses_traceback False
+parsing_error  # None
+```
+
 
 ---
 
