@@ -61,8 +61,28 @@ parsing_error  # None
 
 ---
 
+## 2  Installation
 
-## 2  Repository layout
+```bash
+git clone https://github.com/kilojoules/silent-killers.git
+cd silent-killers
+python -m pip install --upgrade pip
+pip install -e .
+```
+
+or using the pypi distribution
+
+```bash
+pip install silent-killers
+```
+
+
+> **Requires Python ≥ 3.10**  
+> Runtime deps: `pandas`, `numpy`, `matplotlib`
+
+---
+
+## 3  Repository layout
 
 ```
 repo-root/
@@ -93,7 +113,7 @@ repo-root/
 
 ---
 
-## 3  Scope of this study
+## 4  Scope of this study
 
 Modern LLMs can write Python that “runs”, but *how* it fails matters.
 A **bare** `except:` or a blanket `except Exception:` with no
@@ -113,26 +133,6 @@ The full paper is on my portfolio:
 ---
 
 
-## 4  Installation
-
-```bash
-git clone https://github.com/kilojoules/silent-killers.git
-cd silent-killers
-python -m pip install --upgrade pip
-pip install -e .
-```
-
-or using the pypi distribution
-
-```bash
-pip install silent-killers
-```
-
-
-> **Requires Python ≥ 3.10**  
-> Runtime deps: `pandas`, `numpy`, `matplotlib`
-
----
 
 ## 5  Metrics at a glance
 
