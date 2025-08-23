@@ -285,7 +285,7 @@ def main(argv=None):
     # ---------- plot 3: BER -------------------------------------------------
     plot_metric_grid(
         pivots["ber"], title="",
-        cmap="Reds", vmin=0.0, vmax=1.0, cbar_label="Bad exception Rate",
+        cmap="Reds", vmin=0.0, vmax=1.0, cbar_label="Bad Exception Rate",
         filename_suffix="bad_exception_rate",
         model_order=models, diff=diffs, seeds=seeds
     )
