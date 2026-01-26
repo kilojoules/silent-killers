@@ -66,3 +66,19 @@ line-length = 88
 exclude = ["plots_grid_refactored", ".venv", "dist"]
 
 
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["osx-arm64"]
+
+[tool.pixi.pypi-dependencies]
+silent_killers = { path = ".", editable = true }
+
+[tool.pixi.environments]
+default = { solve-group = "default" }
+dev = { features = ["dev"], solve-group = "default" }
+
+[tool.pixi.tasks]
+
+[tool.pixi.dependencies]
+pytest = ">=9.0.2,<10"
