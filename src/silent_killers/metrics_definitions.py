@@ -4,7 +4,10 @@ metrics_definitions.py
 Collect *all* metric logic here.  Nothing about files, CLI, or plotting.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
+from typing import Union, List
 import ast
 import re
 
@@ -12,7 +15,7 @@ import re
 @dataclass
 class MetricResult:
     name:        str
-    value:       float | int | str | None
+    value:       Union[float, int, str, List, None]
     description: str = ""
 
 # ---------- Regex‑based metrics ---------------------------------------------
@@ -42,7 +45,8 @@ class _TracebackFinderVisitor(ast.NodeVisitor):
 
 class _CodeMetricsVisitor(ast.NodeVisitor):
     """Gather exception‑handling statistics."""
-    def __init__(self):
+    def __init__(self, strict: bool = False):
+        self.strict = strict
         self.total_excepts        = 0
         self.bad_excepts          = 0
         self.pass_exception_blocks = 0
@@ -61,12 +65,18 @@ class _CodeMetricsVisitor(ast.NodeVisitor):
         for handler in node.handlers:
             self.total_excepts += 1
             is_bad = False
-        
-            if handler.type is None:                           # bare except
-                is_bad = True
-            elif isinstance(handler.type, ast.Name) and handler.type.id == "Exception":
-                if not _handler_reraises(handler):             # broad catch that hides error
+            
+            if self.strict:
+                # Strict mode: ANY handler without re-raise is bad
+                if not _handler_reraises(handler):
                     is_bad = True
+            else:
+                # Default mode: only flag bare except or broad Exception catch
+                if handler.type is None:                           # bare except
+                    is_bad = True
+                elif _is_broad_exception_type(handler.type):
+                    if not _handler_reraises(handler):             # broad catch that hides error
+                        is_bad = True
     
             if is_bad:
                 self.bad_excepts += 1
@@ -81,6 +91,24 @@ class _CodeMetricsVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 # ---------------------------------------------------------------------------
 
+def _is_broad_exception_type(exc_type: ast.expr) -> bool:
+    """
+    Return True if the exception type is a broad catch-all.
+    Handles: Exception, BaseException, and tuples containing them.
+    """
+    broad_names = {"Exception", "BaseException"}
+    
+    if isinstance(exc_type, ast.Name):
+        return exc_type.id in broad_names
+    
+    if isinstance(exc_type, ast.Tuple):
+        # Check if any element in the tuple is a broad exception
+        for elt in exc_type.elts:
+            if isinstance(elt, ast.Name) and elt.id in broad_names:
+                return True
+    
+    return False
+
 def _handler_reraises(handler: ast.ExceptHandler) -> bool:
     """Return True if any statement in the except block is a bare `raise` or `raise <expr>`."""
     class RaiseFinder(ast.NodeVisitor):
@@ -93,19 +121,23 @@ def _handler_reraises(handler: ast.ExceptHandler) -> bool:
             return True
     return False
 
-def code_metrics(code: str) -> list[MetricResult]:
+def code_metrics(code: str, strict: bool = False) -> list[MetricResult]:
     """
     Return metrics for a single code_<n>.py file.
+    
+    Args:
+        code: Python source code to analyze
+        strict: If True, flag ANY exception handler that doesn't re-raise.
+                If False (default), only flag bare except or broad Exception catches.
     """
     try:
         tree     = ast.parse(code)
-        visitor  = _CodeMetricsVisitor()
+        visitor  = _CodeMetricsVisitor(strict=strict)
         visitor.visit(tree)
         return [
             MetricResult("loc",                       len(code.splitlines())),
             MetricResult("exception_handling_blocks", visitor.total_excepts),
             MetricResult("bad_exception_blocks",      visitor.bad_excepts),
-            # 3. Return the new metric
             MetricResult("bad_exception_locations",   visitor.bad_exception_locations), 
             MetricResult("pass_exception_blocks",     visitor.pass_exception_blocks),
             MetricResult("total_pass_statements",     visitor.total_pass_statements),

@@ -4,3 +4,8 @@
   language: python
   types: [python]
 
+- id: silent-killers-audit-strict
+  name: silent-killers-audit-strict
+  entry: silent-killers-audit --strict
+  language: python
+  types: [python]

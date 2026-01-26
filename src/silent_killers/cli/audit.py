@@ -7,6 +7,12 @@ def main(argv=None):
         description="Audit Python files for unsafe exception handling."
     )
     parser.add_argument("files", nargs="+", help="Python source files to audit")
+    parser.add_argument(
+        "--strict", 
+        action="store_true",
+        help="Strict mode: flag ANY exception handler that doesn't re-raise, "
+             "not just bare except or broad Exception catches."
+    )
     args = parser.parse_args(argv)
 
     bad_found = False
@@ -15,7 +21,7 @@ def main(argv=None):
         with open(file_path, "r", encoding="utf-8") as f:
             code = f.read()
 
-        metrics = {m.name: m.value for m in code_metrics(code)}
+        metrics = {m.name: m.value for m in code_metrics(code, strict=args.strict)}
         
         if metrics.get("parsing_error"):
             bad_found = True
