@@ -1,0 +1,65 @@
+The error message
+
+  OSError: Unable to synchronously open file (file signature not found)
+
+indicates that one of your worker files is either corrupted, incomplete, or isn’t a valid HDF5 file. Currently, your joining phase doesn’t check for this condition and proceeds to try to open every file. When it encounters an invalid file, the script crashes.
+
+To modify the script so that it consistently detects invalid files and stops the process cleanly, consider these steps:
+
+1. Before trying to open a worker file, check that it is indeed a valid HDF5 file. The h5py module provides a convenient function, h5py.is_hdf5(), which returns True if the file at the given path is a valid HDF5 file.
+
+2. Wrap the file-opening logic in a try/except block so that even if an issue arises (e.g., the file is unreadable or corrupted), you can log an error message and safely terminate the script.
+
+Below is an example of how you might modify the relevant portion of your code:
+
+------------------------------------------------
+#!/usr/bin/env python3
+import sys
+import logging
+import h5py
+import os
+
+def process_worker_files(worker_file_list):
+    for worker_file in worker_file_list:
+        # First, check if the file exists and is a valid HDF5 file.
+        if not os.path.exists(worker_file):
+            logging.error("Worker file does not exist: %s", worker_file)
+            sys.exit(1)
+            
+        if not h5py.is_hdf5(worker_file):
+            logging.error("Invalid HDF5 file signature: %s", worker_file)
+            sys.exit(1)
+
+        # Try to open the file safely in a try/except block.
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                # Process the file as needed
+                process_file(h5_in)
+        except OSError as e:
+            logging.error("Error opening file %s: %s", worker_file, e)
+            sys.exit(1)
+
+def process_file(h5_in):
+    # Your processing code here
+    pass
+
+def main():
+    worker_file_list = get_worker_file_list()  # however you get your file names
+    process_worker_files(worker_file_list)
+    # Continue with joining / other operations
+
+if __name__ == "__main__":
+    main()
+------------------------------------------------
+
+Key points in the code above:
+
+• The os.path.exists() check ensures that a missing file is caught early.
+  
+• h5py.is_hdf5(worker_file) confirms the file has a valid HDF5 signature. If it returns False, an error is logged and the process exits.
+  
+• The try/except block catches any OSError that might occur when opening a file.
+
+By integrating these checks, your script will reliably detect an invalid or missing worker file. This approach will log a clear error message and stop execution cleanly before the joining operation causes an unhandled exception.
+
+With these modifications, if any of the 50 seeds results in a problem with a worker file, the script will exit immediately with a logged error, helping you to diagnose and recover from the issue using any available backup files.

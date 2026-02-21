@@ -1,0 +1,293 @@
+Looking at your error and logs, I can diagnose the issue:
+
+## **Diagnosis**
+The error `OSError: Unable to synchronously open file (file signature not found)` indicates that one of the worker output files is corrupted or incomplete. Specifically, it's failing when the main script tries to read/merge the output files from multiple workers.
+
+From your logs:
+- The optimization completed 2999/3000 tasks successfully
+- The progress bar shows 100% completion, but then fails during the "joining" phase
+- The error occurs at line 448/463 when trying to open an HDF5 file
+
+## **Root Cause**
+The most likely causes:
+1. **Race condition**: A worker process was still writing to its output file when the main process tried to read it
+2. **Disk I/O issues**: The file wasn't fully flushed to disk before reading
+3. **Process interruption**: A worker was killed/interrupted before completing its write
+4. **Incomplete HDF5 file**: The file has a valid header but incomplete data
+
+## **Modified Script Solution**
+
+Here's how to modify the script to detect and handle this reliably:
+
+```python
+import os
+import h5py
+import pickle
+import signal
+import sys
+from pathlib import Path
+import logging
+
+# Add timeout and validation function
+def validate_hdf5_file(filepath, timeout=5):
+    """Validate HDF5 file with timeout and retry logic."""
+    max_retries = 3
+    retry_delay = 1
+    
+    for attempt in range(max_retries):
+        try:
+            # Check if file exists and has non-zero size
+            if not os.path.exists(filepath):
+                logging.error(f"File does not exist: {filepath}")
+                return False
+            
+            file_size = os.path.getsize(filepath)
+            if file_size == 0:
+                logging.error(f"File is empty (0 bytes): {filepath}")
+                return False
+            
+            # Set up timeout
+            def timeout_handler(signum, frame):
+                raise TimeoutError(f"Timeout reading {filepath}")
+            
+            signal.signal(signal.SIGALRM, timeout_handler)
+            signal.alarm(timeout)
+            
+            try:
+                # Try to open and validate the file
+                with h5py.File(filepath, 'r') as f:
+                    # Check if file has the expected structure
+                    if len(f.keys()) == 0:
+                        logging.error(f"File has no datasets: {filepath}")
+                        return False
+                    
+                    # Try to read a small amount of data
+                    for key in f.keys():
+                        _ = f[key][:]  # Try to read first dataset
+                        break
+                    
+                    return True
+            except (TimeoutError, OSError, KeyError, ValueError) as e:
+                logging.warning(f"Attempt {attempt + 1} failed for {filepath}: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                continue
+            finally:
+                signal.alarm(0)  # Disable alarm
+                
+        except Exception as e:
+            logging.error(f"Unexpected error validating {filepath}: {e}")
+            return False
+    
+    return False
+
+# Modify the main function to validate all files before processing
+def safe_open_hdf5(filepath, mode='r'):
+    """Safely open HDF5 file with validation."""
+    if not validate_hdf5_file(filepath):
+        raise ValueError(f"Invalid HDF5 file: {filepath}")
+    
+    return h5py.File(filepath, mode)
+
+# Add checkpointing to track progress
+def save_checkpoint(checkpoint_file, completed_files):
+    """Save checkpoint of successfully processed files."""
+    with open(checkpoint_file, 'wb') as f:
+        pickle.dump({
+            'completed_files': completed_files,
+            'timestamp': time.time()
+        }, f)
+
+def load_checkpoint(checkpoint_file):
+    """Load checkpoint if exists."""
+    if os.path.exists(checkpoint_file):
+        with open(checkpoint_file, 'rb') as f:
+            return pickle.load(f)
+    return {'completed_files': set()}
+
+# Modify the main merging function
+def merge_worker_files_safely(worker_files, output_file, checkpoint_file='checkpoint.pkl'):
+    """Safely merge worker files with error handling and recovery."""
+    
+    # Load previous checkpoint
+    checkpoint = load_checkpoint(checkpoint_file)
+    completed_files = checkpoint['completed_files']
+    
+    # Track corrupted files
+    corrupted_files = []
+    successful_merges = 0
+    
+    try:
+        with h5py.File(output_file, 'w') as h5_out:
+            for i, worker_file in enumerate(worker_files):
+                # Skip if already processed in previous run
+                if worker_file in completed_files:
+                    logging.info(f"Skipping already processed file: {worker_file}")
+                    continue
+                
+                try:
+                    # Validate before opening
+                    if not validate_hdf5_file(worker_file):
+                        corrupted_files.append(worker_file)
+                        logging.error(f"Skipping corrupted file: {worker_file}")
+                        continue
+                    
+                    # Open with timeout
+                    with safe_open_hdf5(worker_file, 'r') as h5_in:
+                        # Copy all datasets
+                        for key in h5_in.keys():
+                            if key not in h5_out:
+                                h5_in.copy(key, h5_out)
+                            else:
+                                # Append to existing dataset
+                                data = h5_in[key][:]
+                                h5_out[key].resize(
+                                    (h5_out[key].shape[0] + data.shape[0]), 
+                                    axis=0
+                                )
+                                h5_out[key][-data.shape[0]:] = data
+                    
+                    # Mark as completed
+                    completed_files.add(worker_file)
+                    successful_merges += 1
+                    
+                    # Save checkpoint every 10 files
+                    if successful_merges % 10 == 0:
+                        save_checkpoint(checkpoint_file, completed_files)
+                        logging.info(f"Checkpoint saved. Merged {successful_merges}/{len(worker_files)} files")
+                        
+                except Exception as e:
+                    logging.error(f"Failed to process {worker_file}: {e}")
+                    corrupted_files.append(worker_file)
+        
+        # Final checkpoint
+        save_checkpoint(checkpoint_file, completed_files)
+        
+        # Report results
+        logging.info(f"Successfully merged {successful_merges}/{len(worker_files)} files")
+        if corrupted_files:
+            logging.warning(f"Corrupted files ({len(corrupted_files)}):")
+            for f in corrupted_files:
+                logging.warning(f"  - {f}")
+            return False, corrupted_files
+            
+        return True, []
+        
+    except Exception as e:
+        logging.error(f"Fatal error during merge: {e}")
+        return False, corrupted_files
+
+# Add file recovery function
+def attempt_file_recovery(corrupted_files, backup_dir=None):
+    """Attempt to recover from corrupted files."""
+    recovered = []
+    
+    for filepath in corrupted_files:
+        try:
+            # Try to read as pickle first (if it's pickle format)
+            try:
+                with open(filepath, 'rb') as f:
+                    pickle.load(f)  # Test if it's valid pickle
+                logging.info(f"File {filepath} might be pickle format, not HDF5")
+                continue
+            except:
+                pass
+            
+            # Check for partial HDF5
+            if os.path.getsize(filepath) > 1024:  # Non-trivial size
+                # Try to fix by reading valid portions
+                with open(filepath, 'rb') as f:
+                    header = f.read(512)
+                    # Check for HDF5 signature
+                    if b'HDF' in header:
+                        logging.warning(f"File {filepath} has HDF header but failed to open")
+                        # Could implement more sophisticated recovery here
+            
+            # Look for backups
+            if backup_dir:
+                backup_file = os.path.join(backup_dir, os.path.basename(filepath))
+                if os.path.exists(backup_file):
+                    if validate_hdf5_file(backup_file):
+                        logging.info(f"Found valid backup for {filepath}")
+                        recovered.append((filepath, backup_file))
+                        
+        except Exception as e:
+            logging.error(f"Error attempting recovery for {filepath}: {e}")
+    
+    return recovered
+
+# In your main function, replace the problematic code:
+def main():
+    # ... existing code ...
+    
+    # Instead of directly opening:
+    # with h5py.File(worker_file, 'r') as h5_in:
+    
+    # Use the safe version:
+    success, corrupted = merge_worker_files_safely(worker_files, output_file)
+    
+    if not success:
+        logging.error("Failed to merge all worker files")
+        
+        # Attempt recovery
+        recovered = attempt_file_recovery(corrupted, backup_dir='./backups')
+        
+        if recovered:
+            logging.info(f"Recovered {len(recovered)} files from backups")
+            # Optionally retry with recovered files
+            
+        # Ask user what to do
+        response = input(f"{len(corrupted)} files corrupted. Continue with partial results? (y/n): ")
+        if response.lower() != 'y':
+            sys.exit(1)
+    
+    # ... rest of your code ...
+
+# Add emergency signal handler
+def handle_interrupt(signum, frame):
+    """Handle process interruption gracefully."""
+    logging.warning("Process interrupted. Saving checkpoint before exit...")
+    # Save current state
+    # ... save checkpoint logic ...
+    sys.exit(1)
+
+signal.signal(signal.SIGINT, handle_interrupt)
+signal.signal(signal.SIGTERM, handle_interrupt)
+```
+
+## **Quick Fix for Your Current Situation**
+
+For your specific case where one file is corrupted:
+
+1. **Identify the corrupted file**: 
+```python
+import os
+import h5py
+
+worker_files = [...]  # Your list of worker files
+for wf in worker_files:
+    try:
+        with h5py.File(wf, 'r') as f:
+            print(f"OK: {wf}")
+    except Exception as e:
+        print(f"BAD: {wf} - {e}")
+```
+
+2. **Remove/replace the corrupted file** and rerun just the missing optimization.
+
+3. **To recover your 2999 successful results**, you can modify the script to skip corrupted files and continue with what's valid.
+
+## **Prevention Strategies**
+
+1. **Add worker file validation** before the main process tries to read them
+2. **Implement checkpointing** to resume from where it failed
+3. **Use file locking** to prevent reading while writing
+4. **Add timeouts** for file operations
+5. **Create backups** of worker files before merging
+
+The key insight is that your multiprocessing workers completed successfully, but one output file got corrupted during or after writing. The modified script above will:
+- Validate all files before processing
+- Skip corrupted files (with logging)
+- Allow continuation with partial results
+- Provide recovery mechanisms
+- Handle interruptions gracefully

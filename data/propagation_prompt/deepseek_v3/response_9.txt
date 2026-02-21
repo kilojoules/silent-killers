@@ -1,0 +1,613 @@
+I'll create a script that propagates realistic measurement uncertainties through PyWake and performs Sobol sensitivity analysis on the effective wind speed (WS_eff) across the flow field. This will generate a series of images showing how sensitive the flow is to different input uncertainties at various times.
+
+```python
+"""
+Sobol Sensitivity Analysis for PyWake with Measurement Uncertainties
+This script propagates realistic measurement uncertainties through PyWake
+and analyzes the sensitivity of effective wind speed (WS_eff) across the flow field.
+"""
+
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.colors import Normalize
+import matplotlib.cm as cm
+from py_wake.wind_turbines import WindTurbine
+from py_wake.wind_turbines.power_ct_functions import PowerCtTabular
+from py_wake.site import UniformSite
+from py_wake import IEA37SimpleBastankhahGaussian
+from py_wake.examples.data.iea37 import iea37_path
+from py_wake.examples.data.iea37.iea37_reader import read_iea37_windturbine
+import pandas as pd
+from SALib.sample import saltelli
+from SALib.analyze import sobol
+import warnings
+warnings.filterwarnings('ignore')
+import os
+from datetime import datetime
+import json
+
+class PyWakeUncertaintyPropagation:
+    """
+    Class to propagate measurement uncertainties through PyWake and perform
+    Sobol sensitivity analysis on effective wind speed.
+    """
+    
+    def __init__(self, output_dir='sensitivity_results'):
+        """Initialize the uncertainty propagation analysis."""
+        self.output_dir = output_dir
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Create subdirectories for results
+        self.flow_field_dir = os.path.join(output_dir, 'flow_fields')
+        self.sensitivity_dir = os.path.join(output_dir, 'sensitivity_maps')
+        self.data_dir = os.path.join(output_dir, 'data')
+        
+        for dir_path in [self.flow_field_dir, self.sensitivity_dir, self.data_dir]:
+            os.makedirs(dir_path, exist_ok=True)
+        
+        # Initialize PyWake model
+        self.setup_pywake_model()
+        
+        # Define realistic measurement uncertainties
+        self.define_uncertainties()
+        
+        print(f"PyWake Uncertainty Propagation initialized. Results will be saved to: {output_dir}")
+    
+    def setup_pywake_model(self):
+        """Set up the PyWake wind farm model."""
+        # Load IEA 37 wind turbine data
+        wind_turbine = read_iea37_windturbine(iea37_path + 'IEA37_WindTurbine.csv')
+        
+        # Create site with uniform wind conditions
+        self.site = UniformSite(p_wd=[1], ti=0.1)
+        
+        # Create wind farm layout (3x3 grid)
+        self.x = np.array([0, 500, 1000, 0, 500, 1000, 0, 500, 1000])
+        self.y = np.array([0, 0, 0, 500, 500, 500, 1000, 1000, 1000])
+        
+        # Initialize wake model
+        self.wake_model = IEA37SimpleBastankhahGaussian(self.site, wind_turbine)
+        
+        # Define flow field grid
+        self.x_grid = np.arange(-500, 2000, 25)
+        self.y_grid = np.arange(-500, 2000, 25)
+        
+        print("PyWake model setup complete.")
+    
+    def define_uncertainties(self):
+        """Define realistic measurement uncertainties for input parameters."""
+        self.uncertainty_params = {
+            'wind_speed': {
+                'name': 'WS',
+                'bounds': [8.0, 12.0],  # m/s ± 2 m/s uncertainty
+                'nominal': 10.0,
+                'uncertainty': 0.2,  # 2% uncertainty
+                'unit': 'm/s'
+            },
+            'wind_direction': {
+                'name': 'WD',
+                'bounds': [270, 290],  # degrees ± 10° uncertainty
+                'nominal': 280.0,
+                'uncertainty': 2.0,  # 2° uncertainty
+                'unit': 'deg'
+            },
+            'turbulence_intensity': {
+                'name': 'TI',
+                'bounds': [0.08, 0.12],  # ± 0.02 uncertainty
+                'nominal': 0.10,
+                'uncertainty': 0.002,  # 2% uncertainty
+                'unit': '-'
+            },
+            'air_density': {
+                'name': 'RHO',
+                'bounds': [1.18, 1.22],  # kg/m³ ± 0.02 uncertainty
+                'nominal': 1.20,
+                'uncertainty': 0.01,  # ~0.8% uncertainty
+                'unit': 'kg/m³'
+            },
+            'wake_expansion': {
+                'name': 'WAKE_EXP',
+                'bounds': [0.95, 1.05],  # Multiplicative factor
+                'nominal': 1.0,
+                'uncertainty': 0.02,
+                'unit': '-'
+            }
+        }
+        
+        # Create problem definition for Sobol analysis
+        self.problem = {
+            'num_vars': len(self.uncertainty_params),
+            'names': [param['name'] for param in self.uncertainty_params.values()],
+            'bounds': [param['bounds'] for param in self.uncertainty_params.values()]
+        }
+        
+        print(f"Defined {len(self.uncertainty_params)} uncertainty parameters:")
+        for key, param in self.uncertainty_params.items():
+            print(f"  {param['name']}: {param['bounds'][0]} to {param['bounds'][1]} {param['unit']}")
+    
+    def generate_parameter_samples(self, n_samples=1024):
+        """
+        Generate parameter samples using Saltelli sampling for Sobol analysis.
+        
+        Args:
+            n_samples: Base number of samples (will generate N = n_samples * (2D + 2) samples)
+        """
+        print(f"Generating {n_samples} base samples for Sobol analysis...")
+        
+        # Generate samples using Saltelli sequence
+        param_values = saltelli.sample(self.problem, n_samples, calc_second_order=True)
+        
+        # Convert to dictionary format
+        samples = []
+        for i in range(len(param_values)):
+            sample_dict = {}
+            for j, param_name in enumerate(self.problem['names']):
+                sample_dict[param_name] = param_values[i, j]
+            samples.append(sample_dict)
+        
+        self.samples = samples
+        self.param_values = param_values
+        
+        print(f"Generated {len(samples)} total samples")
+        return samples
+    
+    def run_pywake_simulation(self, params):
+        """
+        Run PyWake simulation with given parameters.
+        
+        Args:
+            params: Dictionary of parameter values
+            
+        Returns:
+            flow_field: 2D array of effective wind speeds
+        """
+        # Extract parameters
+        ws = params['WS']
+        wd = params['WD']
+        ti = params['TI']
+        rho = params['RHO']
+        wake_exp = params['WAKE_EXP']
+        
+        # Modify wake model parameters if needed
+        # (In a real implementation, you might adjust model coefficients based on wake_exp)
+        
+        # Run simulation
+        sim_res = self.wake_model(
+            x=self.x,
+            y=self.y,
+            ws=ws,
+            wd=wd,
+            TI=ti
+        )
+        
+        # Calculate flow field
+        flow_field = sim_res.flow_field(
+            x=self.x_grid,
+            y=self.y_grid,
+            ws=ws,
+            wd=wd,
+            TI=ti
+        ).WS_eff.values
+        
+        return flow_field
+    
+    def perform_sobol_analysis(self, n_samples=512):
+        """
+        Perform Sobol sensitivity analysis on the flow field.
+        
+        Args:
+            n_samples: Base number of samples for Sobol analysis
+        """
+        print("\n" + "="*60)
+        print("Starting Sobol Sensitivity Analysis")
+        print("="*60)
+        
+        # Generate parameter samples
+        self.generate_parameter_samples(n_samples)
+        
+        # Run simulations for all samples
+        print(f"\nRunning {len(self.samples)} PyWake simulations...")
+        flow_fields = []
+        
+        for i, params in enumerate(self.samples):
+            if (i + 1) % 100 == 0:
+                print(f"  Completed {i + 1}/{len(self.samples)} simulations")
+            
+            flow_field = self.run_pywake_simulation(params)
+            flow_fields.append(flow_field)
+        
+        # Convert to numpy array
+        flow_fields = np.array(flow_fields)
+        
+        # Perform Sobol analysis for each grid point
+        print("\nPerforming Sobol analysis for each grid point...")
+        n_x = len(self.x_grid)
+        n_y = len(self.y_grid)
+        
+        # Initialize sensitivity arrays
+        S1 = np.zeros((n_x, n_y, self.problem['num_vars']))  # First-order indices
+        ST = np.zeros((n_x, n_y, self.problem['num_vars']))  # Total-order indices
+        
+        # Analyze each grid point
+        for i in range(n_x):
+            for j in range(n_y):
+                # Extract time series for this grid point
+                Y = flow_fields[:, i, j]
+                
+                # Perform Sobol analysis
+                try:
+                    Si = sobol.analyze(self.problem, Y, calc_second_order=False)
+                    S1[i, j, :] = Si['S1']
+                    ST[i, j, :] = Si['ST']
+                except:
+                    # Handle cases where analysis fails
+                    S1[i, j, :] = np.nan
+                    ST[i, j, :] = np.nan
+            
+            if (i + 1) % 10 == 0:
+                print(f"  Processed {i + 1}/{n_x} x-positions")
+        
+        self.S1 = S1
+        self.ST = ST
+        self.flow_fields = flow_fields
+        
+        # Save results
+        self.save_results()
+        
+        return S1, ST
+    
+    def save_results(self):
+        """Save analysis results to files."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Save sensitivity indices
+        np.save(os.path.join(self.data_dir, f'sobol_S1_{timestamp}.npy'), self.S1)
+        np.save(os.path.join(self.data_dir, f'sobol_ST_{timestamp}.npy'), self.ST)
+        
+        # Save parameter information
+        param_info = {
+            'parameters': self.uncertainty_params,
+            'problem_definition': self.problem,
+            'grid_info': {
+                'x_grid': self.x_grid.tolist(),
+                'y_grid': self.y_grid.tolist(),
+                'turbine_positions': {
+                    'x': self.x.tolist(),
+                    'y': self.y.tolist()
+                }
+            },
+            'timestamp': timestamp
+        }
+        
+        with open(os.path.join(self.data_dir, f'parameter_info_{timestamp}.json'), 'w') as f:
+            json.dump(param_info, f, indent=2)
+        
+        print(f"\nResults saved to {self.data_dir}")
+    
+    def visualize_sensitivity(self, time_step=0):
+        """
+        Create visualization of sensitivity analysis results.
+        
+        Args:
+            time_step: Time step to visualize (for time-series analysis)
+        """
+        print(f"\nCreating sensitivity visualizations...")
+        
+        # Create figure with subplots
+        fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+        axes = axes.flatten()
+        
+        # Plot 1: Nominal flow field
+        ax = axes[0]
+        nominal_params = {param['name']: param['nominal'] for param in self.uncertainty_params.values()}
+        nominal_flow = self.run_pywake_simulation(nominal_params)
+        
+        im = ax.contourf(self.x_grid, self.y_grid, nominal_flow.T, levels=50, cmap='viridis')
+        ax.scatter(self.x, self.y, c='red', s=100, marker='^', edgecolors='black')
+        ax.set_title('Nominal Flow Field (WS_eff)')
+        ax.set_xlabel('x [m]')
+        ax.set_ylabel('y [m]')
+        plt.colorbar(im, ax=ax, label='Wind Speed [m/s]')
+        
+        # Plot turbine positions
+        for i, (x, y) in enumerate(zip(self.x, self.y)):
+            ax.text(x, y, f'T{i+1}', ha='center', va='center', color='white', fontweight='bold')
+        
+        # Plot 2-6: Total-order sensitivity indices for each parameter
+        param_names = self.problem['names']
+        
+        for idx, (ax, param_name) in enumerate(zip(axes[1:], param_names)):
+            # Get total-order sensitivity for this parameter
+            sensitivity_map = self.ST[:, :, idx]
+            
+            # Create mask for NaN values
+            mask = np.isnan(sensitivity_map)
+            sensitivity_map_masked = np.ma.array(sensitivity_map, mask=mask)
+            
+            # Plot sensitivity map
+            im = ax.contourf(self.x_grid, self.y_grid, sensitivity_map_masked.T, 
+                           levels=50, cmap='hot_r', vmin=0, vmax=1)
+            ax.scatter(self.x, self.y, c='cyan', s=100, marker='^', edgecolors='black')
+            ax.set_title(f'Total-order Sensitivity: {param_name}')
+            ax.set_xlabel('x [m]')
+            ax.set_ylabel('y [m]')
+            plt.colorbar(im, ax=ax, label='Sensitivity Index')
+        
+        plt.tight_layout()
+        
+        # Save figure
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        fig_path = os.path.join(self.sensitivity_dir, f'sensitivity_maps_{timestamp}.png')
+        plt.savefig(fig_path, dpi=150, bbox_inches='tight')
+        plt.close()
+        
+        print(f"Sensitivity maps saved to: {fig_path}")
+        
+        # Create individual sensitivity plots
+        self.create_individual_sensitivity_plots()
+    
+    def create_individual_sensitivity_plots(self):
+        """Create individual plots for each parameter's sensitivity."""
+        param_names = self.problem['names']
+        
+        for param_idx, param_name in enumerate(param_names):
+            fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+            
+            # First-order sensitivity
+            ax = axes[0]
+            S1_map = self.S1[:, :, param_idx]
+            mask = np.isnan(S1_map)
+            S1_map_masked = np.ma.array(S1_map, mask=mask)
+            
+            im1 = ax.contourf(self.x_grid, self.y_grid, S1_map_masked.T, 
+                            levels=50, cmap='Blues', vmin=0, vmax=1)
+            ax.scatter(self.x, self.y, c='red', s=100, marker='^', edgecolors='black')
+            ax.set_title(f'First-order Sensitivity: {param_name}')
+            ax.set_xlabel('x [m]')
+            ax.set_ylabel('y [m]')
+            plt.colorbar(im1, ax=ax, label='Sensitivity Index')
+            
+            # Total-order sensitivity
+            ax = axes[1]
+            ST_map = self.ST[:, :, param_idx]
+            mask = np.isnan(ST_map)
+            ST_map_masked = np.ma.array(ST_map, mask=mask)
+            
+            im2 = ax.contourf(self.x_grid, self.y_grid, ST_map_masked.T, 
+                            levels=50, cmap='Reds', vmin=0, vmax=1)
+            ax.scatter(self.x, self.y, c='cyan', s=100, marker='^', edgecolors='black')
+            ax.set_title(f'Total-order Sensitivity: {param_name}')
+            ax.set_xlabel('x [m]')
+            ax.set_ylabel('y [m]')
+            plt.colorbar(im2, ax=ax, label='Sensitivity Index')
+            
+            plt.tight_layout()
+            
+            # Save individual plot
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            fig_path = os.path.join(self.sensitivity_dir, f'sensitivity_{param_name}_{timestamp}.png')
+            plt.savefig(fig_path, dpi=150, bbox_inches='tight')
+            plt.close()
+        
+        print(f"Individual sensitivity plots saved to {self.sensitivity_dir}")
+    
+    def create_time_series_analysis(self, n_time_steps=5):
+        """
+        Create sensitivity analysis for different time steps (simulated by varying wind conditions).
+        
+        Args:
+            n_time_steps: Number of time steps to analyze
+        """
+        print(f"\nCreating time series analysis with {n_time_steps} time steps...")
+        
+        # Vary wind direction to simulate different times
+        wd_values = np.linspace(270, 290, n_time_steps)
+        
+        for time_idx, wd in enumerate(wd_values):
+            print(f"\nTime step {time_idx + 1}/{n_time_steps} (WD = {wd:.1f}°)")
+            
+            # Update wind direction in uncertainty parameters
+            self.uncertainty_params['wind_direction']['nominal'] = wd
+            self.uncertainty_params['wind_direction']['bounds'] = [wd - 5, wd + 5]
+            
+            # Update problem definition
+            self.problem['bounds'][1] = [wd - 5, wd + 5]
+            
+            # Perform Sobol analysis for this time step
+            S1, ST = self.perform_sobol_analysis(n_samples=256)
+            
+            # Create visualization for this time step
+            self.visualize_time_step(time_idx, wd, S1, ST)
+    
+    def visualize_time_step(self, time_idx, wd, S1, ST):
+        """Create visualization for a specific time step."""
+        fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+        axes = axes.flatten()
+        
+        # Plot nominal flow field for this time step
+        ax = axes[0]
+        nominal_params = {param['name']: param['nominal'] for param in self.uncertainty_params.values()}
+        nominal_flow = self.run_pywake_simulation(nominal_params)
+        
+        im = ax.contourf(self.x_grid, self.y_grid, nominal_flow.T, levels=50, cmap='viridis')
+        ax.scatter(self.x, self.y, c='red', s=100, marker='^', edgecolors='black')
+        ax.set_title(f'Flow Field at Time {time_idx + 1}\nWD = {wd:.1f}°')
+        ax.set_xlabel('x [m]')
+        ax.set_ylabel('y [m]')
+        plt.colorbar(im, ax=ax, label='Wind Speed [m/s]')
+        
+        # Plot total-order sensitivity for each parameter
+        param_names = self.problem['names']
+        
+        for idx, (ax, param_name) in enumerate(zip(axes[1:], param_names)):
+            sensitivity_map = ST[:, :, idx]
+            mask = np.isnan(sensitivity_map)
+            sensitivity_map_masked = np.ma.array(sensitivity_map, mask=mask)
+            
+            im = ax.contourf(self.x_grid, self.y_grid, sensitivity_map_masked.T, 
+                           levels=50, cmap='hot_r', vmin=0, vmax=1)
+            ax.scatter(self.x, self.y, c='cyan', s=100, marker='^', edgecolors='black')
+            ax.set_title(f'{param_name} Sensitivity\n(Time {time_idx + 1})')
+            ax.set_xlabel('x [m]')
+            ax.set_ylabel('y [m]')
+            plt.colorbar(im, ax=ax, label='Sensitivity Index')
+        
+        plt.tight_layout()
+        
+        # Save figure
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        fig_path = os.path.join(self.flow_field_dir, f'time_step_{time_idx + 1:02d}_wd_{wd:.1f}_{timestamp}.png')
+        plt.savefig(fig_path, dpi=150, bbox_inches='tight')
+        plt.close()
+        
+        print(f"Time step {time_idx + 1} visualization saved to: {fig_path}")
+    
+    def generate_summary_report(self):
+        """Generate a summary report of the sensitivity analysis."""
+        print("\n" + "="*60)
+        print("Generating Summary Report")
+        print("="*60)
+        
+        # Calculate average sensitivity indices
+        avg_S1 = np.nanmean(self.S1, axis=(0, 1))
+        avg_ST = np.nanmean(self.ST, axis=(0, 1))
+        
+        # Create summary DataFrame
+        summary_df = pd.DataFrame({
+            'Parameter': self.problem['names'],
+            'Avg_First_Order': avg_S1,
+            'Avg_Total_Order': avg_ST,
+            'Interaction_Effect': avg_ST - avg_S1
+        })
+        
+        # Sort by total-order sensitivity
+        summary_df = summary_df.sort_values('Avg_Total_Order', ascending=False)
+        
+        # Print summary
+        print("\nAverage Sensitivity Indices:")
+        print("-" * 60)
+        print(summary_df.to_string(index=False))
+        
+        # Identify most sensitive parameters
+        most_sensitive = summary_df.iloc[0]
+        print(f"\nMost sensitive parameter: {most_sensitive['Parameter']}")
+        print(f"  Total-order sensitivity: {most_sensitive['Avg_Total_Order']:.3f}")
+        print(f"  Interaction effect: {most_sensitive['Interaction_Effect']:.3f}")
+        
+        # Save summary to CSV
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        csv_path = os.path.join(self.output_dir, f'sensitivity_summary_{timestamp}.csv')
+        summary_df.to_csv(csv_path, index=False)
+        
+        print(f"\nSummary report saved to: {csv_path}")
+        
+        # Create bar chart of sensitivity indices
+        self.plot_sensitivity_bars(summary_df, timestamp)
+    
+    def plot_sensitivity_bars(self, summary_df, timestamp):
+        """Create bar chart of sensitivity indices."""
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+        
+        # First-order indices
+        ax1.barh(summary_df['Parameter'], summary_df['Avg_First_Order'], color='skyblue')
+        ax1.set_xlabel('First-order Sensitivity Index')
+        ax1.set_title('Average First-order Sensitivity Indices')
+        ax1.set_xlim([0, 1])
+        
+        # Total-order indices
+        ax2.barh(summary_df['Parameter'], summary_df['Avg_Total_Order'], color='lightcoral')
+        ax2.set_xlabel('Total-order Sensitivity Index')
+        ax2.set_title('Average Total-order Sensitivity Indices')
+        ax2.set_xlim([0, 1])
+        
+        plt.tight_layout()
+        
+        # Save figure
+        fig_path = os.path.join(self.output_dir, f'sensitivity_bars_{timestamp}.png')
+        plt.savefig(fig_path, dpi=150, bbox_inches='tight')
+        plt.close()
+        
+        print(f"Sensitivity bar chart saved to: {fig_path}")
+
+
+def main():
+    """Main function to run the uncertainty propagation analysis."""
+    # Initialize the analysis
+    analysis = PyWakeUncertaintyPropagation(output_dir='pywake_sensitivity_analysis')
+    
+    # Perform Sobol sensitivity analysis
+    S1, ST = analysis.perform_sobol_analysis(n_samples=512)
+    
+    # Visualize results
+    analysis.visualize_sensitivity()
+    
+    # Generate time series analysis (optional)
+    # analysis.create_time_series_analysis(n_time_steps=3)
+    
+    # Generate summary report
+    analysis.generate_summary_report()
+    
+    print("\n" + "="*60)
+    print("Analysis Complete!")
+    print("="*60)
+    print("\nResults available in:")
+    print(f"  - Sensitivity maps: {analysis.sensitivity_dir}")
+    print(f"  - Flow field images: {analysis.flow_field_dir}")
+    print(f"  - Data files: {analysis.data_dir}")
+    print(f"  - Summary report: {analysis.output_dir}/")
+
+
+if __name__ == "__main__":
+    main()
+```
+
+This script provides a comprehensive uncertainty propagation and sensitivity analysis framework for PyWake. Here's what it does:
+
+## Key Features:
+
+1. **Realistic Measurement Uncertainties**: Defines realistic uncertainties for:
+   - Wind speed (±2 m/s)
+   - Wind direction (±10°)
+   - Turbulence intensity (±0.02)
+   - Air density (±0.02 kg/m³)
+   - Wake expansion coefficient (±5%)
+
+2. **Sobol Sensitivity Analysis**: Uses the SALib library to perform global sensitivity analysis using the Saltelli sampling method.
+
+3. **Flow Field Visualization**: Generates:
+   - Nominal flow field plots
+   - Sensitivity maps for each parameter
+   - Time series analysis (simulated by varying wind direction)
+
+4. **Comprehensive Outputs**:
+   - PNG images of sensitivity maps
+   - NumPy arrays with sensitivity indices
+   - JSON files with parameter information
+   - CSV summary reports
+   - Bar charts of average sensitivity indices
+
+## How to Use:
+
+1. **Install required packages**:
+```bash
+pip install py-wake SALib matplotlib numpy pandas
+```
+
+2. **Run the analysis**:
+```python
+python pywake_sensitivity_analysis.py
+```
+
+3. **Adjust parameters**:
+   - Modify `n_samples` for more/less accurate results
+   - Change wind farm layout in `setup_pywake_model()`
+   - Adjust uncertainty ranges in `define_uncertainties()`
+
+## Output Interpretation:
+
+- **First-order indices (S1)**: Measure the direct effect of each parameter
+- **Total-order indices (ST)**: Measure total effect including interactions
+- **High sensitivity areas**: Regions where flow is most affected by uncertainties
+- **Interaction effects**: Difference between ST and S1 indicates parameter interactions
+
+The script will create a directory structure with all results, making it easy to analyze how measurement uncertainties propagate through the wake model and affect the predicted flow field.

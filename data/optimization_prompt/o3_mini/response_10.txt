@@ -1,0 +1,72 @@
+The error message
+
+  OSError: Unable to synchronously open file (file signature not found)
+
+suggests that one (or more) of the worker files is not a valid HDF5 file. This might happen if a file is truncated, corrupted, or if the joining operation (or another operation) left a partially written file on disk. As a result, when the script later attempts to open the file using h5py.File(worker_file, 'r'), it throws an exception.
+
+To fix this you have two options:
+
+1. Validate each file before attempting to open it.
+2. Catch the error when opening the file and abort cleanly if an invalid file is encountered.
+
+Both approaches can ensure that the issue is detected reliably and that the overall process stops in a controlled fashion.
+
+Below are two possible modifications:
+
+──────────────────────────────
+Option 1: Pre-validate with h5py.is_hdf5
+
+Before opening each file, use h5py.is_hdf5(filename). This function returns True if the file appears to be a valid HDF5 file, otherwise False. For example:
+
+  import sys
+  import h5py
+  import logging
+
+  logger = logging.getLogger("mp_main")
+
+  def main():
+    worker_files = ["worker1.h5", "worker2.h5", ...]  # list of your files
+    for worker_file in worker_files:
+      if not h5py.is_hdf5(worker_file):
+        logger.error("Invalid file detected: %s. Aborting process.", worker_file)
+        sys.exit(1)
+      with h5py.File(worker_file, 'r') as h5_in:
+        # process file
+        pass
+
+  if __name__ == "__main__":
+    main()
+
+──────────────────────────────
+Option 2: Try/except around file opening
+
+If you’d prefer to try opening the file and catch the error, you can wrap the h5py.File call with a try/except block. That way you catch the OSError and terminate the process with a clear error message. For example:
+
+  import sys
+  import h5py
+  import logging
+
+  logger = logging.getLogger("mp_main")
+
+  def main():
+    worker_files = ["worker1.h5", "worker2.h5", ...]  # list of your files
+    for worker_file in worker_files:
+      try:
+        with h5py.File(worker_file, 'r') as h5_in:
+          # process file
+          pass
+      except OSError as e:
+        logger.error("Failed to open %s: %s. Aborting process.", worker_file, e)
+        sys.exit(1)
+
+  if __name__ == "__main__":
+    main()
+
+──────────────────────────────
+In both versions above, if an invalid worker file is detected, the script logs an error message and aborts (using sys.exit(1)). This ensures that you do not continue processing if a fault is encountered.
+
+Which option to use depends on your workflow:
+ • If you want to avoid trying to open an obviously corrupted file, use Option 1.
+ • If you’d like to catch any file-access issues during the opening process (which may include issues beyond file format problems), Option 2 might be better.
+
+Either modification will reliably detect an invalid worker file and stop the process cleanly, allowing you to address the underlying file generation or joining issue before proceeding.

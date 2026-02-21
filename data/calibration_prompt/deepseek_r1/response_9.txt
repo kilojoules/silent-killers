@@ -1,0 +1,587 @@
+Looking at your code, I can see several areas for improvement. The main issues I notice are:
+
+1. **Monolithic structure**: Everything is in one big block
+2. **Repetitive code**: Similar logic duplicated in multiple places
+3. **Inconsistent variable handling**: Some parameters set in different places
+4. **Complex conditional logic**: Hard to follow the MODEL/DOWNWIND branching
+
+Here's a modular rewrite that addresses these issues while keeping all your deficit settings and MODEL/UPSTREAM logic:
+
+```python
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+import xarray as xr
+from bayes_opt import BayesianOptimization
+from py_wake import HorizontalGrid
+from py_wake.rotor_avg_models.gaussian_overlap_model import GaussianOverlapAvgModel
+from py_wake.deficit_models.gaussian import TurboGaussianDeficit, BlondelSuperGaussianDeficit2020
+from py_wake.examples.data.dtu10mw._dtu10mw import DTU10MW
+from py_wake.deflection_models import JimenezWakeDeflection
+from py_wake.turbulence_models import CrespoHernandez
+from py_wake.rotor_avg_models import RotorCenter
+from py_wake.deficit_models import SelfSimilarityDeficit2020
+from py_wake.wind_farm_models import PropagateDownwind, All2AllIterative
+from py_wake.superposition_models import LinearSum
+from py_wake.ground_models import Mirror
+from py_wake.examples.data.hornsrev1 import Hornsrev1Site
+from py_wake.deficit_models.utils import ct2a_mom1d
+
+
+class WakeModelOptimizer:
+    """Modular wake model optimizer with Bayesian optimization"""
+    
+    def __init__(self, model_type=2, downstream=True):
+        """
+        Initialize the optimizer
+        
+        Parameters
+        ----------
+        model_type : int
+            1 for BlondelSuperGaussianDeficit2020, 2 for TurboGaussianDeficit
+        downstream : bool
+            True for downstream region, False for upstream
+        """
+        self.MODEL = model_type
+        self.DOWNWIND = downstream
+        
+        # Load data
+        self._load_data()
+        
+        # Initialize turbine and site
+        self.turbine = DTU10MW()
+        self.D = self.turbine.diameter()
+        self.site = Hornsrev1Site()
+        
+        # Define parameter bounds and defaults
+        self._define_parameter_bounds()
+        
+        # Pre-compute reference data
+        self._precompute_reference_data()
+    
+    def _load_data(self):
+        """Load and preprocess reference data"""
+        dat = xr.load_dataset('./DTU10MW.nc')
+        dat = dat.assign_coords(x=dat.x * self.D, y=dat.y * self.D)
+        
+        # Define region of interest
+        if self.DOWNWIND:
+            X_LB, X_UB = 2, 10
+        else:
+            X_LB, X_UB = -2, -1
+            
+        roi_x = slice(X_LB * self.D, X_UB * self.D)
+        roi_y = slice(-2 * self.D, 2 * self.D)
+        
+        self.flow_roi = dat.sel(x=roi_x, y=roi_y)
+        self.target_x = self.flow_roi.x
+        self.target_y = self.flow_roi.y
+    
+    def _define_parameter_bounds(self):
+        """Define parameter bounds for Bayesian optimization"""
+        if self.MODEL == 1:
+            if self.DOWNWIND:
+                self.pbounds = {
+                    'a_s': (0.001, 0.5),
+                    'b_s': (0.001, 0.01),
+                    'c_s': (0.001, 0.5),
+                    'b_f': (-2, 1),
+                    'c_f': (0.1, 5),
+                    'ch1': (-1, 2), 'ch2': (-1, 2), 'ch3': (-1, 2), 'ch4': (-1, 2),
+                }
+                self.defaults = {
+                    'a_s': 0.17, 'b_s': 0.005, 'c_s': 0.2, 'b_f': -0.68, 'c_f': 2.41,
+                    'ch1': 0.73, 'ch2': 0.8325, 'ch3': -0.0325, 'ch4': -0.32
+                }
+            else:
+                self.pbounds = {
+                    'ss_alpha': (0.05, 3), 'ss_beta': (0.05, 3),
+                    'rp1': (-2, 2), 'rp2': (-2, 2),
+                    'ng1': (-3, 3), 'ng2': (-3, 3), 'ng3': (-3, 3), 'ng4': (-3, 3),
+                    'fg1': (-2, 2), 'fg2': (-2, 2), 'fg3': (-2, 2), 'fg4': (-2, 2)
+                }
+                self.defaults = {
+                    'ss_alpha': 0.8888888888888888, 'ss_beta': 1.4142135623730951,
+                    'rp1': -0.672, 'rp2': 0.4897,
+                    'ng1': -1.381, 'ng2': 2.627, 'ng3': -1.524, 'ng4': 1.336,
+                    'fg1': -0.06489, 'fg2': 0.4911, 'fg3': 1.116, 'fg4': -0.1577
+                }
+        else:  # MODEL == 2
+            self.pbounds = {
+                'A': (0.001, .5), 'cti1': (.01, 5), 'cti2': (0.01, 5),
+                'ceps': (0.01, 3), 'ctlim': (0.01, 1),
+                'ch1': (-1, 2), 'ch2': (-1, 2), 'ch3': (-1, 2), 'ch4': (-1, 2),
+            }
+            self.defaults = {
+                'A': 0.04, 'cti1': 1.5, 'cti2': 0.8, 'ceps': 0.25, 'ctlim': 0.999,
+                'ch1': 0.73, 'ch2': 0.8325, 'ch3': -0.0325, 'ch4': -0.3
+            }
+    
+    def _precompute_reference_data(self):
+        """Pre-compute reference data for all wind speed and turbulence conditions"""
+        TIs = np.arange(0.05, 0.45, 0.05)
+        WSs = np.arange(4, 11)
+        
+        self.full_ti = np.tile(TIs, WSs.size)
+        self.full_ws = np.repeat(WSs, TIs.size)
+        
+        # Create baseline model for reference
+        baseline_wfm = All2AllIterative(
+            self.site, self.turbine,
+            wake_deficitModel=BlondelSuperGaussianDeficit2020(),
+            superpositionModel=LinearSum(),
+            deflectionModel=None,
+            turbulenceModel=CrespoHernandez(),
+            blockage_deficitModel=SelfSimilarityDeficit2020()
+        )
+        
+        # Run simulation for all conditions
+        sim_res = baseline_wfm(
+            [0], [0], 
+            ws=self.full_ws, 
+            TI=self.full_ti, 
+            wd=[270] * self.full_ti.size, 
+            time=True
+        )
+        
+        # Get flow map
+        flow_map = sim_res.flow_map(
+            HorizontalGrid(x=self.target_x, y=self.target_y)
+        )
+        
+        # Extract observed deficits
+        obs_values = []
+        for t in range(flow_map.time.size):
+            this_pred_sim = sim_res.isel(time=t, wt=0)
+            observed_deficit = self.flow_roi.deficits.interp(
+                ct=this_pred_sim.CT, ti=this_pred_sim.TI, z=0
+            )
+            obs_values.append(observed_deficit.T)
+        
+        self.all_obs = xr.concat(obs_values, dim='time')
+    
+    def create_wfm(self, params):
+        """
+        Create wind farm model with given parameters
+        
+        Parameters
+        ----------
+        params : dict
+            Dictionary of model parameters
+        
+        Returns
+        -------
+        wfm : All2AllIterative
+            Configured wind farm model
+        """
+        # Extract turbulence parameters
+        turb_args = {'c': np.array([params['ch1'], params['ch2'], 
+                                   params['ch3'], params['ch4']])}
+        
+        if self.DOWNWIND:
+            if self.MODEL == 1:
+                # BlondelSuperGaussianDeficit2020 for downstream
+                def_args = {k: params[k] for k in ['a_s', 'b_s', 'c_s', 'b_f', 'c_f']}
+                wake_deficitModel = BlondelSuperGaussianDeficit2020(**def_args)
+                blockage_args = {}
+            else:
+                # TurboGaussianDeficit for downstream
+                wake_deficitModel = TurboGaussianDeficit(
+                    A=params['A'], 
+                    cTI=[params['cti1'], params['cti2']],
+                    ctlim=params['ctlim'], 
+                    ceps=params['ceps'],
+                    ct2a=ct2a_mom1d,
+                    groundModel=Mirror(),
+                    rotorAvgModel=GaussianOverlapAvgModel()
+                )
+                wake_deficitModel.WS_key = 'WS_jlk'
+                blockage_args = {}
+        else:
+            # Upstream configuration
+            def_args = {}
+            wake_deficitModel = BlondelSuperGaussianDeficit2020(**def_args)
+            blockage_args = {
+                'ss_alpha': params['ss_alpha'],
+                'ss_beta': params['ss_beta'],
+                'r12p': np.array([params['rp1'], params['rp2']]),
+                'ngp': np.array([params['ng1'], params['ng2'], 
+                                params['ng3'], params['ng4']])
+            }
+            
+            if self.MODEL == 2:
+                blockage_args['groundModel'] = Mirror()
+        
+        # Create and return wind farm model
+        wfm = All2AllIterative(
+            self.site, self.turbine,
+            wake_deficitModel=wake_deficitModel,
+            superpositionModel=LinearSum(),
+            deflectionModel=None,
+            turbulenceModel=CrespoHernandez(**turb_args),
+            blockage_deficitModel=SelfSimilarityDeficit2020(**blockage_args)
+        )
+        
+        return wfm
+    
+    def evaluate_model(self, params):
+        """
+        Evaluate model with given parameters
+        
+        Parameters
+        ----------
+        params : dict
+            Dictionary of model parameters
+        
+        Returns
+        -------
+        dict
+            Dictionary containing RMSE, average error, and p90 error
+        """
+        try:
+            # Create model
+            wfm = self.create_wfm(params)
+            
+            # Run simulation
+            sim_res = wfm(
+                [0], [0],
+                ws=self.full_ws,
+                TI=self.full_ti,
+                wd=[270] * self.full_ti.size,
+                time=True
+            )
+            
+            # Compute flow maps for all time steps
+            flow_maps = []
+            for t in range(len(self.full_ws)):
+                fm = sim_res.flow_map(
+                    HorizontalGrid(x=self.target_x, y=self.target_y),
+                    time=[t]
+                )['WS_eff']
+                flow_maps.append(fm)
+            
+            flow_map = xr.concat(flow_maps, dim='time')
+            
+            # Calculate velocity deficits (observed data has deficits, not velocities)
+            # Convert predicted velocity to deficit: (U_inf - U_wake) / U_inf
+            predicted_deficits = (sim_res.WS - flow_map.isel(h=0)) / sim_res.WS
+            
+            # Calculate errors
+            errors = self.all_obs - predicted_deficits
+            rmse = float(np.sqrt((errors ** 2).mean(['x', 'y'])).mean('time'))
+            
+            # Calculate average and p90 errors across spatial domain
+            spatial_errors = errors.mean(['x', 'y'])  # Average over space for each time
+            avg_error = float(spatial_errors.mean())
+            p90_error = float(np.percentile(np.abs(spatial_errors), 90))
+            
+            if np.isnan(rmse):
+                return {'rmse': 0.5, 'avg_error': 0, 'p90_error': 0}
+                
+            return {
+                'rmse': rmse,
+                'avg_error': avg_error,
+                'p90_error': p90_error
+            }
+            
+        except Exception as e:
+            print(f"Error in evaluation: {e}")
+            return {'rmse': 0.5, 'avg_error': 0, 'p90_error': 0}
+    
+    def optimization_objective(self, **kwargs):
+        """Objective function for Bayesian optimization"""
+        results = self.evaluate_model(kwargs)
+        return -results['rmse']  # Negative for maximization
+    
+    def run_optimization(self, init_points=50, n_iter=200):
+        """Run Bayesian optimization"""
+        self.optimizer = BayesianOptimization(
+            f=self.optimization_objective,
+            pbounds=self.pbounds,
+            random_state=1
+        )
+        
+        # Probe default parameters
+        self.optimizer.probe(params=self.defaults, lazy=True)
+        
+        # Run optimization
+        self.optimizer.maximize(init_points=init_points, n_iter=n_iter)
+        
+        # Store best results
+        self.best_params = self.optimizer.max['params']
+        self.best_rmse = -self.optimizer.max['target']
+        
+        return self.best_params, self.best_rmse
+    
+    def create_convergence_animation(self, filename):
+        """Create animation of optimization convergence"""
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+        
+        def update_plot(frame):
+            ax1.clear()
+            ax2.clear()
+            
+            # Track best RMSE so far
+            best_so_far_rmse = float('inf')
+            best_so_far_rmses = []
+            for i in range(frame + 1):
+                current_rmse = -self.optimizer.space.target[i]
+                if current_rmse <= best_so_far_rmse:
+                    best_so_far_rmse = current_rmse
+                best_so_far_rmses.append(best_so_far_rmse)
+            
+            # Plot convergence
+            ax1.plot(-np.array(self.optimizer.space.target), color='gray', alpha=0.5)
+            ax1.plot(np.array(best_so_far_rmses), color='black')
+            ax1.set_title('Optimization Convergence')
+            ax1.set_xlabel('Iteration')
+            ax1.set_ylabel('RMSE')
+            ax1.grid(True)
+            
+            # Plot parameter values
+            if frame >= 0:
+                best_so_far_params = self.optimizer.res[np.argmin(-self.optimizer.space.target[:frame+1])]['params']
+                keys = list(best_so_far_params.keys())
+                best_vals = [best_so_far_params[k] for k in keys]
+                default_vals = [self.defaults.get(k, 0) for k in keys]
+                
+                ax2.bar(keys, best_vals, label='Optimized')
+                ax2.bar(keys, default_vals, edgecolor='black', linewidth=2, 
+                       color='none', label='Default')
+                ax2.set_title(f'Best RMSE: {best_so_far_rmse:.4f}')
+                ax2.tick_params(axis='x', rotation=45)
+                ax2.legend()
+            
+            plt.tight_layout()
+            return ax1, ax2
+        
+        ani = animation.FuncAnimation(
+            fig, update_plot, 
+            frames=len(self.optimizer.space.target), 
+            repeat=False
+        )
+        
+        # Save animation
+        writer = animation.FFMpegWriter(fps=15)
+        ani.save(filename, writer=writer)
+        plt.close('all')
+    
+    def plot_error_statistics(self, best_params):
+        """
+        Plot error statistics including average and p90 errors
+        
+        Parameters
+        ----------
+        best_params : dict
+            Optimized parameters
+        """
+        # Create model with best parameters
+        wfm = self.create_wfm(best_params)
+        
+        # Run simulation
+        sim_res = wfm(
+            [0], [0],
+            ws=self.full_ws,
+            TI=self.full_ti,
+            wd=[270] * self.full_ti.size,
+            time=True
+        )
+        
+        # Compute flow maps and errors
+        flow_maps = []
+        for t in range(len(self.full_ws)):
+            fm = sim_res.flow_map(
+                HorizontalGrid(x=self.target_x, y=self.target_y),
+                time=[t]
+            )['WS_eff']
+            flow_maps.append(fm)
+        
+        flow_map = xr.concat(flow_maps, dim='time')
+        
+        # Calculate and plot errors for each condition
+        rmse_values = []
+        avg_errors = []
+        p90_errors = []
+        
+        for t in range(len(self.full_ws)):
+            this_pred_sim = sim_res.isel(time=t)
+            observed_deficit = self.flow_roi.deficits.interp(
+                ct=this_pred_sim.CT, ti=this_pred_sim.TI, z=0
+            ).isel(wt=0)
+            
+            # Calculate predicted deficit
+            predicted_deficit = (this_pred_sim.WS - flow_map.isel(h=0, time=t)) / this_pred_sim.WS
+            
+            # Calculate errors
+            errors = observed_deficit.T - predicted_deficit
+            
+            # Calculate statistics
+            rmse = np.sqrt(np.mean(errors**2))
+            avg_error = np.mean(errors)
+            p90_error = np.percentile(np.abs(errors), 90)
+            
+            rmse_values.append(rmse)
+            avg_errors.append(avg_error)
+            p90_errors.append(p90_error)
+            
+            # Create enhanced plot with error statistics
+            fig, axes = plt.subplots(4, 1, figsize=(8, 16))
+            
+            # Plot 1: Observed deficit
+            im1 = axes[0].contourf(self.target_x, self.target_y, observed_deficit.T)
+            plt.colorbar(im1, ax=axes[0])
+            axes[0].set_title(f'Observed Deficit (WS={this_pred_sim.ws:.1f}, TI={this_pred_sim.TI:.2f})')
+            axes[0].set_ylabel('y/D')
+            
+            # Plot 2: Predicted deficit
+            im2 = axes[1].contourf(self.target_x, self.target_y, predicted_deficit)
+            plt.colorbar(im2, ax=axes[1])
+            axes[1].set_title('Predicted Deficit')
+            axes[1].set_ylabel('y/D')
+            
+            # Plot 3: Error field
+            im3 = axes[2].contourf(self.target_x, self.target_y, errors)
+            plt.colorbar(im3, ax=axes[2])
+            axes[2].set_title('Error (Observed - Predicted)')
+            axes[2].set_ylabel('y/D')
+            
+            # Plot 4: Error statistics summary
+            axes[3].axis('off')
+            stats_text = (
+                f'RMSE: {rmse:.4f}\n'
+                f'Mean Error: {avg_error:.4f}\n'
+                f'P90 Error: {p90_error:.4f}\n'
+                f'Max Error: {errors.max().values:.4f}\n'
+                f'Min Error: {errors.min().values:.4f}\n'
+                f'Std Error: {errors.std().values:.4f}'
+            )
+            axes[3].text(0.1, 0.5, stats_text, fontsize=12, 
+                        verticalalignment='center',
+                        bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+            
+            plt.tight_layout()
+            plt.savefig(f'figs/error_analysis_{t:03d}.png', dpi=150)
+            plt.close()
+        
+        # Create summary plot of all errors
+        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+        
+        # RMSE distribution
+        axes[0, 0].hist(rmse_values, bins=20, edgecolor='black')
+        axes[0, 0].axvline(np.mean(rmse_values), color='red', linestyle='--', 
+                          label=f'Mean: {np.mean(rmse_values):.4f}')
+        axes[0, 0].set_title('RMSE Distribution')
+        axes[0, 0].set_xlabel('RMSE')
+        axes[0, 0].set_ylabel('Frequency')
+        axes[0, 0].legend()
+        
+        # Average error distribution
+        axes[0, 1].hist(avg_errors, bins=20, edgecolor='black')
+        axes[0, 1].axvline(np.mean(avg_errors), color='red', linestyle='--',
+                          label=f'Mean: {np.mean(avg_errors):.4f}')
+        axes[0, 1].set_title('Average Error Distribution')
+        axes[0, 1].set_xlabel('Average Error')
+        axes[0, 1].legend()
+        
+        # P90 error distribution
+        axes[1, 0].hist(p90_errors, bins=20, edgecolor='black')
+        axes[1, 0].axvline(np.mean(p90_errors), color='red', linestyle='--',
+                          label=f'Mean: {np.mean(p90_errors):.4f}')
+        axes[1, 0].set_title('P90 Error Distribution')
+        axes[1, 0].set_xlabel('P90 Error')
+        axes[1, 0].legend()
+        
+        # Scatter plot: RMSE vs Average Error
+        axes[1, 1].scatter(rmse_values, avg_errors, alpha=0.6)
+        axes[1, 1].set_xlabel('RMSE')
+        axes[1, 1].set_ylabel('Average Error')
+        axes[1, 1].set_title('RMSE vs Average Error')
+        axes[1, 1].grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.savefig('figs/error_statistics_summary.png', dpi=150)
+        plt.close()
+        
+        # Print summary statistics
+        print("\n" + "="*50)
+        print("ERROR STATISTICS SUMMARY")
+        print("="*50)
+        print(f"Overall RMSE: {np.mean(rmse_values):.4f}")
+        print(f"Overall Average Error: {np.mean(avg_errors):.4f}")
+        print(f"Overall P90 Error: {np.mean(p90_errors):.4f}")
+        print(f"RMSE Range: [{min(rmse_values):.4f}, {max(rmse_values):.4f}]")
+        print("="*50)
+        
+        return rmse_values, avg_errors, p90_errors
+
+
+# Main execution
+if __name__ == "__main__":
+    # Configuration
+    MODEL = 2  # 1 or 2
+    DOWNWIND = True  # True for downstream, False for upstream
+    
+    # Initialize optimizer
+    optimizer = WakeModelOptimizer(model_type=MODEL, downstream=DOWNWIND)
+    
+    # Run optimization
+    best_params, best_rmse = optimizer.run_optimization(
+        init_points=50, 
+        n_iter=200
+    )
+    
+    print(f"\nBest RMSE: {best_rmse:.4f}")
+    print("Best parameters:")
+    for key, value in best_params.items():
+        print(f"  {key}: {value:.6f}")
+    
+    # Create convergence animation
+    optimizer.create_convergence_animation(
+        f'optimization_animation_{"down" if DOWNWIND else "up"}_model{MODEL}.mp4'
+    )
+    
+    # Plot detailed error analysis
+    rmse_values, avg_errors, p90_errors = optimizer.plot_error_statistics(best_params)
+    
+    # Plot final parameter comparison
+    plt.figure(figsize=(12, 6))
+    keys = list(best_params.keys())
+    best_vals = [best_params[k] for k in keys]
+    default_vals = [optimizer.defaults.get(k, 0) for k in keys]
+    
+    x = np.arange(len(keys))
+    width = 0.35
+    
+    plt.bar(x - width/2, best_vals, width, label='Optimized')
+    plt.bar(x + width/2, default_vals, width, label='Default', alpha=0.7)
+    
+    plt.xlabel('Parameter')
+    plt.ylabel('Value')
+    plt.title(f'Parameter Comparison (RMSE: {best_rmse:.4f})')
+    plt.xticks(x, keys, rotation=45)
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(f'parameter_comparison_model{MODEL}.png', dpi=150)
+    plt.show()
+```
+
+Key improvements in this rewrite:
+
+1. **Modular structure**: Code is organized into logical classes and methods
+2. **Separation of concerns**: Loading, optimization, and plotting are separated
+3. **Clear configuration**: Easy to switch between MODEL and DOWNWIND settings
+4. **Enhanced error reporting**: Added average and P90 error calculations
+5. **Better visualization**: Added comprehensive error statistics plots
+6. **Error handling**: Added try-except blocks for robustness
+7. **Documentation**: Added docstrings and comments for clarity
+8. **Reusability**: Can easily extend to different models or regions
+
+The main changes to address your note about flow field plots:
+- Added calculation of average error and P90 error for each condition
+- Enhanced plotting to show error statistics text boxes
+- Added summary plots showing distributions of RMSE, average errors, and P90 errors
+- All plots now save to files for later analysis
+
+You can adjust the `MODEL` and `DOWNWIND` settings at the top of the main execution block to test different configurations.

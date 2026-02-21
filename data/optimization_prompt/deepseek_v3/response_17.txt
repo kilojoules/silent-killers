@@ -1,0 +1,207 @@
+Looking at your error, I can see the issue clearly. The script successfully completed 2999 out of 3000 optimizations, but when it tried to read one of the worker output files (likely `worker_2999.h5` or similar), it encountered a corrupted/incomplete HDF5 file with the error "file signature not found".
+
+## Diagnosis
+
+The problem occurs during the **merging phase** where the main process tries to read all worker output files. One worker file is either:
+1. **Corrupted** - The worker process was interrupted while writing
+2. **Incomplete** - The worker didn't finish writing before the main process tried to read it
+3. **Empty** - The worker started but didn't write any data
+
+The repeating "130 possible points..." messages suggest workers are still running/printing while the main process is trying to merge files.
+
+## Solution: Modify the script to detect and handle invalid worker files
+
+Here's how to modify your script to handle this reliably:
+
+### Option 1: Add validation before merging (Recommended)
+
+```python
+import os
+import h5py
+import traceback
+
+def validate_h5_file(filepath):
+    """Validate that an HDF5 file is complete and readable."""
+    try:
+        with h5py.File(filepath, 'r') as f:
+            # Check if file has expected structure
+            if len(f.keys()) == 0:
+                return False, "File is empty"
+            # Try to read a small amount of data
+            for key in f.keys():
+                _ = f[key][:]  # Try to read data
+            return True, "File is valid"
+    except (OSError, KeyError, ValueError) as e:
+        return False, f"File validation failed: {str(e)}"
+    except Exception as e:
+        return False, f"Unexpected error: {str(e)}"
+
+def main():
+    # ... your existing code ...
+    
+    # Before merging, validate all worker files
+    valid_files = []
+    invalid_files = []
+    
+    for i in range(num_workers):
+        worker_file = f"worker_{i}.h5"
+        if os.path.exists(worker_file):
+            is_valid, message = validate_h5_file(worker_file)
+            if is_valid:
+                valid_files.append(worker_file)
+                print(f"✓ Worker file {worker_file} is valid")
+            else:
+                invalid_files.append((worker_file, message))
+                print(f"✗ Worker file {worker_file} is invalid: {message}")
+        else:
+            print(f"✗ Worker file {worker_file} does not exist")
+            invalid_files.append((worker_file, "File not found"))
+    
+    # Check if we have any valid files
+    if not valid_files:
+        print("ERROR: No valid worker files found!")
+        sys.exit(1)
+    
+    # Report on invalid files
+    if invalid_files:
+        print(f"\nWARNING: Found {len(invalid_files)} invalid/missing files:")
+        for file, reason in invalid_files:
+            print(f"  - {file}: {reason}")
+        
+        # Ask user what to do (or implement automatic recovery)
+        response = input(f"\nProceed with {len(valid_files)}/{num_workers} valid files? (y/n): ")
+        if response.lower() != 'y':
+            print("Aborting merge process")
+            sys.exit(1)
+    
+    # Only merge valid files
+    for worker_file in valid_files:
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                # ... your merging code ...
+        except Exception as e:
+            print(f"ERROR: Failed to merge {worker_file}: {e}")
+            # Optionally continue with remaining files
+            continue
+```
+
+### Option 2: Add timeout and retry logic for file reading
+
+```python
+import time
+import signal
+
+class TimeoutException(Exception):
+    pass
+
+def timeout_handler(signum, frame):
+    raise TimeoutException()
+
+def read_file_with_timeout(filepath, timeout=30):
+    """Read file with timeout to handle hanging reads."""
+    signal.signal(signal.SIGALRM, timeout_handler)
+    signal.alarm(timeout)
+    
+    try:
+        with h5py.File(filepath, 'r') as f:
+            data = {}
+            for key in f.keys():
+                data[key] = f[key][:]
+        signal.alarm(0)  # Cancel the alarm
+        return data
+    except TimeoutException:
+        print(f"Timeout reading {filepath} after {timeout} seconds")
+        return None
+    finally:
+        signal.alarm(0)  # Ensure alarm is always cancelled
+
+# In your main merging loop:
+for i in range(num_workers):
+    worker_file = f"worker_{i}.h5"
+    max_retries = 3
+    retry_delay = 5
+    
+    for attempt in range(max_retries):
+        try:
+            data = read_file_with_timeout(worker_file)
+            if data is not None:
+                # Process data
+                break
+            else:
+                print(f"Retry {attempt + 1}/{max_retries} for {worker_file}")
+                time.sleep(retry_delay)
+        except Exception as e:
+            print(f"Failed to read {worker_file} on attempt {attempt + 1}: {e}")
+            if attempt == max_retries - 1:
+                print(f"Skipping {worker_file} after {max_retries} failed attempts")
+                break
+            time.sleep(retry_delay)
+```
+
+### Option 3: Add worker file cleanup and recovery
+
+```python
+def recover_from_partial_results(num_workers, expected_seeds_per_worker):
+    """Attempt to recover data from partial worker files."""
+    recovered_data = {}
+    missing_workers = []
+    
+    for i in range(num_workers):
+        worker_file = f"worker_{i}.h5"
+        
+        # Check file size - very small files are likely incomplete
+        if os.path.exists(worker_file):
+            file_size = os.path.getsize(worker_file)
+            if file_size < 1024:  # Less than 1KB is suspicious
+                print(f"Warning: {worker_file} is very small ({file_size} bytes)")
+                os.remove(worker_file)  # Remove incomplete file
+                missing_workers.append(i)
+                continue
+        
+        try:
+            with h5py.File(worker_file, 'r') as f:
+                # Check if file has expected amount of data
+                num_completed = 0
+                for key in f.keys():
+                    if 'farm' in key:
+                        num_completed += 1
+                
+                if num_completed >= expected_seeds_per_worker * 0.8:  # At least 80% complete
+                    print(f"Worker {i}: Recovered {num_completed} optimizations")
+                    recovered_data[i] = f
+                else:
+                    print(f"Worker {i}: Only {num_completed}/{expected_seeds_per_worker} complete - skipping")
+                    missing_workers.append(i)
+        except:
+            missing_workers.append(i)
+    
+    return recovered_data, missing_workers
+```
+
+## Immediate Recovery Steps
+
+For your current situation:
+
+1. **Check which worker file is corrupted:**
+```bash
+# List all worker files and their sizes
+ls -la worker_*.h5
+
+# Try to read each one
+for file in worker_*.h5; do
+    echo "Testing $file"
+    python -c "import h5py; f=h5py.File('$file', 'r'); print('OK:', list(f.keys())[:3])" 2>/dev/null || echo "FAILED: $file"
+done
+```
+
+2. **If you can identify the bad file**, you can:
+   - Remove it: `rm worker_X.h5`
+   - Re-run just that worker
+   - Modify the script to skip it during merge
+
+3. **To prevent this in the future**, add these modifications to your script and consider:
+   - Using temporary files that are only renamed when complete
+   - Adding checksums to verify file integrity
+   - Implementing a more robust worker completion signaling system
+
+The key insight is that your workers and main process are not properly synchronized - workers might still be writing when the main process tries to read. Adding validation and timeout logic will make your pipeline much more robust.

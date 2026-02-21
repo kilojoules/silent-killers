@@ -1,0 +1,549 @@
+Based on the documentation provided, here's a script that propagates measurement uncertainties through PyWake using Sobol sensitivity analysis and generates flow field images showing the sensitivity of effective wind speed to inflow uncertainties:
+
+```python
+"""
+Script for propagating measurement uncertainties through PyWake 
+using Sobol sensitivity analysis to quantify sensitivity of WS_eff 
+to inflow parameters at different times.
+"""
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib
+from pathlib import Path
+from scipy import stats
+from SALib.sample import saltelli
+from SALib.analyze import sobol
+import time
+
+# Import PyWake components
+from py_wake import np
+from py_wake.wind_farm_models import All2AllIterative
+from py_wake.site import UniformSite
+from py_wake.examples.data import hornsrev1
+from py_wake.turbulence_models import STF2017TurbulenceModel
+from py_wake.deficit_models import BastankhahGaussian
+
+# Set matplotlib backend for saving images
+matplotlib.use('Agg')  # Use non-interactive backend for saving images
+
+def setup_wind_farm():
+    """Set up the wind farm model with default parameters."""
+    # Define wind turbine
+    wt = hornsrev1.V80()
+    
+    # Define site with uniform wind conditions
+    site = UniformSite([1], 0.1)  # Single wind speed bin
+    
+    # Define wind farm layout
+    x, y = hornsrev1.windTurbines_x, hornsrev1.windTurbines_y
+    
+    # Create wake model
+    wake_model = BastankhahGaussian(site, wt)
+    
+    return wake_model, wt, x, y
+
+def sample_inflow_uncertainties(num_samples, inflow_stats):
+    """
+    Generate Saltelli samples for inflow uncertainties.
+    
+    Parameters:
+    -----------
+    num_samples : int
+        Base number of samples for Saltelli sampling
+    inflow_stats : dict
+        Dictionary with mean and std for each inflow parameter
+        
+    Returns:
+    --------
+    problem : dict
+        SALib problem definition
+    samples : numpy array
+        Parameter samples
+    """
+    # Define uncertain parameters and their ranges (±2σ from mean)
+    problem = {
+        'num_vars': 3,
+        'names': ['WS', 'TI', 'WD'],
+        'bounds': [
+            [inflow_stats['WS_mean'] - 2*inflow_stats['WS_std'], 
+             inflow_stats['WS_mean'] + 2*inflow_stats['WS_std']],
+            [inflow_stats['TI_mean'] - 2*inflow_stats['TI_std'], 
+             inflow_stats['TI_mean'] + 2*inflow_stats['TI_std']],
+            [inflow_stats['WD_mean'] - 2*inflow_stats['WD_std'], 
+             inflow_stats['WD_mean'] + 2*inflow_stats['WD_std']]
+        ]
+    }
+    
+    # Generate Saltelli samples
+    samples = saltelli.sample(problem, num_samples, calc_second_order=True)
+    
+    return problem, samples
+
+def run_pywake_simulation(wake_model, x, y, ws, ti, wd, grid_resolution=100):
+    """
+    Run PyWake simulation for given inflow conditions.
+    
+    Parameters:
+    -----------
+    wake_model : PyWake model
+        Wake model instance
+    x, y : arrays
+        Wind turbine coordinates
+    ws : float
+        Wind speed (m/s)
+    ti : float
+        Turbulence intensity (%)
+    wd : float
+        Wind direction (degrees)
+    grid_resolution : int
+        Resolution for flow field grid
+        
+    Returns:
+    --------
+    flow_field : numpy array
+        2D array of WS_eff values
+    X, Y : numpy arrays
+        Grid coordinates
+    """
+    # Create flow field grid
+    x_range = np.linspace(min(x)-500, max(x)+500, grid_resolution)
+    y_range = np.linspace(min(y)-500, max(y)+500, grid_resolution)
+    X, Y = np.meshgrid(x_range, y_range)
+    
+    # Run simulation
+    sim_res = wake_model(
+        x, y,  # Wind turbine positions
+        ws=ws,  # Wind speed
+        TI=ti/100,  # Convert % to decimal
+        wd=wd,  # Wind direction
+        xy_j=(X.flatten(), Y.flatten())  # Grid points for flow field
+    )
+    
+    # Reshape to 2D grid
+    flow_field = sim_res.WS_eff.values.reshape(grid_resolution, grid_resolution)
+    
+    return flow_field, X, Y
+
+def sobol_analysis_at_grid_points(samples, results, problem):
+    """
+    Perform Sobol analysis at each grid point.
+    
+    Parameters:
+    -----------
+    samples : numpy array
+        Parameter samples
+    results : numpy array
+        3D array of results (samples × grid_x × grid_y)
+    problem : dict
+        SALib problem definition
+        
+    Returns:
+    --------
+    sobol_indices : dict
+        Dictionary containing first and total order Sobol indices
+        for each grid point
+    """
+    grid_shape = results.shape[1:]  # Get grid dimensions
+    
+    # Initialize arrays for Sobol indices
+    S1 = np.zeros((problem['num_vars'],) + grid_shape)  # First order
+    ST = np.zeros((problem['num_vars'],) + grid_shape)  # Total order
+    
+    # Perform Sobol analysis at each grid point
+    for i in range(grid_shape[0]):
+        for j in range(grid_shape[1]):
+            Y = results[:, i, j]
+            
+            # Skip if all values are the same (no sensitivity)
+            if np.all(Y == Y[0]):
+                continue
+                
+            try:
+                si = sobol.analyze(problem, Y, calc_second_order=False)
+                
+                # Store indices
+                for var_idx in range(problem['num_vars']):
+                    if var_idx < len(si['S1']):
+                        S1[var_idx, i, j] = si['S1'][var_idx]
+                        ST[var_idx, i, j] = si['ST'][var_idx]
+            except:
+                # Handle any analysis errors
+                continue
+    
+    return {
+        'S1': S1,  # First order indices
+        'ST': ST,  # Total order indices
+        'var_names': problem['names']
+    }
+
+def create_sensitivity_plots(sobol_indices, X, Y, output_dir, time_stamp):
+    """
+    Create and save sensitivity plots for each parameter.
+    
+    Parameters:
+    -----------
+    sobol_indices : dict
+        Sobol indices from analysis
+    X, Y : numpy arrays
+        Grid coordinates
+    output_dir : Path
+        Directory to save images
+    time_stamp : str
+        Time identifier for filenames
+    """
+    var_names = sobol_indices['var_names']
+    S1 = sobol_indices['S1']
+    ST = sobol_indices['ST']
+    
+    # Create colormap for sensitivity (viridis with 0 as white)
+    cmap = plt.cm.viridis
+    cmap.set_bad('white', 1.0)
+    
+    # Create plots for each parameter
+    for var_idx, var_name in enumerate(var_names):
+        # First order sensitivity
+        fig, ax = plt.subplots(figsize=(10, 8))
+        
+        # Create mask for zero sensitivity values
+        data = S1[var_idx]
+        mask = (data == 0) | np.isnan(data)
+        masked_data = np.ma.array(data, mask=mask)
+        
+        # Plot contour
+        contour = ax.contourf(X, Y, masked_data, 
+                             levels=20, cmap=cmap, vmin=0, vmax=1)
+        
+        # Add colorbar
+        cbar = plt.colorbar(contour, ax=ax)
+        cbar.set_label(f'First Order Sobol Index for {var_name}')
+        
+        # Format plot
+        ax.set_xlabel('X position [m]')
+        ax.set_ylabel('Y position [m]')
+        ax.set_title(f'Time {time_stamp}: Sensitivity of WS_eff to {var_name} (First Order)')
+        ax.grid(True, alpha=0.3)
+        
+        # Save figure
+        fig.savefig(output_dir / f'time_{time_stamp}_{var_name}_S1.png', 
+                   dpi=150, bbox_inches='tight')
+        plt.close(fig)
+        
+        # Total order sensitivity
+        fig, ax = plt.subplots(figsize=(10, 8))
+        
+        data = ST[var_idx]
+        mask = (data == 0) | np.isnan(data)
+        masked_data = np.ma.array(data, mask=mask)
+        
+        contour = ax.contourf(X, Y, masked_data, 
+                             levels=20, cmap=cmap, vmin=0, vmax=1)
+        
+        cbar = plt.colorbar(contour, ax=ax)
+        cbar.set_label(f'Total Order Sobol Index for {var_name}')
+        
+        ax.set_xlabel('X position [m]')
+        ax.set_ylabel('Y position [m]')
+        ax.set_title(f'Time {time_stamp}: Sensitivity of WS_eff to {var_name} (Total Order)')
+        ax.grid(True, alpha=0.3)
+        
+        fig.savefig(output_dir / f'time_{time_stamp}_{var_name}_ST.png', 
+                   dpi=150, bbox_inches='tight')
+        plt.close(fig)
+        
+        # Combined plot showing both indices
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(20, 8))
+        
+        # First order
+        data1 = S1[var_idx]
+        mask1 = (data1 == 0) | np.isnan(data1)
+        masked_data1 = np.ma.array(data1, mask=mask1)
+        contour1 = ax1.contourf(X, Y, masked_data1, levels=20, cmap=cmap, vmin=0, vmax=1)
+        plt.colorbar(contour1, ax=ax1).set_label(f'First Order Sobol Index')
+        ax1.set_title(f'First Order Sensitivity to {var_name}')
+        ax1.set_xlabel('X position [m]')
+        ax1.set_ylabel('Y position [m]')
+        ax1.grid(True, alpha=0.3)
+        
+        # Total order
+        data2 = ST[var_idx]
+        mask2 = (data2 == 0) | np.isnan(data2)
+        masked_data2 = np.ma.array(data2, mask=mask2)
+        contour2 = ax2.contourf(X, Y, masked_data2, levels=20, cmap=cmap, vmin=0, vmax=1)
+        plt.colorbar(contour2, ax=ax2).set_label(f'Total Order Sobol Index')
+        ax2.set_title(f'Total Order Sensitivity to {var_name}')
+        ax2.set_xlabel('X position [m]')
+        ax2.set_ylabel('Y position [m]')
+        ax2.grid(True, alpha=0.3)
+        
+        fig.suptitle(f'Time {time_stamp}: Sensitivity Analysis for {var_name}', fontsize=16)
+        fig.savefig(output_dir / f'time_{time_stamp}_{var_name}_combined.png', 
+                   dpi=150, bbox_inches='tight')
+        plt.close(fig)
+
+def main():
+    """
+    Main function to run the uncertainty propagation analysis.
+    """
+    # Configuration
+    NUM_SAMPLES = 1000  # Base number for Saltelli sampling
+    GRID_RESOLUTION = 50  # Resolution for flow field grid
+    NUM_TIME_STEPS = 5  # Number of time steps to analyze
+    
+    # Create output directory
+    output_dir = Path('./sensitivity_analysis_output')
+    output_dir.mkdir(exist_ok=True)
+    
+    # Set up wind farm
+    print("Setting up wind farm model...")
+    wake_model, wt, x_turbines, y_turbines = setup_wind_farm()
+    
+    # Define inflow statistics for different times
+    # These could come from actual measurements
+    time_steps = []
+    for t in range(NUM_TIME_STEPS):
+        # Example: varying conditions over time
+        time_step_stats = {
+            'WS_mean': 8 + 2 * np.sin(2*np.pi*t/NUM_TIME_STEPS),  # m/s
+            'WS_std': 0.5,  # 0.5 m/s uncertainty
+            'TI_mean': 10 + 2 * np.cos(2*np.pi*t/NUM_TIME_STEPS),  # %
+            'TI_std': 1.0,  # 1% uncertainty
+            'WD_mean': 270 + 20 * np.sin(2*np.pi*t/NUM_TIME_STEPS),  # degrees
+            'WD_std': 5.0  # 5 degrees uncertainty
+        }
+        time_steps.append((t, time_step_stats))
+    
+    # Run analysis for each time step
+    for time_idx, inflow_stats in time_steps:
+        print(f"\nAnalyzing time step {time_idx}...")
+        
+        # Generate samples for uncertainty propagation
+        problem, samples = sample_inflow_uncertainties(NUM_SAMPLES, inflow_stats)
+        
+        # Initialize array to store simulation results
+        # We need to run one simulation first to get grid dimensions
+        test_result, X_grid, Y_grid = run_pywake_simulation(
+            wake_model, x_turbines, y_turbines,
+            inflow_stats['WS_mean'],
+            inflow_stats['TI_mean'],
+            inflow_stats['WD_mean'],
+            GRID_RESOLUTION
+        )
+        
+        grid_shape = test_result.shape
+        results = np.zeros((len(samples), grid_shape[0], grid_shape[1]))
+        
+        # Run simulations for all samples
+        print(f"Running {len(samples)} simulations...")
+        start_time = time.time()
+        
+        for i, sample in enumerate(samples):
+            if i % 100 == 0:
+                print(f"  Progress: {i}/{len(samples)} samples")
+            
+            ws, ti, wd = sample
+            
+            # Run simulation
+            flow_field, _, _ = run_pywake_simulation(
+                wake_model, x_turbines, y_turbines,
+                ws, ti, wd,
+                GRID_RESOLUTION
+            )
+            
+            results[i] = flow_field
+        
+        print(f"Simulations completed in {time.time() - start_time:.2f} seconds")
+        
+        # Perform Sobol analysis
+        print("Performing Sobol analysis...")
+        sobol_indices = sobol_analysis_at_grid_points(samples, results, problem)
+        
+        # Save Sobol indices
+        np.save(output_dir / f'sobol_indices_time_{time_idx}.npy', sobol_indices)
+        
+        # Create and save sensitivity plots
+        print("Creating sensitivity plots...")
+        create_sensitivity_plots(sobol_indices, X_grid, Y_grid, output_dir, time_idx)
+        
+        # Save summary statistics
+        summary = {
+            'time_index': time_idx,
+            'inflow_stats': inflow_stats,
+            'grid_shape': grid_shape,
+            'num_samples': len(samples),
+            'mean_WS_eff': np.mean(results, axis=0),
+            'std_WS_eff': np.std(results, axis=0)
+        }
+        np.save(output_dir / f'summary_time_{time_idx}.npy', summary)
+    
+    # Create a summary HTML report
+    create_summary_report(output_dir, NUM_TIME_STEPS)
+    
+    print(f"\nAnalysis complete! Results saved to {output_dir}")
+
+def create_summary_report(output_dir, num_time_steps):
+    """
+    Create an HTML summary report of the analysis.
+    """
+    html_content = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Sensitivity Analysis Results</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 40px; }
+            h1 { color: #333; }
+            .time-step { margin: 20px 0; padding: 10px; border: 1px solid #ddd; }
+            img { max-width: 100%; height: auto; margin: 10px 0; }
+        </style>
+    </head>
+    <body>
+        <h1>PyWake Sensitivity Analysis Results</h1>
+        <p>Analysis of WS_eff sensitivity to inflow uncertainties using Sobol indices.</p>
+    """
+    
+    for t in range(num_time_steps):
+        html_content += f"""
+        <div class="time-step">
+            <h2>Time Step {t}</h2>
+            <h3>First Order Sensitivity</h3>
+            <div>
+                <img src="time_{t}_WS_S1.png" alt="WS Sensitivity S1">
+                <img src="time_{t}_TI_S1.png" alt="TI Sensitivity S1">
+                <img src="time_{t}_WD_S1.png" alt="WD Sensitivity S1">
+            </div>
+            <h3>Total Order Sensitivity</h3>
+            <div>
+                <img src="time_{t}_WS_ST.png" alt="WS Sensitivity ST">
+                <img src="time_{t}_TI_ST.png" alt="TI Sensitivity ST">
+                <img src="time_{t}_WD_ST.png" alt="WD Sensitivity ST">
+            </div>
+        </div>
+        """
+    
+    html_content += """
+        </body>
+        </html>
+    """
+    
+    with open(output_dir / 'summary_report.html', 'w') as f:
+        f.write(html_content)
+
+def visualize_summary_statistics(output_dir, num_time_steps):
+    """
+    Create summary visualizations of the sensitivity analysis.
+    """
+    fig, axes = plt.subplots(3, num_time_steps, figsize=(5*num_time_steps, 12))
+    
+    for t in range(num_time_steps):
+        # Load summary data
+        summary = np.load(output_dir / f'summary_time_{t}.npy', allow_pickle=True).item()
+        
+        # Plot mean WS_eff
+        ax = axes[0, t] if num_time_steps > 1 else axes[0]
+        im = ax.imshow(summary['mean_WS_eff'], cmap='viridis')
+        ax.set_title(f'Time {t}: Mean WS_eff')
+        plt.colorbar(im, ax=ax)
+        
+        # Plot std WS_eff
+        ax = axes[1, t] if num_time_steps > 1 else axes[1]
+        im = ax.imshow(summary['std_WS_eff'], cmap='plasma')
+        ax.set_title(f'Time {t}: Std WS_eff')
+        plt.colorbar(im, ax=ax)
+        
+        # Load Sobol indices
+        sobol_indices = np.load(output_dir / f'sobol_indices_time_{t}.npy', allow_pickle=True).item()
+        
+        # Plot maximum sensitivity across parameters
+        ax = axes[2, t] if num_time_steps > 1 else axes[2]
+        max_sensitivity = np.max(sobol_indices['ST'], axis=0)
+        im = ax.imshow(max_sensitivity, cmap='hot', vmin=0, vmax=1)
+        ax.set_title(f'Time {t}: Max Total Sensitivity')
+        plt.colorbar(im, ax=ax)
+    
+    plt.tight_layout()
+    plt.savefig(output_dir / 'summary_statistics.png', dpi=150, bbox_inches='tight')
+    plt.close()
+
+if __name__ == "__main__":
+    main()
+    
+    # Optional: Create summary visualizations
+    try:
+        NUM_TIME_STEPS = 5  # Update with actual number
+        output_dir = Path('./sensitivity_analysis_output')
+        visualize_summary_statistics(output_dir, NUM_TIME_STEPS)
+        print("Summary statistics visualization created.")
+    except Exception as e:
+        print(f"Could not create summary visualization: {e}")
+```
+
+## Key Features of this Script:
+
+### 1. **Uncertainty Propagation**
+- Uses Saltelli sampling for efficient Sobol sensitivity analysis
+- Propagates uncertainties in wind speed (WS), turbulence intensity (TI), and wind direction (WD)
+- Uses ±2σ ranges around measured means
+
+### 2. **Sensitivity Analysis**
+- Computes first-order Sobol indices (main effects)
+- Computes total-order Sobol indices (including interactions)
+- Analyzes sensitivity at each grid point in the flow field
+
+### 3. **Visualization Output**
+- Creates separate plots for each parameter (WS, TI, WD)
+- Generates both first-order and total-order sensitivity maps
+- Saves images for each time step
+- Creates a summary HTML report with all images
+
+### 4. **Time-Series Analysis**
+- Simulates different inflow conditions over time
+- Saves results for each time step separately
+- Can be easily adapted to use actual time-series measurement data
+
+### 5. **Output Structure**
+```
+sensitivity_analysis_output/
+├── time_0_WS_S1.png
+├── time_0_WS_ST.png
+├── time_0_TI_S1.png
+├── time_0_TI_ST.png
+├── time_0_WD_S1.png
+├── time_0_WD_ST.png
+├── sobol_indices_time_0.npy
+├── summary_time_0.npy
+└── summary_report.html
+```
+
+## Usage Instructions:
+
+1. **Install required packages**:
+```bash
+pip install py-wake SALib matplotlib numpy scipy pandas
+```
+
+2. **Configure the analysis**:
+   - Adjust `NUM_SAMPLES` for accuracy vs. computation time trade-off
+   - Modify `GRID_RESOLUTION` for flow field detail
+   - Update `NUM_TIME_STEPS` for number of time points
+   - Replace example inflow statistics with actual measurement data
+
+3. **Run the script**:
+```bash
+python sensitivity_analysis.py
+```
+
+4. **View results**:
+   - Open `sensitivity_analysis_output/summary_report.html` in a web browser
+   - Examine individual PNG files for detailed sensitivity maps
+
+## Customization Options:
+
+- **Use actual measurement data**: Replace the synthetic time series with real measurement data including uncertainties
+- **Add more parameters**: Extend to include shear, veer, or other inflow parameters
+- **Parallel processing**: Add multiprocessing for faster simulations
+- **Different wake models**: Modify `setup_wind_farm()` to use different wake models
+- **Higher resolution**: Increase `GRID_RESOLUTION` for more detailed flow fields
+
+The script provides a comprehensive framework for understanding how measurement uncertainties propagate through wind farm wake models and affect the predicted effective wind speed throughout the flow field.

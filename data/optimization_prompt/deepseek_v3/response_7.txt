@@ -1,0 +1,128 @@
+Looking at your error, the issue is that one of the worker HDF5 files is corrupted or incomplete (likely due to a crash during writing). The error occurs when the main script tries to open a worker file to merge results, but the file doesn't have a valid HDF5 signature.
+
+## Diagnosis:
+1. **The script completed 2999/3000 optimizations successfully** - meaning one worker process likely crashed while writing its results
+2. **The error occurs during file merging** - when trying to open `worker_file` with `h5py.File(worker_file, 'r')`
+3. **The corrupted file has no valid HDF5 signature** - it was either never properly closed or was truncated
+
+## Solution - Modified Script:
+
+Here's how to modify your script to detect and handle this issue:
+
+```python
+import h5py
+import os
+import traceback
+from pathlib import Path
+
+def is_valid_hdf5_file(filepath):
+    """Check if a file is a valid HDF5 file."""
+    try:
+        with h5py.File(filepath, 'r'):
+            return True
+    except (OSError, IOError) as e:
+        return False
+
+def main():
+    # ... your existing code ...
+    
+    # Find all worker files
+    worker_files = sorted(Path(worker_dir).glob("worker_*.h5"))
+    
+    # Validate all worker files before attempting to merge
+    valid_worker_files = []
+    corrupted_files = []
+    
+    for wf in worker_files:
+        if is_valid_hdf5_file(wf):
+            valid_worker_files.append(wf)
+        else:
+            corrupted_files.append(wf)
+            print(f"WARNING: Corrupted/incomplete worker file detected: {wf}")
+    
+    if corrupted_files:
+        print(f"\nERROR: Found {len(corrupted_files)} corrupted worker files:")
+        for cf in corrupted_files:
+            print(f"  - {cf}")
+        
+        # Option 1: Stop immediately
+        raise RuntimeError(f"Corrupted worker files detected. Cannot proceed with merging.")
+        
+        # Option 2: Continue with valid files only (if you want partial results)
+        # print(f"Continuing with {len(valid_worker_files)} valid worker files...")
+        # worker_files = valid_worker_files
+    
+    # Now proceed with merging only valid files
+    for worker_file in valid_worker_files:
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                # ... your merging code ...
+        except Exception as e:
+            print(f"ERROR: Failed to process {worker_file}: {e}")
+            traceback.print_exc()
+            raise  # Re-raise to stop the process
+
+# Alternative: Add validation in the original merging loop
+def original_merge_loop_fixed():
+    # ... your existing code until line 448 ...
+    
+    for worker_file in worker_files:
+        # Validate before opening
+        if not is_valid_hdf5_file(worker_file):
+            print(f"ERROR: Invalid HDF5 file: {worker_file}")
+            print("This usually happens when a worker process crashes during write.")
+            print(f"Valid files processed so far: {len(results_merged)}")
+            
+            # Save what we have so far
+            if results_merged:
+                print(f"Saving partial results from {len(results_merged)} valid workers...")
+                # ... save partial results ...
+            
+            raise RuntimeError(f"Corrupted worker file: {worker_file}")
+        
+        # Proceed with original merging code
+        with h5py.File(worker_file, 'r') as h5_in:
+            # ... rest of your merging code ...
+```
+
+## Recovery Strategy:
+
+Since you have 2999 successful optimizations, you can recover most of your data:
+
+1. **Identify the corrupted file:**
+```bash
+# In your worker directory
+for f in worker_*.h5; do
+    python -c "import h5py; h5py.File('$f', 'r')" 2>/dev/null && echo "$f: OK" || echo "$f: CORRUPTED"
+done
+```
+
+2. **Recover partial results:**
+   - The corrupted file likely corresponds to the missing optimization
+   - You can run just that specific optimization again
+   - Or continue with 2999/3000 results if that's acceptable
+
+3. **Prevent future issues:**
+   - Add proper exception handling in worker processes
+   - Use atomic writes (write to temp file, then rename)
+   - Implement checkpointing
+
+## Quick Fix for Current Run:
+
+If you want to salvage your current results, modify the merging code to skip corrupted files:
+
+```python
+# Temporary fix to get partial results
+valid_files = []
+for wf in worker_files:
+    try:
+        with h5py.File(wf, 'r'):
+            valid_files.append(wf)
+    except:
+        print(f"Skipping corrupted file: {wf}")
+
+print(f"Processing {len(valid_files)} valid files out of {len(worker_files)} total")
+# Then process only valid_files
+```
+
+This approach will at least save the 2999 successful optimizations you have.

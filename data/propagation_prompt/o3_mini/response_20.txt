@@ -1,0 +1,255 @@
+Below is an example Python script that combines PyWake’s wake‐simulation with a Sobol sensitivity analysis of the effective wind speed (WS_eff) field when the inflow has realistic measurement uncertainties. In this example we assume that the inflow is uncertain in a few parameters (for example, the free‐stream wind speed, wind direction, and turbulence intensity). For each “time” (here interpreted as a different inflow “snapshot”), we generate a Sobol sampling of the uncertain parameters, run the PyWake simulation with each sample to compute WS_eff on a grid, and then compute (using SALib) the Sobol first‐order indices as a function of the spatial coordinates (x,y). Finally, the script saves an image (a heat map) of the spatial sensitivity for each “time.”
+
+Note:
+• You will need to have installed the PyWake library (https://pywake.readthedocs.io/) and the SALib package (pip install SALib).
+• In a real application you might have more “realistic” measurement uncertainties. Here we assume uniform distributions (with bounds chosen from measurement error estimates) for illustration.
+• The script is written as a “toy example” and may be adapted to your specific turbine layout, wake model, and uncertainty definitions.
+
+---------------------------------------------------------------
+#!/usr/bin/env python
+"""
+This script propagates inflow measurement uncertainties through a PyWake wake model and uses a Sobol sensitivity analysis (via SALib)
+to compute the sensitivity of the effective wind speed (WS_eff) on the (x, y) spatial domain. For a series of time snapshots 
+(with different inflow nominal conditions), the script:
+  • Generates Sobol samples of uncertain inflow parameters
+  • Runs the PyWake simulation for each sample
+  • Computes WS_eff on a grid for each sample
+  • Computes the Sobol first-order sensitivity index for each grid point
+  • Saves a figure showing the sensitivity map (i.e. the first-order Sobol index) for that time step.
+"""
+
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+
+# Import SALib for Sobol sampling and analysis
+from SALib.sample import sobol_sequence
+from SALib.analyze import sobol
+
+# Import PyWake components.
+# (Make sure you have installed PyWake; adjust the import based on your PyWake version and your wake model of choice.)
+from py_wake import NOJ   # here we use the Jensen model (commonly known as the 'NOJ' wake model)
+from py_wake.wind_turbines import WindTurbines
+from py_wake.deficit_models import Propagator
+from py_wake.site import UniformSite
+from py_wake.wind_farm_models import WindFarmModel
+from py_wake.flow_map import XPlane
+
+# ==============================================================================
+# STEP 1. Define the uncertain inflow parameters (measurement uncertainties)
+#
+# For illustration, our uncertain parameters are:
+#   1. Free-stream wind speed (WS) in m/s; nominal value changes with time.
+#   2. Inflow wind direction (WD) in degrees.
+#   3. Turbulence intensity (TI) as a fraction.
+#
+# We define the uncertain parameter ranges (bounds) reflecting realistic measurement uncertainties.
+# ==============================================================================
+problem = {
+    'num_vars': 3,
+    'names': ['WS', 'WD', 'TI'],
+    # bounds: for a measurement note: +-5% for WS, +-3 degrees for WD, +-0.5% for TI.
+    'bounds': [[0.95, 1.05],      # relative multiplier for WS (will be multiplied with a nominal WS)
+               [-3.0, 3.0],       # wind direction offset in degrees
+               [-0.005, 0.005]]   # turbulence intensity offset (absolute noise)
+}
+
+# ==============================================================================
+# STEP 2. Define the simulation grid and time snapshots.
+# ==============================================================================
+# Define spatial grid for the flow field (in meters)
+nx, ny = 50, 40
+x_min, x_max = 0, 2000
+y_min, y_max = -1000, 1000
+xgrid = np.linspace(x_min, x_max, nx)
+ygrid = np.linspace(y_min, y_max, ny)
+
+# Define “time” snapshots: each snapshot uses a different nominal inflow condition
+# For this example, we let the nominal free-stream wind speed and turbulence intensity evolve over three time steps.
+time_snapshots = [0, 1, 2]  # (arbitrary time indices)
+nominal_WS_list = [9.0, 10.0, 11.0]  # m/s
+nominal_WD_list = [270.0, 275.0, 280.0]  # degrees
+nominal_TI_list = [0.08, 0.09, 0.10]
+
+# ==============================================================================
+# STEP 3. Setup the wind farm and wake model using PyWake.
+#
+# In this example, we simulate a single turbine (or a simple wind farm) on a uniform site.
+# Adjust if necessary for your project.
+# ==============================================================================
+# Create a dummy wind turbine (position at the origin)
+wt = WindTurbines.from_dict({
+    'name': ['Turbine_1'],
+    'hub_height': [80],
+    'rotor_diameter': [100],
+    'Ct': [0.8],
+    'power0': [0],
+    'power1': [0],
+    'power2': [0],
+    'power3': [0],
+    'power4': [0]
+})
+
+# Use a UniformSite: the default turbulence intensity does not matter, as we will override it from uncertainties.
+site = UniformSite()
+
+# Use a simple wake model (NOJ using the Jensen model)
+wake_model = NOJ(site=site, windTurbines=wt)
+
+# Create the wind farm model wrapping the wake model.
+wf_model = WindFarmModel(wake_model)
+
+# ==============================================================================
+# STEP 4. Create a simulation function that, given a sample of uncertain parameters,
+# returns the WS_eff field (on the (x, y) grid) from PyWake.
+# ==============================================================================
+def simulate_flow(sample, t_nominal):
+    """
+    Run the PyWake simulation with a given inflow sample.
+    
+    sample: array-like, shape (3,)
+      [WS_multiplier, WD_offset, TI_offset]
+    t_nominal: dict with nominal values for 'WS', 'WD', 'TI'
+    
+    Returns:
+      ws_eff: 2D np.array of effective wind speeds on (xgrid, ygrid)
+    """
+    # Unpack the sample
+    ws_multiplier, wd_offset, ti_offset = sample
+    # Apply the sample to the nominal value:
+    WS = t_nominal['WS'] * ws_multiplier  # scale nominal wind speed
+    WD = t_nominal['WD'] + wd_offset      # adjusted wind direction [degrees]
+    TI = t_nominal['TI'] + ti_offset      # adjusted turbulence intensity
+    # Note: You might need to adjust how the turbulence intensity is used by your wake model.
+    # Here we set the site’s TI to our perturbed value.
+    site._set_ti(TI)
+    
+    # Run the wind farm simulation on our spatial grid.
+    # For simplicity, we simulate a single inflow direction.
+    flow_map = wf_model(x=xgrid, y=ygrid, wd=WD, ws=WS)
+    # Get the effective wind speed (ws_eff) field
+    ws_eff = flow_map.WS_eff  # shape (ny, nx)
+    # (Depending on the PyWake version, you may need .result().WS_eff or similar)
+
+    # Return a copy of the data (or reverse the axes if needed so that the x-axis is horizontal)
+    return np.array(ws_eff)  # shape (n_y, n_x)
+
+# ==============================================================================
+# STEP 5. For each time snapshot, create a design (Sobol) sample set, run the simulation, and compute Sobol indices.
+# ==============================================================================
+# Number of function evaluations (samples) required by the Sobol analysis.
+# (The required number is problem['num_vars'] * (N + 2), so choose N accordingly.)
+N = 128  # base sample size (adjust for accuracy)
+num_evals = problem['num_vars'] * (N + 2)
+print("Using %d function evaluations per time snapshot." % num_evals)
+
+# Create output directory for figures.
+out_dir = "sobol_flow_field_images"
+os.makedirs(out_dir, exist_ok=True)
+
+# We will store the Sobol sensitivity field (first order index S1) for each snapshot.
+for time_idx, t in enumerate(time_snapshots):
+    # Set the nominal conditions for this snapshot
+    t_nominal = {
+        'WS': nominal_WS_list[time_idx],
+        'WD': nominal_WD_list[time_idx],
+        'TI': nominal_TI_list[time_idx]
+    }
+    print("Simulating time snapshot %d with nominal conditions: %s" % (time_idx, t_nominal))
+    
+    # ------------------------------------------------------------------------------
+    # (a) Create the Sobol sample set.
+    # ------------------------------------------------------------------------------
+    # We use the low discrepancy Sobol sequence from SALib (or you can use SALib.sample.saltelli if desired).
+    # Note: The SALib.saltelli.sample function is often used but here we generate a Sobol sequence manually.
+    # The Sobol sequence returns points in [0, 1]. Scale them to the parameter bounds.
+    # The number of samples required for Saltelli's scheme is N*(2+num_vars)
+    # Here, for simplicity, we generate a sample set of size = num_evals.
+    sobol_unit_samples = sobol_sequence.sample(num_evals, problem['num_vars'])
+    # Scale unit samples to the parameter ranges.
+    samples = np.empty_like(sobol_unit_samples)
+    for i, (lb, ub) in enumerate(problem['bounds']):
+        samples[:, i] = lb + (ub - lb) * sobol_unit_samples[:, i]
+        
+    # ------------------------------------------------------------------------------
+    # (b) Run the simulation for each sample.
+    # ------------------------------------------------------------------------------
+    # For each sample, we want to obtain the WS_eff field.
+    # We store the output in an array: shape (num_evals, ny, nx)
+    ws_eff_samples = np.empty((num_evals, ny, nx))
+    
+    for i, sample in enumerate(samples):
+        ws_eff_field = simulate_flow(sample, t_nominal)
+        ws_eff_samples[i, :, :] = ws_eff_field
+        if (i + 1) % 50 == 0 or i == 0:
+            print("  Time %d: completed %d/%d simulations" % (time_idx, i+1, num_evals))
+    
+    # ------------------------------------------------------------------------------
+    # (c) Compute Sobol indices at each grid point.
+    # ------------------------------------------------------------------------------
+    # At each grid point (y, x) we have a vector of simulation outputs (size=num_evals).
+    # We then compute the Sobol first-order sensitivity index S1 for each input parameter.
+    # For visualization, we will plot the total sensitivity of WS_eff—here a simple way is to
+    # take the maximum (or sum) over the S1 indices at that grid point.
+    S1_field = np.zeros((ny, nx))
+    # Loop over grid points
+    for iy in range(ny):
+        for ix in range(nx):
+            Y = ws_eff_samples[:, iy, ix]
+            # Run Sobol analysis. The "sobol.analyze" function needs the original sample matrix and the outputs.
+            # Use the default settings (it returns a dictionary with indices).
+            # Note: For better robustness, you might need to check convergence.
+            Si = sobol.analyze(problem, Y, print_to_console=False)
+            # Here, we define a single sensitivity measure per point (e.g., the maximum first-order index)
+            S1_field[iy, ix] = np.max(Si['S1'])
+    
+    # ------------------------------------------------------------------------------
+    # (d) Save the Sobol sensitivity field as an image.
+    # ------------------------------------------------------------------------------
+    plt.figure(figsize=(8, 4))
+    # Set up coordinate mesh (x on horizontal, y on vertical)
+    X, Y_m = np.meshgrid(xgrid, ygrid)
+    c = plt.contourf(X, Y_m, S1_field, levels=20, cmap='viridis')
+    plt.colorbar(c, label="Max first-order Sobol index")
+    plt.title("Sobol Sensitivity of WS_eff at time %d\nNominal: %s" % (time_idx, t_nominal))
+    plt.xlabel("x (m)")
+    plt.ylabel("y (m)")
+    filename = os.path.join(out_dir, "sobol_sensitivity_time%02d.png" % time_idx)
+    plt.savefig(filename, dpi=150, bbox_inches='tight')
+    plt.close()
+    print("Saved sensitivity image to %s" % filename)
+
+print("All sensitivity images saved in directory '%s'." % out_dir)
+
+# ==============================================================================
+# NOTES:
+# - The simulation function simulate_flow overrides the site turbulence intensity and uses the adjusted WS and WD.
+#   Depending on your PyWake configuration, you may need to rebuild parts of the model at each sample.
+#
+# - The sample generation here uses a Sobol low-discrepancy sequence. Alternatively, SALib’s
+#   saltelli.sample might be used.
+#
+# - The Sobol analysis is performed for each grid point independently; if the grid is very fine,
+#   this can be computationally expensive. One may consider parallelizing the loop over grid points.
+#
+# - The sensitivity metric chosen here is the maximum S1 over the uncertain parameters, but you can
+#   also visualize each parameter’s S1 or the total Sobol index.
+#
+# Enjoy exploring the sensitivity of your flow field!
+# ==============================================================================
+ 
+if __name__ == "__main__":
+    pass
+
+---------------------------------------------------------------
+
+Explanation:
+1. We define a problem dictionary for SALib with 3 uncertain parameters.
+2. For each “time snapshot” (simulating different inflow conditions) the script:
+   • Generates a set of parameter samples using a Sobol sequence.
+   • Runs a PyWake simulation for each sample, computing WS_eff over a defined (x,y) grid.
+   • At each grid point, the vector of WS_eff values (over the samples) is analyzed with SALib’s sobol.analyze to compute first‐order sensitivity indices.
+   • The maximum first‐order index (as one way to summarize sensitivity) is then plotted and saved.
+3. Figures are saved in a directory so you can track how sensitivity of the flow’s WS_eff field changes with time.
+
+You can run (or adapt) this script to propagate realistic measurement uncertainties through PyWake and generate a series of flow field images that show the Sobol sensitivity of WS_eff across the spatial domain.

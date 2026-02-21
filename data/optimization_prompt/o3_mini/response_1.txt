@@ -1,0 +1,57 @@
+The error
+
+  OSError: Unable to synchronously open file (file signature not found)
+
+indicates that one of the “worker” files isn’t a valid HDF5 file when the main process tries to open it. In your workflow it looks like you’re launching many optimizations (for many seeds and worker files), and then later you “join” (or aggregate) the produced files. The error message strongly suggests that at least one of the worker files is either corrupt, incomplete, or not written as a valid HDF5 file.
+
+To make the error cause an immediate, clean process termination rather than a cryptic crash later in the join operation, you have two main options:
+
+1. Validate files as soon as they’re produced (or before you try to read them) so that you can catch any invalid files.
+2. Wrap the file‑opening logic in a try/except block and/or use h5py’s built‑in check.
+
+A couple of code modifications can help you reliably trap such errors:
+
+──────────────────────────────────────────────
+Example 1: Checking with h5py.is_hdf5
+
+Before trying to open a worker file, test it with h5py.is_hdf5(), which returns True only if the file has a valid HDF5 signature.
+
+  import sys, h5py
+
+  # Assuming worker_files is a list of filenames
+  for worker_file in worker_files:
+    if not h5py.is_hdf5(worker_file):
+      print(f"Error: {worker_file} is not a valid HDF5 file.")
+      sys.exit(1)  # Stop the process cleanly
+
+    # Now safely open the worker file
+    with h5py.File(worker_file, 'r') as h5_in:
+      # Process the file
+        ...
+──────────────────────────────────────────────
+
+This pre-check ensures that before you even attempt to open the file with h5py.File(), you know it’s a valid HDF5 file.
+
+──────────────────────────────────────────────
+Example 2: Wrap file opening in try/except
+
+Sometimes you might want to attempt to open the file and catch any definite errors. For example:
+
+  import sys, h5py
+
+  for worker_file in worker_files:
+    try:
+      with h5py.File(worker_file, 'r') as h5_in:
+        # Process the file
+        …
+    except OSError as err:
+      print(f"Failed to open {worker_file}: {err}")
+      sys.exit(1)  # Clean exit on error
+
+──────────────────────────────────────────────
+
+Using either (or a combination of) these approaches means that if any worker file is corrupt or invalid, the script will detect it, log an error, and stop the processing right away instead of proceeding with invalid data.
+
+In addition, if the worker file is generated asynchronously (for example, if a join operation is being done by a separate process or the worker files are not completely written when read), you might need to ensure proper synchronization. But the error “file signature not found” rather points to file corruption or incomplete writes. So a pre-check with h5py.is_hdf5() immediately after file creation and before joining could prevent this scenario.
+
+By modifying the script as above, you’ll have a reliable check that stops the process cleanly if any of the worker files are invalid, ensuring that you’re not silently proceeding with missing or corrupted data.

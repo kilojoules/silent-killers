@@ -1,0 +1,42 @@
+# models.yaml — expanded audit model roster
+# Existing models (already have 20 seeds of data)
+- alias: claude4_sonnet
+  name: claude-sonnet-4-20250514
+  provider: anthropic
+
+- alias: chatgpt4o-mini
+  name: gpt-4o-mini
+  provider: openai
+
+- alias: chatgpt40
+  name: gpt-4o
+  provider: openai
+
+- alias: gemini_1.5_flash
+  name: gemini-1.5-flash
+  provider: google
+
+# New models
+- alias: deepseek_v3
+  name: deepseek-chat
+  provider: deepseek
+  max_tokens: 8192
+
+- alias: deepseek_r1
+  name: deepseek-reasoner
+  provider: deepseek
+  max_tokens: 8192
+
+- alias: o3_mini
+  name: o3-mini
+  provider: openai
+  supports_temperature: false
+
+# Gemini models — uncomment when API key is available
+# - alias: gemini_2.0_flash
+#   name: gemini-2.0-flash
+#   provider: google
+
+# - alias: gemini_2.5_pro
+#   name: gemini-2.5-pro-preview-06-05
+#   provider: google

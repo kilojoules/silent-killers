@@ -1,0 +1,247 @@
+Looking at this error, I can diagnose the issue:
+
+## Problem Diagnosis
+
+The script is failing when trying to **read a worker file** during the final aggregation/joining phase. The error `OSError: Unable to synchronously open file (file signature not found)` indicates that one of the worker output files is either:
+1. **Corrupted** (incomplete/corrupt HDF5 file)
+2. **Empty** (0 bytes)
+3. **Still being written** when the main process tried to read it
+
+The repeating "130 possible points..." messages suggest that worker processes are continuing to run/print output even after the main process thinks it's done (it shows "Completed 2999/3000 optimizations successfully").
+
+## Root Cause
+
+This is likely a **race condition** where:
+1. Worker processes are still running/writing when the main process starts collecting results
+2. A worker file gets corrupted if the process is killed/interrupted mid-write
+3. The main process doesn't properly wait for all workers to complete before trying to read their files
+
+## Solution: Modified Script
+
+Here's how to modify the script to detect and handle this reliably:
+
+```python
+import os
+import h5py
+import time
+import traceback
+from pathlib import Path
+
+def validate_worker_file(filepath, max_retries=3, retry_delay=2):
+    """
+    Validate that a worker file is complete and readable.
+    Returns (is_valid, error_message)
+    """
+    filepath = Path(filepath)
+    
+    # Check 1: File exists
+    if not filepath.exists():
+        return False, f"File does not exist: {filepath}"
+    
+    # Check 2: File has non-zero size
+    if filepath.stat().st_size == 0:
+        return False, f"File is empty (0 bytes): {filepath}"
+    
+    # Check 3: File is a valid HDF5 file
+    for attempt in range(max_retries):
+        try:
+            with h5py.File(filepath, 'r') as h5_in:
+                # Check 4: File has expected structure/keys
+                # Add your specific checks here based on your data structure
+                if 'layouts' not in h5_in:
+                    return False, f"Missing 'layouts' dataset in {filepath}"
+                if 'seeds' not in h5_in:
+                    return False, f"Missing 'seeds' dataset in {filepath}"
+                
+                # Check 5: Datasets have expected shape/size
+                layouts = h5_in['layouts']
+                seeds = h5_in['seeds']
+                
+                if len(layouts) != len(seeds):
+                    return False, f"Mismatched dataset sizes in {filepath}"
+                
+                return True, "Valid"
+                
+        except (OSError, KeyError, ValueError) as e:
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay)
+                continue
+            return False, f"Failed to read HDF5 file {filepath}: {str(e)}"
+    
+    return False, "Unexpected error"
+
+def safe_read_worker_file(filepath, max_retries=5, retry_delay=5):
+    """
+    Safely read a worker file with retries and validation.
+    """
+    for attempt in range(max_retries):
+        # Validate before reading
+        is_valid, msg = validate_worker_file(filepath)
+        
+        if not is_valid:
+            if attempt < max_retries - 1:
+                print(f"Warning: Worker file invalid (attempt {attempt+1}/{max_retries}): {msg}")
+                print(f"Waiting {retry_delay} seconds before retry...")
+                time.sleep(retry_delay)
+                continue
+            else:
+                raise RuntimeError(f"Worker file permanently invalid: {msg}")
+        
+        try:
+            with h5py.File(filepath, 'r') as h5_in:
+                # Read your data here
+                layouts = h5_in['layouts'][:]
+                seeds = h5_in['seeds'][:]
+                return layouts, seeds
+                
+        except Exception as e:
+            if attempt < max_retries - 1:
+                print(f"Warning: Failed to read worker file (attempt {attempt+1}/{max_retries}): {e}")
+                time.sleep(retry_delay)
+                continue
+            else:
+                raise
+
+def main():
+    # ... your existing setup code ...
+    
+    # MODIFIED: Wait for all worker files to be complete
+    print("Waiting for all worker processes to complete...")
+    
+    worker_files = []  # Your list of worker file paths
+    all_ready = False
+    max_wait_time = 300  # 5 minutes maximum wait
+    wait_interval = 10   # Check every 10 seconds
+    start_time = time.time()
+    
+    while not all_ready and (time.time() - start_time) < max_wait_time:
+        all_ready = True
+        problematic_files = []
+        
+        for worker_file in worker_files:
+            is_valid, msg = validate_worker_file(worker_file)
+            if not is_valid:
+                all_ready = False
+                problematic_files.append((worker_file, msg))
+        
+        if not all_ready:
+            print(f"Waiting for {len(problematic_files)} worker files...")
+            for file, msg in problematic_files[:3]:  # Show first 3
+                print(f"  - {file.name}: {msg}")
+            if len(problematic_files) > 3:
+                print(f"  ... and {len(problematic_files) - 3} more")
+            
+            time.sleep(wait_interval)
+    
+    if not all_ready:
+        print("ERROR: Some worker files never became ready:")
+        for file, msg in problematic_files:
+            print(f"  - {file}: {msg}")
+        print("Aborting process.")
+        return 1  # Exit with error code
+    
+    # MODIFIED: Read worker files with validation
+    all_layouts = []
+    all_seeds = []
+    failed_files = []
+    
+    for worker_file in worker_files:
+        try:
+            layouts, seeds = safe_read_worker_file(worker_file)
+            all_layouts.append(layouts)
+            all_seeds.append(seeds)
+            print(f"Successfully read {worker_file.name}")
+            
+        except Exception as e:
+            print(f"ERROR: Failed to read {worker_file.name}: {e}")
+            failed_files.append(worker_file)
+    
+    # Check if we have enough successful results
+    if failed_files:
+        print(f"\nWARNING: Failed to read {len(failed_files)}/{len(worker_files)} worker files")
+        print("Failed files:")
+        for f in failed_files:
+            print(f"  - {f}")
+        
+        # Ask user what to do
+        response = input("\nContinue with available data? (y/n): ")
+        if response.lower() != 'y':
+            print("Aborting process.")
+            return 1
+    
+    # ... continue with your aggregation logic ...
+    
+    # MODIFIED: Clean up worker files only if successful
+    if not failed_files or response.lower() == 'y':
+        print("Cleaning up worker files...")
+        for worker_file in worker_files:
+            try:
+                os.remove(worker_file)
+                print(f"Removed {worker_file.name}")
+            except Exception as e:
+                print(f"Warning: Could not remove {worker_file.name}: {e}")
+    
+    return 0
+
+if __name__ == "__main__":
+    exit(main())
+```
+
+## Additional Recommendations
+
+1. **Add worker file checks at the beginning**:
+```python
+# Before starting optimization, check if any worker files exist from previous runs
+worker_files = [f"worker_{i}.h5" for i in range(num_workers)]
+for wf in worker_files:
+    if os.path.exists(wf):
+        response = input(f"Worker file {wf} already exists. Delete? (y/n): ")
+        if response.lower() == 'y':
+            os.remove(wf)
+        else:
+            print("Exiting to avoid overwriting data.")
+            exit(1)
+```
+
+2. **Use atomic writes in workers**:
+```python
+# In each worker process, write to a temporary file first, then rename
+temp_file = f"worker_{worker_id}.tmp.h5"
+final_file = f"worker_{worker_id}.h5"
+
+with h5py.File(temp_file, 'w') as h5_out:
+    # Write your data
+    h5_out.create_dataset('layouts', data=layouts)
+    h5_out.create_dataset('seeds', data=seeds)
+
+# Atomic rename (OS-level operation)
+os.rename(temp_file, final_file)
+```
+
+3. **Add timeout to worker processes**:
+```python
+import multiprocessing as mp
+import signal
+
+def worker_with_timeout(worker_id, timeout_seconds=3600):  # 1 hour timeout
+    def timeout_handler(signum, frame):
+        raise TimeoutError(f"Worker {worker_id} timed out after {timeout_seconds} seconds")
+    
+    signal.signal(signal.SIGALRM, timeout_handler)
+    signal.alarm(timeout_seconds)
+    
+    try:
+        # Your worker logic here
+        return result
+    finally:
+        signal.alarm(0)  # Disable the alarm
+```
+
+## Recovery Strategy
+
+For your current situation, you can:
+1. **Identify the bad file(s)** by running the validation function on each worker file
+2. **Re-run only the missing seeds** for the problematic worker(s)
+3. **Manually merge** the good data from existing files
+
+Would you like me to help you create a recovery script to salvage the 2999 successful optimizations?

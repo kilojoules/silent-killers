@@ -1,0 +1,219 @@
+Below is an example Python script that “clones‐in” a realistic uncertainty propagation‐workflow through PyWake (or a surrogate thereof) and then computes Sobol sensitivity maps of the effective wind speed (WS_eff) on a horizontal (x,y) grid at several “time” snapshots. In this example the “measurement uncertainties” on the inflow (here taken as the free‐stream wind speed WS, turbulence intensity TI, and wind direction WD) are propagated via a Saltelli design from the SALib package. For each inlet condition sample the script calls a (dummy) PyWake‐like function that returns a 2D field of effective wind speed (you would replace this function with your actual PyWake flow‐field simulation call). Then, for every (x,y) grid point the script computes the first–order Sobol indices (S1) with respect to each uncertain inflow parameter. Finally it saves figures showing the sensitivity maps at the different times.
+
+Note that if you already have your PyWake simulation set up (for example by instantiating a flow model object from py_wake.models), you can easily replace the “simulate_flow_field” function below with your actual simulation call using the appropriate inflow parameters.
+
+Below is the complete annotated code:
+
+------------------------------------------------------------
+#!/usr/bin/env python
+"""
+This script propagates realistic inflow measurement uncertainties through a PyWake simulation
+and computes the Sobol sensitivity indices of the effective wind speed (WS_eff) on an (x,y) grid.
+It then saves a series of images showing sensitivity of the flow (first–order S1 indices)
+at several time snapshots with respect to the uncertain inflow conditions.
+
+Prerequisites:
+  • PyWake (or your own simulation) – here we use a dummy simulation function.
+  • SALib package: pip install SALib
+  • NumPy, Matplotlib
+
+In this example the three uncertain parameters are:
+  WS: free–stream wind speed [m/s] (nominal 8 m/s, uncertainty ±1)
+  TI: turbulence intensity (nominal 0.10, uncertainty ±0.05)
+  WD: wind direction in degrees (nominal 270°, uncertainty ±5°)
+
+A dummy time–modulation is applied to wind speed at each snapshot.
+"""
+
+import numpy as np
+import matplotlib.pyplot as plt
+from SALib.sample import saltelli
+from SALib.analyze import sobol
+import os
+
+# ---------------------------
+# 1. Define the uncertainty problem
+# ---------------------------
+# Our uncertain inflow parameters
+problem = {
+    'num_vars': 3,
+    'names': ['WS', 'TI', 'WD'],
+    # bounds: [min, max] for each variable.
+    # For example, WS nominal 8 ±1; TI nominal 0.10 ±0.05; WD nominal 270 ±5
+    'bounds': [
+        [7.0, 9.0],    # WS in m/s
+        [0.05, 0.15],  # TI (fraction)
+        [265.0, 275.0] # WD in degrees
+    ]
+}
+
+# ---------------------------
+# 2. Generate the Saltelli samples
+# ---------------------------
+N_base = 128  
+# Saltelli expects N*(2+num_vars) total samples.
+param_values = saltelli.sample(problem, N_base, calc_second_order=False)
+n_evals = param_values.shape[0]
+print("Total number of model evaluations:", n_evals)
+
+
+# ---------------------------
+# 3. Define the (x,y) grid for the flow field
+# ---------------------------
+# For demonstration, we define a grid over (x,y) [meters]
+x = np.linspace(-500, 1500, 40)   # 40 grid points in x
+y = np.linspace(-500, 500, 30)      # 30 grid points in y
+X, Y = np.meshgrid(x, y)          # shape (30, 40)
+
+# ---------------------------
+# 4. Time–snapshots at which we want to compute sensitivity maps.
+# ---------------------------
+# Here we simulate 5 time snapshots with a simple sinusoidal modulation of the inflow wind speed.
+time_snapshots = np.linspace(0, 10, 5)  # for instance, 5 time instants from t=0s to 10s
+ws_mod_amplitude = 0.5  # [m/s] amplitude modulation
+
+# ---------------------------
+# 5. Define a dummy PyWake simulation function.
+# ---------------------------
+def simulate_flow_field(ws_nom, ti, wd, time, X, Y):
+    """
+    Dummy function that represents running a PyWake simulation given inflow conditions.
+    
+    Parameters:
+       ws_nom  : Nominal free-stream wind speed [m/s] (from uncertainties sample)
+       ti      : turbulence intensity
+       wd      : wind direction (deg)
+       time    : time (s) at which to evaluate (used for modulating the inflow)
+       X, Y    : 2D arrays giving grid coordinates (meters)
+    
+    Returns:
+       WS_eff: 2D array (same shape as X,Y) of effective wind speed [m/s].
+       
+    In an actual workflow this function would set (or update) the inflow in your PyWake model
+    and then compute the flow field. Here we simply build a “dummy wake” that decreases ws
+    in a Gaussian “wake” centered roughly at (x0,y0), and we let the center shift slowly with time.
+    """
+    # Apply a time modulation to the inflow wind speed:
+    ws_mod = ws_nom + ws_mod_amplitude * np.sin(2*np.pi*time/10.)
+    
+    # For a dummy wake we define the wake center moving with time:
+    x0 = 200 + 20*time    # the wake center moves downwind with time
+    y0 = 0
+    
+    # A dummy wake deficit that depends on turbulence intensity etc.
+    # The width of the wake is assumed to scale with ti.
+    sigma = 50 + 200 * ti   # [m]
+    # Wake deficit factor: a Gaussian spatial profile.
+    wake_deficit = 0.1 * np.exp(- ((X - x0)**2 + (Y - y0)**2) / (2*sigma**2))
+    # Also, let the effective wind direction change the orientation of the wake slightly
+    # (for demonstration only)
+    # (Note: A full PyWake simulation would have a complex dependence on wd.)
+    # Here we add a small sinusoidal modulation dependent on wd.
+    ws_eff = ws_mod * (1 - wake_deficit * (1 + 0.01*(wd - 270)))
+    return ws_eff
+
+# ---------------------------
+# 6. For each time snapshot, run the simulations for each parameter/sample and store the flow fields.
+# ---------------------------
+# Preallocate a dictionary to hold the sensitivity maps for each time snapshot.
+# For each time snapshot we will store S1 maps for each input parameter.
+sensitivity_maps_time = {}
+
+# Create an output directory to save figures
+out_dir = "sobol_flow_fields"
+os.makedirs(out_dir, exist_ok=True)
+
+print("Starting the uncertainty propagation and Sobol analysis for each snapshot...")
+
+for t in time_snapshots:
+    print(f"\nProcessing time snapshot: t = {t:.2f} s")
+    
+    # Preallocate an array to hold the computed WS_eff fields.
+    # Shape: (n_evals, ny, nx)
+    ws_eff_all = np.empty((n_evals, len(y), len(x)))
+    
+    # Loop over each evaluation/sample
+    for i in range(n_evals):
+        # Extract the uncertain parameters for this sample
+        ws_sample, ti_sample, wd_sample = param_values[i, :]
+        # Run the (dummy) PyWake simulation for these inflow conditions and grid.
+        ws_field = simulate_flow_field(ws_sample, ti_sample, wd_sample, t, X, Y)
+        ws_eff_all[i, :, :] = ws_field
+        
+    # ---------------------------
+    # 7. Compute Sobol sensitivity indices at each grid cell.
+    # ---------------------------
+    # We will compute the first-order Sobol indices (S1) for each parameter.
+    ny, nx = len(y), len(x)
+    # Preallocate a dictionary of S1 maps for each parameter.
+    S1_maps = {name: np.full((ny, nx), np.nan) for name in problem['names']}
+    
+    print("  Computing Sobol indices at each grid cell ...")
+    # For each grid cell (i,j) we have a vector of output values of length n_evals.
+    # We then call the sobol.analyze routine from SALib.
+    for j in range(ny):
+        for k in range(nx):
+            # Get the response vector at grid cell (j,k). Must be a 1d array of length n_evals.
+            Y_response = ws_eff_all[:, j, k]
+            # Call sobol analysis.
+            try:
+                Si = sobol.analyze(problem, Y_response, print_to_console=False)
+                # Save the first-order sensitivities S1_i to the S1 map (Si['S1'] is an array)
+                for idx, name in enumerate(problem['names']):
+                    S1_maps[name][j, k] = Si['S1'][idx]
+            except Exception as e:
+                # In case the analysis fails at a grid point, leave as nan
+                print(f"    Warning: sobol analysis failed at grid cell ({j},{k}): {e}")
+    
+    sensitivity_maps_time[t] = S1_maps
+    
+    # ---------------------------
+    # 8. Plot and save the sensitivity maps for this time snapshot.
+    # ---------------------------
+    # For clarity, plot each uncertain parameter’s S1 map as a separate subplot.
+    fig, axs = plt.subplots(1, len(problem['names']), figsize=(5*len(problem['names']), 4))
+    if len(problem['names']) == 1:
+        axs = [axs]
+        
+    for idx, name in enumerate(problem['names']):
+        im = axs[idx].imshow(S1_maps[name], extent=[x[0], x[-1], y[0], y[-1]],
+                             origin='lower', cmap='viridis', vmin=0, vmax=1)
+        axs[idx].set_title(f"Sobol S1 for {name}\n(t = {t:.2f} s)")
+        axs[idx].set_xlabel("x [m]")
+        axs[idx].set_ylabel("y [m]")
+        fig.colorbar(im, ax=axs[idx], fraction=0.046, pad=0.04)
+        
+    fig.tight_layout()
+    fname = os.path.join(out_dir, f"sobol_sensitivity_t{int(t*100):04d}.png")
+    plt.savefig(fname, dpi=150)
+    plt.close(fig)
+    print(f"  Saved figure: {fname}")
+
+print("\nAll sensitivity maps have been generated and saved.")
+    
+# ----------------------------------------------------------------
+# END OF SCRIPT
+# ----------------------------------------------------------------
+
+"""
+Notes:
+---------
+1. In an actual application you would replace the simulate_flow_field() function
+   with your call(s) to PyWake’s simulation engine. For example, you might set up your site
+   and turbine objects once and then update the inflow conditions (WS, TI, WD) before
+   calculating the flow field on your (x,y) grid.
+
+2. The Saltelli design requires a specific ordering of the samples so that the Sobol indices,
+   computed using SALib’s analyze.sobol routine, are valid.
+
+3. This example computes Sobol sensitivity indices independently at every grid cell.
+   (Depending on grid resolution and complexity of your simulation, this step may be computationally
+   intensive; opportunities for parallelization exist.)
+
+4. “Time” here is introduced via a simple sinusoidal modulation; in a dynamic simulation, you may have
+   proper time–resolved inflow fields.
+
+5. The uncertainties (“measurement uncertainties”) are propagated by sampling over the ranges specified
+   in the bounds of the problem dictionary.
+
+Enjoy adapting this script to your own PyWake UQ workflow!

@@ -1,0 +1,130 @@
+Looking at your error and output, I can diagnose the issue:
+
+## Problem Analysis
+
+1. **The error occurs during file reading**: The script is trying to open a worker file with `h5py.File(worker_file, 'r')` but the file has an invalid HDF5 signature.
+
+2. **The process completed 2999/3000 optimizations**: One worker file is corrupted/incomplete.
+
+3. **The corruption likely happened during the joining operation**: As you suspected, when the main process tries to read and merge results from worker files, one file is invalid.
+
+4. **The repeated "130 possible points" messages**: These suggest the script continued trying to process despite the file corruption, possibly in a loop.
+
+## Root Cause
+The script doesn't validate worker files before attempting to read them, and when it encounters a corrupted file, it crashes with an unhandled exception rather than failing gracefully.
+
+## Solution: Modified Script with Robust Error Handling
+
+Here's how to modify your script to handle this reliably:
+
+```python
+import h5py
+import os
+import sys
+import traceback
+from pathlib import Path
+
+def validate_h5_file(filepath):
+    """Validate that a file is a valid HDF5 file."""
+    try:
+        with h5py.File(filepath, 'r') as f:
+            # Try to access a basic attribute to ensure file is readable
+            _ = f.attrs.get('creation_date', None)
+        return True
+    except (OSError, IOError, ValueError) as e:
+        print(f"ERROR: Invalid HDF5 file {filepath}: {e}")
+        return False
+
+def safe_read_h5_file(filepath):
+    """Safely read an HDF5 file with error handling."""
+    try:
+        with h5py.File(filepath, 'r') as h5_in:
+            return h5_in
+    except Exception as e:
+        print(f"CRITICAL: Failed to read {filepath}: {e}")
+        raise
+
+def main():
+    # ... your existing code ...
+    
+    # MODIFIED SECTION: When reading worker files
+    worker_files = []  # Your list of worker files
+    
+    # Validate all worker files before processing
+    print("Validating worker files...")
+    valid_files = []
+    corrupted_files = []
+    
+    for worker_file in worker_files:
+        if validate_h5_file(worker_file):
+            valid_files.append(worker_file)
+        else:
+            corrupted_files.append(worker_file)
+            print(f"WARNING: Corrupted file detected: {worker_file}")
+    
+    # Check if we have corrupted files
+    if corrupted_files:
+        print(f"\nERROR: Found {len(corrupted_files)} corrupted worker files:")
+        for cf in corrupted_files:
+            print(f"  - {cf}")
+        
+        # Option 1: Stop immediately
+        print("\nStopping process due to corrupted files.")
+        sys.exit(1)
+        
+        # Option 2: Continue with valid files only (if acceptable)
+        # print(f"\nContinuing with {len(valid_files)} valid files.")
+        # worker_files = valid_files
+    
+    # Process valid files
+    successful_count = 0
+    for worker_file in valid_files:
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                # Your processing code here
+                successful_count += 1
+        except Exception as e:
+            print(f"ERROR: Failed to process {worker_file}: {e}")
+            # Decide whether to continue or stop
+            # sys.exit(1)  # Uncomment to stop on any error
+    
+    print(f"Successfully processed {successful_count}/{len(worker_files)} files")
+    
+    # ... rest of your code ...
+
+# Alternative: Add recovery mechanism
+def attempt_recovery(corrupted_file):
+    """Attempt to recover data from corrupted file if possible."""
+    try:
+        # Try different modes or recovery options
+        with h5py.File(corrupted_file, 'r', driver='core') as f:
+            # Try to salvage what we can
+            pass
+    except:
+        return None
+
+# Add checkpointing to prevent total loss
+def save_checkpoint(results, checkpoint_file):
+    """Save intermediate results to prevent total loss on crash."""
+    with h5py.File(checkpoint_file, 'w') as f:
+        # Save current progress
+        pass
+```
+
+## Key Improvements:
+
+1. **Pre-validation**: Check all worker files before starting the merge process
+2. **Graceful failure**: Stop cleanly with informative messages when corruption is detected
+3. **Progress tracking**: Count successful vs failed operations
+4. **Checkpointing**: Save intermediate results to recover from crashes
+5. **Recovery options**: Attempt to salvage data from corrupted files if possible
+
+## To recover your existing data:
+
+Since you completed 2999/3000 optimizations, you could:
+
+1. Identify which seed/farm combination failed
+2. Rerun only that specific case
+3. Merge the new result with the existing 2999 successful ones
+
+Would you like me to help you implement a specific recovery strategy or modify your actual script file?

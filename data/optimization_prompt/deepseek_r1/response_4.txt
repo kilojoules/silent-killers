@@ -1,0 +1,210 @@
+Looking at your error and the logs, I can diagnose the issue and provide solutions. Here's what's happening:
+
+## **Diagnosis**
+
+1. **The Problem**: One of your worker files is corrupted/invalid (likely file signature not found means the HDF5 file wasn't properly closed or is empty).
+   
+2. **Timing Issue**: The error occurs during the "joining operation" where the main process tries to read all worker output files after parallel computation completes. One worker file is corrupted (likely from a worker process that didn't shut down cleanly).
+
+3. **Evidence in Logs**:
+   - Process completed 3000/3000 optimizations according to progress bar
+   - But reports "Completed 2999/3000 optimizations successfully" - one missing!
+   - The corrupted file causes `h5py.File()` to fail when trying to read it
+
+## **Modified Script with Proper Error Handling**
+
+Here's how to modify your script to handle this reliably:
+
+```python
+import h5py
+import os
+import sys
+import traceback
+from pathlib import Path
+
+def validate_h5_file(filepath):
+    """Validate that an HDF5 file exists and is readable"""
+    try:
+        if not os.path.exists(filepath):
+            return False, f"File does not exist: {filepath}"
+        
+        if os.path.getsize(filepath) == 0:
+            return False, f"File is empty: {filepath}"
+        
+        # Try to open and read file signature
+        with h5py.File(filepath, 'r') as f:
+            # Try to access something to ensure it's readable
+            _ = list(f.keys())
+        return True, "Valid"
+    except Exception as e:
+        return False, f"Invalid HDF5 file {filepath}: {str(e)}"
+
+def safe_h5_read(filepath, mode='r'):
+    """Safely open an HDF5 file with comprehensive error handling"""
+    try:
+        return h5py.File(filepath, mode)
+    except OSError as e:
+        # Check if it's a corrupt file error
+        if "file signature" in str(e).lower() or "unable to open file" in str(e).lower():
+            raise CorruptedWorkerFileError(f"Corrupted worker file detected: {filepath}\nError: {e}")
+        else:
+            raise
+
+class CorruptedWorkerFileError(Exception):
+    """Custom exception for corrupted worker files"""
+    pass
+
+# Modified main function section (around line 448):
+def main():
+    # ... existing code ...
+    
+    # Before joining, validate all worker files
+    worker_files = [...]  # Your list of worker files
+    
+    print("Validating worker files before joining...")
+    corrupted_files = []
+    for worker_file in worker_files:
+        is_valid, msg = validate_h5_file(worker_file)
+        if not is_valid:
+            print(f"ERROR: {msg}")
+            corrupted_files.append(worker_file)
+    
+    if corrupted_files:
+        print(f"\n❌ Found {len(corrupted_files)} corrupted worker files:")
+        for cf in corrupted_files:
+            print(f"  - {cf}")
+        
+        # Option 1: Clean stop with clear error message
+        print("\nAborting process to prevent data corruption.")
+        print("Please investigate these files and restart.")
+        sys.exit(1)
+        
+        # Option 2: Continue without corrupted files (if acceptable)
+        # worker_files = [f for f in worker_files if f not in corrupted_files]
+        # print(f"Continuing with {len(worker_files)} valid files...")
+    
+    # Now process valid files with safe wrapper
+    for worker_file in worker_files:
+        try:
+            with safe_h5_read(worker_file, 'r') as h5_in:
+                # Process the file
+                pass
+        except CorruptedWorkerFileError as e:
+            print(f"FATAL: {e}")
+            print("Stopping process cleanly.")
+            # Clean up any partial results
+            if 'output_file' in locals():
+                if os.path.exists(output_file):
+                    os.remove(output_file)
+                    print(f"Removed incomplete output: {output_file}")
+            sys.exit(1)
+        except Exception as e:
+            print(f"Unexpected error processing {worker_file}: {e}")
+            traceback.print_exc()
+            sys.exit(1)
+    
+    # ... rest of your code ...
+
+# For your worker processes, add proper cleanup:
+def worker_function(args):
+    """Example worker function with proper file handling"""
+    output_file = args.output_path
+    
+    try:
+        # Do computation
+        with h5py.File(output_file, 'w') as h5_out:
+            # Write results
+            pass
+    except Exception as e:
+        # If worker fails, ensure no corrupt file is left
+        if os.path.exists(output_file):
+            try:
+                os.remove(output_file)
+            except:
+                pass
+        raise e  # Re-raise to be caught by pool
+```
+
+## **Recovery Strategy**
+
+Since you have 2999/3000 successful files:
+
+1. **Identify the corrupted file**: Run this script to find which file is bad:
+```python
+import h5py
+import os
+
+worker_dir = "/path/to/your/worker/files/"
+for f in os.listdir(worker_dir):
+    if f.endswith('.h5'):
+        try:
+            with h5py.File(os.path.join(worker_dir, f), 'r'):
+                print(f"✓ {f} is valid")
+        except Exception as e:
+            print(f"✗ {f} is corrupted: {e}")
+```
+
+2. **Re-run only the missing optimization**:
+   - Identify which seed/farm combination is missing (from the corrupted filename)
+   - Run just that specific case
+
+3. **Preventative measures for future runs**:
+
+```python
+# In your worker processes, use atomic writes:
+def atomic_write_h5(data, filename):
+    """Write HDF5 file atomically to prevent corruption"""
+    import tempfile
+    import shutil
+    
+    # Write to temp file first
+    with tempfile.NamedTemporaryFile(mode='wb', delete=False, suffix='.h5') as tmp:
+        temp_path = tmp.name
+        with h5py.File(temp_path, 'w') as f:
+            # Write data
+            pass
+    
+    # Atomic rename (works on Unix/Linux)
+    os.replace(temp_path, filename)
+    # On Windows, you might need:
+    # try: os.remove(filename)
+    # except: pass
+    # shutil.move(temp_path, filename)
+```
+
+## **Root Cause Prevention**
+
+The issue likely occurs because:
+1. Worker process is killed/interrupted before file is fully written
+2. Disk space issues during write
+3. Python process killed without proper cleanup
+
+**Add this to your main script**:
+
+```python
+import atexit
+import signal
+
+def cleanup_on_exit(signum=None, frame=None):
+    """Cleanup function for graceful exit"""
+    print("\nSignal received, cleaning up...")
+    # Remove any partial/incomplete files
+    worker_pattern = "worker_*.h5"
+    for f in Path(".").glob(worker_pattern):
+        if f.stat().st_size == 0:  # Remove empty files
+            f.unlink()
+    sys.exit(1 if signum else 0)
+
+# Register signal handlers
+signal.signal(signal.SIGINT, cleanup_on_exit)
+signal.signal(signal.SIGTERM, cleanup_on_exit)
+atexit.register(cleanup_on_exit)
+```
+
+This approach will:
+1. Detect corrupted files early
+2. Stop cleanly with informative messages
+3. Prevent partial/corrupted output
+4. Make recovery easier by identifying exactly what failed
+
+Would you like me to help you implement any specific part of this solution?

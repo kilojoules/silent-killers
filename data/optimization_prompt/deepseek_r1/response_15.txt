@@ -1,0 +1,168 @@
+Based on your error and logs, I can diagnose the issue:
+
+## Diagnosis
+
+The problem is that one of the worker files (likely `worker_*` files) is corrupted or incomplete. The error occurs when the main process tries to read worker files to combine results at the end. Specifically:
+
+1. **File corruption**: An HDF5 file was written incompletely or corrupted
+2. **Missing file signature**: The file doesn't have the proper HDF5 header, suggesting:
+   - The worker process crashed while writing
+   - Disk I/O error occurred
+   - The file was partially written
+
+From your logs, you see "Completed 2999/3000 optimizations successfully" but the script tried to process 3000 files. One worker file is likely corrupt.
+
+## Solution: Modified Script
+
+Here's how to modify your script to detect and handle this issue:
+
+```python
+import h5py
+import os
+import sys
+from pathlib import Path
+
+def check_hdf5_file(filepath):
+    """Validate HDF5 file integrity before reading."""
+    try:
+        # Check if file exists and has content
+        if not os.path.exists(filepath):
+            return False, f"File does not exist: {filepath}"
+        
+        if os.path.getsize(filepath) == 0:
+            return False, f"File is empty: {filepath}"
+        
+        # Try to open and verify HDF5 structure
+        with h5py.File(filepath, 'r') as f:
+            # Verify the file has required structure/datasets
+            if not f.keys():
+                return False, f"File has no datasets: {filepath}"
+        return True, ""
+    except Exception as e:
+        return False, f"Error reading {filepath}: {str(e)}"
+
+def main():
+    # ... your existing code ...
+    
+    # MODIFICATION 1: Before reading worker files, validate them
+    worker_files = [...]  # Your list of worker files
+    
+    print(f"Validating {len(worker_files)} worker files...")
+    
+    # Check all worker files before processing
+    valid_files = []
+    corrupted_files = []
+    
+    for worker_file in worker_files:
+        is_valid, error_msg = check_hdf5_file(worker_file)
+        if is_valid:
+            valid_files.append(worker_file)
+        else:
+            corrupted_files.append((worker_file, error_msg))
+            print(f"ERROR: Invalid worker file detected - {error_msg}")
+    
+    if corrupted_files:
+        print("\n" + "="*80)
+        print(f"CRITICAL: Found {len(corrupted_files)} corrupted worker files:")
+        for f, msg in corrupted_files:
+            print(f"  - {f}: {msg}")
+        print("\nOptions:")
+        print("1. Delete corrupted files and restart from scratch")
+        print("2. Attempt to salvage what we can (use --skip-corrupted flag)")
+        print("="*80)
+        
+        # Exit with error code
+        sys.exit(1)
+    
+    # MODIFICATION 2: Process only valid files
+    print(f"Processing {len(valid_files)} valid worker files...")
+    
+    for worker_file in valid_files:
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                # ... your processing code ...
+                pass
+        except Exception as e:
+            print(f"ERROR: Failed to process {worker_file}: {e}")
+            # Optionally move to corrupted list and continue
+            # Or exit immediately depending on your needs
+            continue
+    
+    # MODIFICATION 3: Add recovery option
+    print(f"Successfully processed {len(valid_files)}/{len(worker_files)} files")
+    
+    # ... rest of your code ...
+
+if __name__ == "__main__":
+    main()
+```
+
+## Alternative: Add Recovery Mode
+
+If you want to attempt recovery of partial data:
+
+```python
+def process_with_recovery(worker_files):
+    """Process files with recovery/retry logic."""
+    successful = 0
+    failed = 0
+    
+    for i, worker_file in enumerate(worker_files):
+        print(f"Processing file {i+1}/{len(worker_files)}: {worker_file}")
+        
+        # Try to read the file
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                # Process the file
+                # ... your code ...
+                successful += 1
+                
+        except (OSError, IOError) as e:
+            failed += 1
+            print(f"  WARNING: Failed to read {worker_file}: {e}")
+            
+            # Optional: Try to fix or skip
+            print(f"  Skipping corrupted file...")
+            continue
+    
+    print(f"\nSummary: {successful} successful, {failed} failed")
+    
+    if failed > 0:
+        print(f"WARNING: {failed} files could not be processed")
+        # Optionally save list of failed files for retry
+        # save_failed_files_list(failed_files)
+```
+
+## Preventive Measures
+
+1. **Add checkpointing**: Save intermediate results periodically
+2. **Use temporary files**: Write to `.tmp` file first, then rename when complete:
+```python
+def safe_write_hdf5(data, filename):
+    """Write HDF5 file safely with temporary file."""
+    temp_file = filename + ".tmp"
+    try:
+        with h5py.File(temp_file, 'w') as f:
+            # Write your data
+            pass
+        # Atomic rename (safer on most filesystems)
+        os.rename(temp_file, filename)
+    except Exception as e:
+        # Clean up temp file on error
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
+        raise e
+```
+
+3. **Add timeout/retry logic** for I/O operations
+4. **Verify disk space** before starting long operations
+
+## Immediate Recovery
+
+For your current situation:
+1. Identify which worker file is corrupted (the one that failed at line 448)
+2. Remove or move that file
+3. Restart the process - it should process the remaining 2999 files successfully
+4. You may need to manually run the missing optimization if needed
+
+Would you like me to help you identify which specific file is corrupted or provide more specific modifications to your actual script?

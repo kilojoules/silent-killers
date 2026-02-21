@@ -1,0 +1,224 @@
+Looking at your error, the issue occurs when trying to open a worker file during the joining operation, and the error indicates the file is corrupted or incomplete (file signature not found). The script completed 2999 out of 3000 optimizations successfully, but one worker file is invalid.
+
+## Diagnosis
+
+The problem is likely:
+1. **Incomplete/corrupted worker file**: One of the worker processes might have crashed or been terminated while writing its HDF5 file
+2. **Race condition during file writing**: The worker might have been interrupted before it could properly close and flush the HDF5 file
+3. **The joining process starts before all workers are finished**: If workers write to temporary files and rename them when complete, a worker might have died mid-process
+
+## Solution: Modify the script to validate worker files before merging
+
+Here's how to modify your script to detect and handle corrupted files:
+
+```python
+import h5py
+import os
+import glob
+from pathlib import Path
+
+def validate_h5_file(filepath):
+    """Check if an HDF5 file is valid and can be opened."""
+    try:
+        with h5py.File(filepath, 'r') as f:
+            # Try to access some metadata to ensure file is fully readable
+            _ = f.keys()
+            # Optionally check for expected datasets
+            # if 'expected_dataset' not in f:
+            #     return False, "Missing expected dataset"
+            return True, "File is valid"
+    except (OSError, IOError, KeyError) as e:
+        return False, f"Failed to open file: {str(e)}"
+
+def main():
+    # ... your existing code ...
+    
+    # Find all worker files
+    worker_files = glob.glob("worker_*.h5")  # Adjust pattern as needed
+    
+    # Validate all worker files before processing
+    valid_files = []
+    corrupted_files = []
+    
+    print(f"Found {len(worker_files)} worker files. Validating...")
+    
+    for worker_file in worker_files:
+        is_valid, message = validate_h5_file(worker_file)
+        if is_valid:
+            valid_files.append(worker_file)
+            print(f"✓ {worker_file}: {message}")
+        else:
+            corrupted_files.append(worker_file)
+            print(f"✗ {worker_file}: {message}")
+    
+    # Stop if any files are corrupted
+    if corrupted_files:
+        print(f"\nERROR: Found {len(corrupted_files)} corrupted worker files:")
+        for cf in corrupted_files:
+            print(f"  - {cf}")
+        
+        # Option 1: Exit with error (clean stop)
+        print("\nExiting process. Corrupted files need to be regenerated.")
+        
+        # Option 2: Move corrupted files aside and continue with remaining ones
+        # (only if you can tolerate missing some data)
+        # backup_dir = "corrupted_backup"
+        # os.makedirs(backup_dir, exist_ok=True)
+        # for cf in corrupted_files:
+        #     os.rename(cf, os.path.join(backup_dir, os.path.basename(cf)))
+        # print(f"Moved corrupted files to {backup_dir}. Continuing with {len(valid_files)} valid files.")
+        
+        # For strict requirements, exit
+        sys.exit(1)
+    
+    # Continue with only valid files
+    print(f"\nAll {len(valid_files)} worker files are valid. Proceeding with merge...")
+    
+    # Your existing merging code, but using valid_files instead
+    for worker_file in valid_files:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # ... process the file ...
+            pass
+    
+    # ... rest of your code ...
+
+if __name__ == "__main__":
+    main()
+```
+
+## Additional Robustness Measures
+
+### 1. **Add checksum verification** (more thorough):
+```python
+import hashlib
+
+def get_file_checksum(filepath):
+    """Calculate MD5 checksum of a file."""
+    hash_md5 = hashlib.md5()
+    with open(filepath, "rb") as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            hash_md5.update(chunk)
+    return hash_md5.hexdigest()
+
+# Store checksums when workers complete successfully
+# Verify during merge
+```
+
+### 2. **Add file size validation**:
+```python
+def validate_file_size(filepath, min_expected_size=1024):  # 1KB minimum
+    """Check if file has reasonable size."""
+    size = os.path.getsize(filepath)
+    if size < min_expected_size:
+        return False, f"File too small ({size} bytes < {min_expected_size} bytes)"
+    return True, f"File size OK ({size} bytes)"
+```
+
+### 3. **Implement atomic file writing in workers**:
+If you control the worker code, modify it to write to a temporary file first, then rename:
+```python
+# In worker process:
+import tempfile
+import shutil
+
+def save_results(data, output_path):
+    # Write to temporary file first
+    temp_path = output_path + ".tmp"
+    with h5py.File(temp_path, 'w') as f:
+        # Save data
+        f.create_dataset('results', data=data)
+    
+    # Atomic rename (guarantees file is either complete or doesn't exist)
+    os.rename(temp_path, output_path)
+```
+
+### 4. **Add progress persistence**:
+```python
+# Keep track of which seeds have been successfully processed
+import json
+
+def save_progress(seed_id, status="completed"):
+    """Record processing progress."""
+    progress_file = "progress.json"
+    if os.path.exists(progress_file):
+        with open(progress_file, 'r') as f:
+            progress = json.load(f)
+    else:
+        progress = {}
+    
+    progress[seed_id] = {
+        "status": status,
+        "timestamp": datetime.now().isoformat(),
+        "worker_file": f"worker_{seed_id}.h5"
+    }
+    
+    with open(progress_file, 'w') as f:
+        json.dump(progress, f, indent=2)
+```
+
+## Recovery Strategy for Your Current Situation
+
+Since you have 2999 successful optimizations out of 3000:
+
+1. **Identify the corrupted file**:
+```bash
+# Run this in your directory
+for f in worker_*.h5; do
+    if ! h5dump -n 1 "$f" > /dev/null 2>&1; then
+        echo "Corrupted: $f"
+    fi
+done
+```
+
+2. **Determine which seed is missing** from the corrupted file name
+
+3. **Rerun just that specific seed** if possible, or regenerate the missing worker file
+
+4. **Then run the merge again** with the validation in place
+
+## Recommended Script Modification
+
+Add this function and integrate it into your existing merge logic:
+
+```python
+def safe_merge_worker_files(worker_pattern="worker_*.h5"):
+    """Safely merge worker files with validation."""
+    worker_files = sorted(glob.glob(worker_pattern))
+    
+    if not worker_files:
+        print("No worker files found!")
+        return
+    
+    valid_count = 0
+    for i, worker_file in enumerate(worker_files, 1):
+        try:
+            # Validate before opening
+            if not os.path.exists(worker_file):
+                print(f"Missing: {worker_file}")
+                continue
+                
+            if os.path.getsize(worker_file) < 100:
+                print(f"Too small (likely incomplete): {worker_file}")
+                continue
+            
+            # Try to open and read
+            with h5py.File(worker_file, 'r') as h5_in:
+                # Test read access
+                _ = list(h5_in.keys())
+                # Process the file...
+                valid_count += 1
+                
+        except Exception as e:
+            print(f"ERROR: Failed to process {worker_file}: {e}")
+            print(f"Removing corrupted file: {worker_file}")
+            os.remove(worker_file)  # Clean up corrupted file
+            raise SystemExit(1)  # Stop the process
+    
+    print(f"Successfully processed {valid_count}/{len(worker_files)} worker files")
+```
+
+This approach will:
+1. Validate each worker file before processing
+2. Provide clear error messages
+3. Stop cleanly if any file is corrupted
+4. Help identify which specific seed needs to be rerun

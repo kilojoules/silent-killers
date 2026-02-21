@@ -1,0 +1,185 @@
+Looking at this error, I can diagnose the issue. The problem occurs during the post-processing phase where worker files are being joined/merged. The script successfully completed 2999 out of 3000 optimizations, but when it tries to read one of the worker files (`h5py.File(worker_file, 'r')`), it encounters an HDF5 file with a corrupted or missing signature.
+
+## Diagnosis:
+1. **What happened**: One of the worker files (likely from a failed or interrupted optimization) is corrupted or incomplete
+2. **When**: During the merging/joining phase after optimization completion
+3. **Why**: The worker process might have been killed, interrupted, or crashed while writing the HDF5 file, leaving it in an inconsistent state
+
+## Modifications to handle this reliably:
+
+Here's how to modify your script to detect and handle invalid worker files:
+
+```python
+import os
+import h5py
+import sys
+import traceback
+from pathlib import Path
+
+# Add this helper function to validate HDF5 files
+def validate_hdf5_file(filepath):
+    """Check if a file is a valid HDF5 file."""
+    try:
+        with h5py.File(filepath, 'r') as f:
+            # Try to access some basic metadata to ensure file is readable
+            _ = f.keys()
+            return True
+    except (OSError, IOError) as e:
+        print(f"ERROR: Invalid HDF5 file {filepath}: {e}")
+        return False
+    except Exception as e:
+        print(f"ERROR: Unexpected error with file {filepath}: {e}")
+        return False
+
+def safe_read_hdf5(filepath, func):
+    """Safely read from an HDF5 file with error handling."""
+    if not os.path.exists(filepath):
+        print(f"ERROR: File does not exist: {filepath}")
+        return None
+    
+    if not validate_hdf5_file(filepath):
+        print(f"WARNING: Skipping corrupted file: {filepath}")
+        # Optional: Move corrupted file for inspection
+        corrupted_path = str(filepath) + ".corrupted"
+        os.rename(filepath, corrupted_path)
+        print(f"Moved corrupted file to: {corrupted_path}")
+        return None
+    
+    try:
+        with h5py.File(filepath, 'r') as f:
+            return func(f)
+    except Exception as e:
+        print(f"ERROR: Failed to process {filepath}: {e}")
+        traceback.print_exc()
+        return None
+
+# In your main function, modify the merging code:
+def main():
+    # ... existing code ...
+    
+    # When reading worker files, use safe approach:
+    worker_files = [...]  # Your list of worker files
+    
+    valid_files = []
+    corrupted_files = []
+    
+    for worker_file in worker_files:
+        filepath = Path(worker_file)
+        
+        # Basic file existence check
+        if not filepath.exists():
+            print(f"ERROR: Worker file not found: {worker_file}")
+            corrupted_files.append(worker_file)
+            continue
+        
+        # File size check (empty files are suspicious)
+        if filepath.stat().st_size == 0:
+            print(f"ERROR: Worker file is empty: {worker_file}")
+            corrupted_files.append(worker_file)
+            continue
+        
+        # HDF5 validation
+        if not validate_hdf5_file(worker_file):
+            print(f"ERROR: Worker file is invalid HDF5: {worker_file}")
+            corrupted_files.append(worker_file)
+            continue
+        
+        valid_files.append(worker_file)
+    
+    # Check if we have enough valid files to proceed
+    if len(corrupted_files) > 0:
+        print(f"\nWARNING: Found {len(corrupted_files)} corrupted/invalid worker files:")
+        for cf in corrupted_files:
+            print(f"  - {cf}")
+        
+        # Decide whether to continue or stop
+        if len(valid_files) == 0:
+            print("ERROR: No valid worker files found. Exiting.")
+            sys.exit(1)
+        elif len(corrupted_files) > len(worker_files) * 0.1:  # More than 10% corrupted
+            print("ERROR: Too many corrupted files (>10%). Exiting.")
+            sys.exit(1)
+        else:
+            print(f"Continuing with {len(valid_files)}/{len(worker_files)} valid files...")
+            # Update worker_files to only include valid ones
+            worker_files = valid_files
+    
+    # Now process only valid files
+    for worker_file in valid_files:
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                # Your processing code here
+                pass
+        except Exception as e:
+            print(f"ERROR: Unexpected error processing {worker_file}: {e}")
+            traceback.print_exc()
+            sys.exit(1)
+    
+    # ... rest of your code ...
+```
+
+## Additional improvements:
+
+1. **Add checkpointing during optimization**:
+```python
+# During optimization, write to temporary file first, then rename
+def save_results(results, output_file):
+    temp_file = output_file + ".tmp"
+    with h5py.File(temp_file, 'w') as f:
+        # Save data
+        pass
+    # Atomic rename (ensures file is complete)
+    os.rename(temp_file, output_file)
+```
+
+2. **Add retry logic for reading**:
+```python
+def read_with_retry(filepath, max_retries=3, delay=1):
+    for attempt in range(max_retries):
+        try:
+            with h5py.File(filepath, 'r') as f:
+                return f
+        except OSError as e:
+            if attempt < max_retries - 1:
+                print(f"Retry {attempt + 1}/{max_retries} for {filepath}")
+                time.sleep(delay)
+            else:
+                raise e
+```
+
+3. **Better logging for debugging**:
+```python
+import logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('optimization.log'),
+        logging.StreamHandler()
+    ]
+)
+```
+
+## Recovery strategy for your current situation:
+
+Since you have some valid files, you could:
+
+1. Identify which file is corrupted by running the validation on each worker file
+2. Re-run only the corrupted optimization(s)
+3. Merge the results from valid files with any newly computed ones
+
+You can find the corrupted file with:
+```python
+import glob
+import h5py
+
+worker_files = glob.glob("worker_*.h5")  # Adjust pattern
+for wf in worker_files:
+    try:
+        with h5py.File(wf, 'r'):
+            print(f"✓ {wf} is valid")
+    except Exception as e:
+        print(f"✗ {wf} is corrupted: {e}")
+```
+
+This approach will make your pipeline more robust to failures and ensure clean stopping when errors occur.

@@ -1,0 +1,49 @@
+It looks like one of the worker output files isn’t a valid HDF5 file – when the script goes to join all the worker files, it tries to open one that is either missing, incomplete, or corrupted (as indicated by the “file signature not found” error). In your log you see that only 2999 of 3000 worker files were successfully created. If the join step is run without checking for file validity, the error will occur in the middle of the process.
+
+To ensure that the error is detected reliably and that the whole process is stopped cleanly when any worker file is invalid, you can modify the joining code to check each file before processing it. For example, you could wrap the opening of each file in a try/except block (or even pre-validate the files) so that when an invalid file is encountered, you log an error message and exit early. Here’s one way to modify the script:
+
+------------------------------------------------------------
+#!/usr/bin/env python3
+import os
+import sys
+import logging
+import h5py
+
+# set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger('mp_main')
+
+def process_worker_file(worker_file):
+    # Optionally, check if the file exists first
+    if not os.path.exists(worker_file):
+        logger.error(f"Worker file {worker_file} does not exist!")
+        sys.exit(1)
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # process the file as needed
+            pass
+    except OSError as e:
+        logger.error(f"Error opening worker file {worker_file}: {e}")
+        # stop processing entirely
+        sys.exit(1)
+
+def main():
+    worker_files = get_worker_files()  # however you obtain the list of files
+    for worker_file in worker_files:
+        process_worker_file(worker_file)
+    # if we got here, all worker files are valid.
+    logger.info("All worker files processed successfully.")
+
+if __name__ == '__main__':
+    main()
+------------------------------------------------------------
+
+The key changes here are:
+
+1. Checking for file existence (optional but useful).
+2. Wrapping the h5py.File open call in a try/except block.
+3. Logging an error and calling sys.exit(1) if an OSError is raised, which stops the process once an invalid file is encountered.
+
+This approach ensures that you detect the error as soon as it happens during the join phase and stop further processing, so you don’t end up with a partially processed set of data. 
+
+If you wish to run for many seeds (e.g., 50) reliably, you’d want this kind of pre-check on each intermediate file produced by the workers to make sure that the full data set is valid before continuously moving forward.

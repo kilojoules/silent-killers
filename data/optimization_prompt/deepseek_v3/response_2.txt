@@ -1,0 +1,157 @@
+Looking at your error, the issue is clear: **one of the worker output files is corrupted or incomplete** (specifically, the HDF5 file signature is missing). This happens when:
+
+1. **A worker process crashed or was killed** while writing its output file
+2. **Disk I/O error** occurred during file writing
+3. **Process was interrupted** (Ctrl+C, timeout, OOM killer, etc.) before the file was fully written
+
+The script completed 2999/3000 optimizations successfully, but when it tried to open the 3000th worker file for merging, it found a corrupted/incomplete HDF5 file.
+
+## Diagnosis
+
+From your output, I can see:
+- The main process shows completion of 2999/3000 optimizations
+- The error occurs at line 448 in `precompute_farm_layouts.py` when trying to open a worker file with `h5py.File(worker_file, 'r')`
+- The repeated "130 possible points..." messages suggest some workers may have had issues but didn't crash the entire process
+
+## Solution: Modify the Script
+
+Here's how to modify your script to detect and handle corrupted worker files:
+
+### 1. **Add file validation before opening**
+
+```python
+import os
+import h5py
+import struct
+
+def is_valid_hdf5_file(filepath):
+    """Check if file exists and has a valid HDF5 signature"""
+    if not os.path.exists(filepath):
+        return False
+    
+    if os.path.getsize(filepath) == 0:
+        return False
+    
+    # Check HDF5 signature (first 8 bytes)
+    try:
+        with open(filepath, 'rb') as f:
+            signature = f.read(8)
+            # HDF5 signature is either:
+            # \x89HDF\r\n\x1a\n (superblock version 0)
+            # \x89HDF\r\n\x00\n (superblock version 2)
+            if signature[:4] != b'\x89HDF':
+                return False
+            if signature[4:8] not in [b'\r\n\x1a\n', b'\r\n\x00\n']:
+                return False
+        return True
+    except:
+        return False
+```
+
+### 2. **Modify the merging section to validate files**
+
+Find where you open worker files (around line 448) and modify it:
+
+```python
+# Original code (around line 448):
+# with h5py.File(worker_file, 'r') as h5_in:
+
+# Modified version:
+valid_worker_files = []
+corrupted_files = []
+
+for worker_file in worker_files:
+    if is_valid_hdf5_file(worker_file):
+        valid_worker_files.append(worker_file)
+    else:
+        corrupted_files.append(worker_file)
+        logger.error(f"Corrupted/incomplete worker file detected: {worker_file}")
+
+if corrupted_files:
+    logger.error(f"Found {len(corrupted_files)} corrupted files. Process will stop.")
+    logger.error("Corrupted files: " + ", ".join(corrupted_files))
+    
+    # Option 1: Exit with error
+    sys.exit(1)
+    
+    # Option 2: Continue with available data (if acceptable)
+    # logger.warning(f"Continuing with {len(valid_worker_files)} valid files out of {len(worker_files)}")
+
+# Now process only valid files
+for worker_file in valid_worker_files:
+    with h5py.File(worker_file, 'r') as h5_in:
+        # ... rest of your merging code ...
+```
+
+### 3. **Add better error handling in worker processes**
+
+Make sure each worker properly handles exceptions and cleans up on failure:
+
+```python
+def worker_function(args):
+    """Worker function with proper error handling"""
+    try:
+        # Your existing worker code
+        result = do_optimization(args)
+        
+        # Write to temporary file first
+        temp_file = f"{output_file}.tmp"
+        with h5py.File(temp_file, 'w') as h5_out:
+            # Write your data
+        
+        # Atomic rename to final file
+        os.rename(temp_file, output_file)
+        
+        return True
+    except Exception as e:
+        logger.error(f"Worker failed: {e}")
+        # Clean up partial files
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
+        return False
+```
+
+### 4. **Recovery strategy for your current situation**
+
+Since you have 2999 successful files, you can:
+
+```python
+# Create a recovery script
+import glob
+import os
+
+# Find all worker files
+worker_files = glob.glob("worker_*.h5")
+
+# Identify corrupted ones
+corrupted = []
+for wf in worker_files:
+    if not is_valid_hdf5_file(wf):
+        corrupted.append(wf)
+        print(f"Corrupted: {wf}")
+
+print(f"\nTotal files: {len(worker_files)}")
+print(f"Valid files: {len(worker_files) - len(corrupted)}")
+print(f"Corrupted files: {len(corrupted)}")
+
+if corrupted:
+    # Option 1: Remove corrupted files and re-run only those
+    print("\nCorrupted files to re-run:")
+    for cf in corrupted:
+        print(f"  {cf}")
+        # Extract seed/farm info from filename to re-run
+    
+    # Option 2: Continue with what you have
+    valid_files = [wf for wf in worker_files if wf not in corrupted]
+    # Process only valid_files
+```
+
+## Prevention Tips
+
+1. **Use atomic writes**: Write to `.tmp` file first, then rename to final name
+2. **Add timeouts**: If a worker hangs, kill it after a reasonable time
+3. **Monitor disk space**: Ensure you have enough disk space
+4. **Use checkpointing**: Save progress periodically
+5. **Add validation**: Check file integrity immediately after writing
+
+Would you like me to help you implement any of these solutions in your specific script?

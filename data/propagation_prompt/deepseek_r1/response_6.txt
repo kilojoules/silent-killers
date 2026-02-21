@@ -1,0 +1,170 @@
+I'll create a Python script that propagates realistic measurement uncertainties through PyWake and performs Sobol sensitivity analysis on the effective wind speed (WS_eff) across the flow field. This script will generate a series of sensitivity visualization images.
+
+```python
+"""
+Sobol Sensitivity Analysis for Wind Farm Flow Fields with Measurement Uncertainties
+Propagates realistic measurement uncertainties through PyWake and visualizes sensitivity
+of effective wind speed (WS_eff) to inflow parameters across the flow field.
+"""
+
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.colors import Normalize
+import seaborn as sns
+from scipy.stats import qmc
+import xarray as xr
+import pandas as pd
+from pathlib import Path
+import warnings
+warnings.filterwarnings('ignore')
+
+# PyWake imports
+from py_wake import np
+from py_wake.wind_turbines import WindTurbine
+from py_wake.wind_turbines.power_ct_functions import PowerCtTabular
+from py_wake.site import UniformSite
+from py_wake import IEA37SimpleBastankhahGaussian
+
+# Sensitivity analysis
+from SALib.sample import saltelli
+from SALib.analyze import sobol
+
+# Set random seed for reproducibility
+np.random.seed(42)
+
+# ============================================================================
+# 1. CONFIGURATION
+# ============================================================================
+
+class Config:
+    """Configuration parameters for the sensitivity analysis"""
+    
+    # Wind farm layout
+    N_TURBINES = 25  # 5x5 grid
+    SPACING = 500  # meters between turbines
+    
+    # Wind turbine specifications (generic 2MW turbine)
+    DIAMETER = 80  # meters
+    HUB_HEIGHT = 80  # meters
+    RATED_POWER = 2000  # kW
+    
+    # Analysis grid
+    X_RANGE = (-200, 2300)  # meters
+    Y_RANGE = (-200, 2300)  # meters
+    GRID_RESOLUTION = 100  # points in each dimension
+    
+    # Uncertainty distributions for input parameters
+    UNCERTAINTIES = {
+        'wind_speed': {
+            'mean': 8.0,  # m/s
+            'std': 0.4,   # 5% uncertainty (realistic measurement error)
+            'unit': 'm/s'
+        },
+        'wind_direction': {
+            'mean': 270.0,  # degrees (west wind)
+            'std': 2.0,     # 2-degree uncertainty
+            'unit': 'deg'
+        },
+        'turbulence_intensity': {
+            'mean': 0.1,    # 10% TI
+            'std': 0.005,   # 0.5% uncertainty
+            'unit': '-'
+        },
+        'shear_exponent': {
+            'mean': 0.2,
+            'std': 0.01,    # 5% uncertainty
+            'unit': '-'
+        }
+    }
+    
+    # Sobol sampling parameters
+    SOBOL_N = 512  # Base samples for Saltelli sequence
+    SOBOL_CALC_SECOND_ORDER = True
+    
+    # Visualization
+    OUTPUT_DIR = Path('./sensitivity_results')
+    TIME_STEPS = 12  # Number of time steps/snapshots to analyze
+    PLOT_DPI = 150
+
+# ============================================================================
+# 2. CREATE WIND FARM SETUP
+# ============================================================================
+
+def create_wind_turbine():
+    """Create a generic wind turbine model"""
+    
+    # Power curve data (simplified)
+    ws = np.array([3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 20, 25])
+    power = np.array([0, 100, 300, 600, 1000, 1400, 1800, 2000, 2000, 2000, 
+                      2000, 2000, 2000, 0, 0]) * 1000  # Convert to Watts
+    ct = np.array([0.0, 0.5, 0.7, 0.8, 0.85, 0.88, 0.85, 0.8, 0.75, 0.7, 
+                   0.65, 0.6, 0.55, 0.0, 0.0])
+    
+    power_ct_function = PowerCtTabular(ws, power, 'kW', ct)
+    
+    return WindTurbine(name='Generic_2MW',
+                       diameter=Config.DIAMETER,
+                       hub_height=Config.HUB_HEIGHT,
+                       powerCtFunction=power_ct_function)
+
+def create_wind_farm_layout():
+    """Create a regular grid wind farm layout"""
+    
+    # Create 5x5 grid
+    n_rows = int(np.sqrt(Config.N_TURBINES))
+    n_cols = int(np.sqrt(Config.N_TURBINES))
+    
+    x_coords = []
+    y_coords = []
+    
+    for i in range(n_rows):
+        for j in range(n_cols):
+            x_coords.append(i * Config.SPACING)
+            y_coords.append(j * Config.SPACING)
+    
+    return np.array(x_coords), np.array(y_coords)
+
+# ============================================================================
+# 3. UNCERTAINTY PROPAGATION AND SENSITIVITY ANALYSIS
+# ============================================================================
+
+def define_problem():
+    """Define the Sobol problem with parameter bounds"""
+    
+    problem = {
+        'num_vars': 4,
+        'names': ['wind_speed', 'wind_direction', 'turbulence_intensity', 'shear_exponent'],
+        'bounds': [
+            [Config.UNCERTAINTIES['wind_speed']['mean'] - 3*Config.UNCERTAINTIES['wind_speed']['std'],
+             Config.UNCERTAINTIES['wind_speed']['mean'] + 3*Config.UNCERTAINTIES['wind_speed']['std']],
+            [Config.UNCERTAINTIES['wind_direction']['mean'] - 3*Config.UNCERTAINTIES['wind_direction']['std'],
+             Config.UNCERTAINTIES['wind_direction']['mean'] + 3*Config.UNCERTAINTIES['wind_direction']['std']],
+            [Config.UNCERTAINTIES['turbulence_intensity']['mean'] - 3*Config.UNCERTAINTIES['turbulence_intensity']['std'],
+             Config.UNCERTAINTIES['turbulence_intensity']['mean'] + 3*Config.UNCERTAINTIES['turbulence_intensity']['std']],
+            [Config.UNCERTAINTIES['shear_exponent']['mean'] - 3*Config.UNCERTAINTIES['shear_exponent']['std'],
+             Config.UNCERTAINTIES['shear_exponent']['mean'] + 3*Config.UNCERTAINTIES['shear_exponent']['std']]
+        ]
+    }
+    
+    return problem
+
+def run_wake_simulation(params, turbine, site, x, y):
+    """Run PyWake simulation for given parameters"""
+    
+    ws, wd, ti, alpha = params
+    
+    # Create wake model (Bastankhah Gaussian model)
+    wake_model = IEA37SimpleBastankhahGaussian(site, turbine)
+    
+    # Run simulation
+    simulation_result = wake_model(
+        x=x, y=y,
+        ws=ws,
+        wd=wd,
+        TI=ti
+    )
+    
+    return simulation_result
+
+def generate_flow_field(simulation_result, grid_resolution=100):
+    """

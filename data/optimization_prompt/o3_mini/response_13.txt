@@ -1,0 +1,54 @@
+The error
+
+  OSError: Unable to synchronously open file (file signature not found)
+
+means that one of the “worker files” isn’t a valid HDF5 file. In production this might happen if a worker’s output is truncated, corrupted, or even if a file name is being picked up accidentally that isn’t a proper HDF5 file. When the script tries to open such a file with h5py.File(…, 'r'), the underlying h5py library complains that it can’t recognize the file’s signature as a valid HDF5 container.
+
+To modify your script so that an invalid file is reliably detected and stops the process cleanly, you can take one or both of these steps:
+
+1. Before opening the file, use h5py’s built‑in check to see if the file is valid. For example, use h5py.is_hdf5(filename). If this returns False, then log an error and immediately exit. This prevents calling h5py.File on a bogus file.
+
+2. Wrap the file-opening code itself in a try/except block to catch any OSError. This way you can log a clear error message and shut down the process in a controlled manner.
+
+Below is an example of how you might adjust your code:
+
+---------------------------------------------------------
+import sys
+import logging
+import h5py
+
+def process_worker_file(worker_file):
+    # Option 1: Check with is_hdf5 before opening the file.
+    if not h5py.is_hdf5(worker_file):
+        logging.error("The worker file '%s' is not a valid HDF5 file. Aborting.", worker_file)
+        sys.exit(1)
+    
+    # Option 2: Use try/except in case the file fails to open.
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Your file processing logic goes here.
+            pass
+    except OSError as err:
+        logging.error("Error opening worker file '%s': %s. Aborting.", worker_file, err)
+        sys.exit(1)
+
+def main():
+    worker_files = [...]  # List of worker file paths derived from your joining operation, etc.
+    for worker_file in worker_files:
+        process_worker_file(worker_file)
+    # Continue processing if all files are valid
+    # ...
+
+if __name__ == '__main__':
+    main()
+---------------------------------------------------------
+
+In this corrected version:
+
+• We first check if the file is a valid HDF5 file using h5py.is_hdf5(worker_file). If it isn’t, we log an error and call sys.exit(1) so that the process stops cleanly.
+
+• We also wrap the h5py.File(…) call in a try/except block to catch any OSError (should there be any unexpected issues during opening). Again, if an error is caught, we log it and exit.
+
+Using both checks leads to a robust solution. Now, if you’re running 50 seeds and one of the worker files is invalid, the error will be caught immediately—and the process will be aborted in a controlled manner—rather than letting the error continue in an uncontrolled way during the join operation.
+
+This approach makes it much clearer when a worker’s output file is problematic, and it helps ensure that your entire pipeline doesn’t continue with corrupt or incomplete data.

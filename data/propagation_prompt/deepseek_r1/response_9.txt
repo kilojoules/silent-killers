@@ -1,0 +1,502 @@
+I'll create a script that propagates measurement uncertainties through PyWake and generates Sobol sensitivity analysis of WS_eff across the flow field. This script will handle realistic measurement uncertainties and visualize sensitivity maps.
+
+```python
+"""
+Script to propagate realistic measurement uncertainties through PyWake
+and generate Sobol sensitivity analysis of WS_eff across the flow field.
+"""
+
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib import cm
+import matplotlib.patches as mpatches
+from pathlib import Path
+import time
+from tqdm import tqdm
+import pandas as pd
+from scipy import stats
+
+# PyWake imports
+from py_wake import np
+from py_wake.wind_turbines import WindTurbine
+from py_wake.wind_turbines.power_ct_functions import PowerCtTabular
+from py_wake.site import UniformSite
+from py_wake.wind_farm_models.engineering_models import PropagateDownwind
+from py_wake.deficit_models.gaussian import IEA37SimpleBastankhahGaussian
+from py_wake.turbulence_models.stf import STF2017TurbulenceModel
+from py_wake.flow_map import XYGrid
+from py_wake.examples.data.iea37 import IEA37_WindTurbines
+
+# Uncertainty quantification and sensitivity analysis
+import chaospy as cp
+from SALib.sample import saltelli
+from SALib.analyze import sobol
+
+def create_turbine_with_uncertainty(base_d=130, base_h=110, base_rated_power=3.35):
+    """
+    Create a wind turbine with parameters that will have uncertainty.
+    
+    Parameters:
+    -----------
+    base_d : float
+        Base rotor diameter (m)
+    base_h : float
+        Base hub height (m)
+    base_rated_power : float
+        Base rated power (MW)
+    
+    Returns:
+    --------
+    WindTurbine object
+    """
+    # Define power and thrust coefficient curves
+    ws = np.arange(0, 30, 0.1)
+    # Simple power curve approximation
+    power = np.zeros_like(ws)
+    ct = np.zeros_like(ws)
+    
+    # Cut-in at 4 m/s, rated at 11 m/s, cut-out at 25 m/s
+    cut_in = 4.0
+    rated_ws = 11.0
+    cut_out = 25.0
+    
+    # Power curve
+    power[(ws >= cut_in) & (ws < rated_ws)] = (
+        base_rated_power * ((ws[(ws >= cut_in) & (ws < rated_ws)] - cut_in) / 
+                           (rated_ws - cut_in))**3 * 1e6
+    )
+    power[(ws >= rated_ws) & (ws <= cut_out)] = base_rated_power * 1e6
+    power[ws > cut_out] = 0
+    
+    # Thrust coefficient curve
+    ct[(ws >= cut_in) & (ws < rated_ws)] = 0.8 - 0.4 * (
+        (ws[(ws >= cut_in) & (ws < rated_ws)] - cut_in) / (rated_ws - cut_in)
+    )
+    ct[(ws >= rated_ws) & (ws <= cut_out)] = 0.3
+    ct[ws > cut_out] = 0
+    
+    # Create wind turbine
+    return WindTurbine(
+        name='UncertainTurbine',
+        diameter=base_d,
+        hub_height=base_h,
+        powerCtFunction=PowerCtTabular(ws, power, 'kW', ct)
+    )
+
+def define_uncertainty_parameters():
+    """
+    Define realistic measurement uncertainties for wind farm parameters.
+    
+    Returns:
+    --------
+    dict: Dictionary with parameter names, distributions, and bounds
+    """
+    # Define parameter distributions using Chaospy
+    # All uncertainties defined as normal distributions with mean and std dev
+    
+    parameters = {
+        'ws': {
+            'distribution': cp.Normal(8.0, 0.5),  # 6.25% uncertainty at 8 m/s
+            'bounds': [6.0, 10.0],
+            'description': 'Wind speed at hub height'
+        },
+        'wd': {
+            'distribution': cp.Normal(270.0, 3.0),  # ~1.1% uncertainty
+            'bounds': [260.0, 280.0],
+            'description': 'Wind direction'
+        },
+        'ti': {
+            'distribution': cp.Normal(0.1, 0.02),  # 20% uncertainty
+            'bounds': [0.05, 0.15],
+            'description': 'Turbulence intensity'
+        },
+        'diameter': {
+            'distribution': cp.Normal(130.0, 1.3),  # 1% uncertainty
+            'bounds': [127.0, 133.0],
+            'description': 'Rotor diameter'
+        },
+        'z0': {
+            'distribution': cp.Normal(0.03, 0.005),  # ~17% uncertainty
+            'bounds': [0.01, 0.05],
+            'description': 'Surface roughness length'
+        },
+        'shear': {
+            'distribution': cp.Normal(0.2, 0.02),  # 10% uncertainty
+            'bounds': [0.15, 0.25],
+            'description': 'Wind shear exponent'
+        }
+    }
+    
+    return parameters
+
+def create_wind_farm_layout(n_turbines=9):
+    """
+    Create a simple wind farm layout.
+    
+    Parameters:
+    -----------
+    n_turbines : int
+        Number of turbines (will create n_turbines x n_turbines grid if square)
+    
+    Returns:
+    --------
+    tuple: (x positions, y positions)
+    """
+    # Create a grid layout
+    spacing = 500  # meters between turbines
+    
+    if n_turbines <= 3:
+        # Small layout
+        x = np.array([0, spacing, 2*spacing])
+        y = np.array([0, 0, 0])
+    else:
+        # Square grid for larger farms
+        n_per_side = int(np.sqrt(n_turbines))
+        x_grid, y_grid = np.meshgrid(
+            np.arange(n_per_side) * spacing,
+            np.arange(n_per_side) * spacing
+        )
+        x = x_grid.flatten()[:n_turbines]
+        y = y_grid.flatten()[:n_turbines]
+    
+    return x, y
+
+def run_pywake_simulation(params, turbine, layout_x, layout_y, flow_grid):
+    """
+    Run a single PyWake simulation with given parameters.
+    
+    Parameters:
+    -----------
+    params : dict
+        Dictionary of simulation parameters
+    turbine : WindTurbine
+        Wind turbine object
+    layout_x, layout_y : array
+        Turbine positions
+    flow_grid : XYGrid
+        Grid for flow field calculation
+    
+    Returns:
+    --------
+    array: WS_eff values across the flow grid
+    """
+    # Create site with uncertainty in z0
+    site = UniformSite(
+        ti=params['ti'],  # turbulence intensity
+        ws=params['ws'],  # wind speed (will be overridden in simulation)
+        p_wd=None,  # Uniform distribution
+        shear=params['shear'],
+        roughness_length=params['z0']
+    )
+    
+    # Create wake model with Bastankhah-Gaussian model
+    wake_model = IEA37SimpleBastankhahGaussian(
+        site=site,
+        rotorDiameterModel='square',
+        turbulenceModel=STF2017TurbulenceModel()
+    )
+    
+    # Run simulation
+    simulation_result = wake_model(
+        x=layout_x,
+        y=layout_y,
+        h=turbine.hub_height * np.ones_like(layout_x),  # All turbines same height
+        wd=params['wd'],
+        ws=params['ws'],
+        D=turbine.diameter * np.ones_like(layout_x),  # All turbines same diameter
+        type=[0] * len(layout_x)  # All turbines same type
+    )
+    
+    # Calculate flow field
+    flow_map = simulation_result.flow_map(grid=flow_grid)
+    
+    return flow_map.WS_eff.values
+
+def sobol_sensitivity_analysis(parameters, turbine, layout_x, layout_y, 
+                              flow_grid, n_samples=1024):
+    """
+    Perform Sobol sensitivity analysis on WS_eff across the flow field.
+    
+    Parameters:
+    -----------
+    parameters : dict
+        Dictionary of uncertain parameters
+    turbine : WindTurbine
+        Wind turbine object
+    layout_x, layout_y : array
+        Turbine positions
+    flow_grid : XYGrid
+        Grid for flow field calculation
+    n_samples : int
+        Number of samples for Sobol analysis
+    
+    Returns:
+    --------
+    dict: Sobol sensitivity indices for each grid point
+    """
+    # Extract parameter names and bounds for SALib
+    param_names = list(parameters.keys())
+    bounds = [parameters[name]['bounds'] for name in param_names]
+    
+    # Define problem for SALib
+    problem = {
+        'num_vars': len(param_names),
+        'names': param_names,
+        'bounds': bounds
+    }
+    
+    # Generate samples using Saltelli sequence
+    print(f"Generating {n_samples} samples for Sobol analysis...")
+    param_values = saltelli.sample(problem, n_samples, calc_second_order=True)
+    
+    # Convert to dictionary format for simulation
+    n_simulations = len(param_values)
+    print(f"Running {n_simulations} simulations...")
+    
+    # Initialize array to store results
+    grid_shape = (flow_grid.resolution[0], flow_grid.resolution[1])
+    ws_eff_results = np.zeros((n_simulations, grid_shape[0], grid_shape[1]))
+    
+    # Run simulations
+    for i in tqdm(range(n_simulations), desc="Running simulations"):
+        # Convert sample to parameter dictionary
+        params_dict = {}
+        for j, name in enumerate(param_names):
+            params_dict[name] = param_values[i, j]
+        
+        # Create turbine with current diameter
+        current_turbine = create_turbine_with_uncertainty(
+            base_d=params_dict['diameter'],
+            base_h=110,  # Fixed hub height
+            base_rated_power=3.35
+        )
+        
+        # Run simulation
+        try:
+            ws_eff_results[i] = run_pywake_simulation(
+                params_dict, current_turbine, layout_x, layout_y, flow_grid
+            )
+        except Exception as e:
+            print(f"Error in simulation {i}: {e}")
+            # Use previous successful result or mean
+            if i > 0:
+                ws_eff_results[i] = ws_eff_results[i-1]
+            else:
+                ws_eff_results[i] = np.ones(grid_shape) * params_dict['ws']
+    
+    # Perform Sobol analysis for each grid point
+    print("Performing Sobol analysis...")
+    sobol_indices = {
+        'S1': np.zeros((len(param_names), grid_shape[0], grid_shape[1])),
+        'ST': np.zeros((len(param_names), grid_shape[0], grid_shape[1])),
+        'S2': np.zeros((len(param_names), len(param_names), grid_shape[0], grid_shape[1]))
+    }
+    
+    # Analyze each grid point
+    for i in tqdm(range(grid_shape[0]), desc="Analyzing grid points"):
+        for j in range(grid_shape[1]):
+            # Extract time series for this grid point
+            Y = ws_eff_results[:, i, j]
+            
+            # Perform Sobol analysis
+            try:
+                Si = sobol.analyze(problem, Y, print_to_console=False)
+                sobol_indices['S1'][:, i, j] = Si['S1']
+                sobol_indices['ST'][:, i, j] = Si['ST']
+                if 'S2' in Si:
+                    sobol_indices['S2'][:, :, i, j] = Si['S2']
+            except:
+                # If analysis fails, set to zeros
+                sobol_indices['S1'][:, i, j] = 0
+                sobol_indices['ST'][:, i, j] = 0
+    
+    return sobol_indices, param_names, ws_eff_results
+
+def visualize_sensitivity_maps(sobol_indices, param_names, flow_grid, 
+                             layout_x, layout_y, turbine_diameter, output_dir):
+    """
+    Create and save visualization of sensitivity maps.
+    
+    Parameters:
+    -----------
+    sobol_indices : dict
+        Sobol sensitivity indices
+    param_names : list
+        List of parameter names
+    flow_grid : XYGrid
+        Flow grid
+    layout_x, layout_y : array
+        Turbine positions
+    turbine_diameter : float
+        Turbine diameter for visualization
+    output_dir : Path
+        Output directory
+    """
+    # Create output directory
+    output_dir = Path(output_dir)
+    output_dir.mkdir(exist_ok=True)
+    
+    # Create grid coordinates
+    x_coords = flow_grid.x
+    y_coords = flow_grid.y
+    X, Y = np.meshgrid(x_coords, y_coords)
+    
+    # Plot first-order indices
+    print("Creating first-order sensitivity maps...")
+    fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+    axes = axes.flatten()
+    
+    for idx, param in enumerate(param_names):
+        ax = axes[idx]
+        im = ax.pcolormesh(X, Y, sobol_indices['S1'][idx].T, 
+                          cmap='viridis', vmin=0, vmax=1, shading='auto')
+        
+        # Add turbines
+        for x, y in zip(layout_x, layout_y):
+            circle = plt.Circle((x, y), turbine_diameter/2, 
+                              color='red', alpha=0.5, fill=False, linewidth=2)
+            ax.add_patch(circle)
+            ax.plot(x, y, 'rx', markersize=5)
+        
+        ax.set_xlabel('X (m)')
+        ax.set_ylabel('Y (m)')
+        ax.set_title(f'First-order Sobol: {param}')
+        ax.set_aspect('equal')
+        ax.grid(True, alpha=0.3)
+    
+    # Remove empty subplot if needed
+    if len(param_names) < 6:
+        for i in range(len(param_names), 6):
+            axes[i].axis('off')
+    
+    plt.colorbar(im, ax=axes[:len(param_names)], orientation='horizontal', 
+                 fraction=0.05, pad=0.1, label='Sobol index')
+    plt.suptitle('First-order Sobol Sensitivity Indices for WS_eff', fontsize=14)
+    plt.tight_layout()
+    plt.savefig(output_dir / 'first_order_sensitivity.png', dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    # Plot total-order indices
+    print("Creating total-order sensitivity maps...")
+    fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+    axes = axes.flatten()
+    
+    for idx, param in enumerate(param_names):
+        ax = axes[idx]
+        im = ax.pcolormesh(X, Y, sobol_indices['ST'][idx].T, 
+                          cmap='plasma', vmin=0, vmax=1, shading='auto')
+        
+        # Add turbines
+        for x, y in zip(layout_x, layout_y):
+            circle = plt.Circle((x, y), turbine_diameter/2, 
+                              color='red', alpha=0.5, fill=False, linewidth=2)
+            ax.add_patch(circle)
+            ax.plot(x, y, 'rx', markersize=5)
+        
+        ax.set_xlabel('X (m)')
+        ax.set_ylabel('Y (m)')
+        ax.set_title(f'Total-order Sobol: {param}')
+        ax.set_aspect('equal')
+        ax.grid(True, alpha=0.3)
+    
+    # Remove empty subplot if needed
+    if len(param_names) < 6:
+        for i in range(len(param_names), 6):
+            axes[i].axis('off')
+    
+    plt.colorbar(im, ax=axes[:len(param_names)], orientation='horizontal', 
+                 fraction=0.05, pad=0.1, label='Sobol index')
+    plt.suptitle('Total-order Sobol Sensitivity Indices for WS_eff', fontsize=14)
+    plt.tight_layout()
+    plt.savefig(output_dir / 'total_order_sensitivity.png', dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    # Create summary plot showing most sensitive parameter at each point
+    print("Creating sensitivity summary map...")
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+    
+    # Find parameter with highest first-order index at each point
+    max_s1_idx = np.argmax(sobol_indices['S1'], axis=0)
+    max_s1_val = np.max(sobol_indices['S1'], axis=0)
+    
+    # Create categorical colormap
+    cmap = plt.cm.get_cmap('tab10', len(param_names))
+    
+    # Plot parameter dominance
+    im1 = ax1.pcolormesh(X, Y, max_s1_idx.T, cmap=cmap, shading='auto')
+    
+    # Add turbines
+    for x, y in zip(layout_x, layout_y):
+        circle = plt.Circle((x, y), turbine_diameter/2, 
+                          color='red', alpha=0.5, fill=False, linewidth=2)
+        ax1.add_patch(circle)
+        ax1.plot(x, y, 'rx', markersize=5)
+    
+    ax1.set_xlabel('X (m)')
+    ax1.set_ylabel('Y (m)')
+    ax1.set_title('Most Sensitive Parameter (by first-order index)')
+    ax1.set_aspect('equal')
+    ax1.grid(True, alpha=0.3)
+    
+    # Create legend
+    patches = [mpatches.Patch(color=cmap(i), label=param_names[i]) 
+               for i in range(len(param_names))]
+    ax1.legend(handles=patches, bbox_to_anchor=(1.05, 1), loc='upper left')
+    
+    # Plot maximum sensitivity value
+    im2 = ax2.pcolormesh(X, Y, max_s1_val.T, cmap='hot', 
+                        vmin=0, vmax=1, shading='auto')
+    
+    # Add turbines
+    for x, y in zip(layout_x, layout_y):
+        circle = plt.Circle((x, y), turbine_diameter/2, 
+                          color='red', alpha=0.5, fill=False, linewidth=2)
+        ax2.add_patch(circle)
+        ax2.plot(x, y, 'rx', markersize=5)
+    
+    ax2.set_xlabel('X (m)')
+    ax2.set_ylabel('Y (m)')
+    ax2.set_title('Maximum First-order Sensitivity Index')
+    ax2.set_aspect('equal')
+    ax2.grid(True, alpha=0.3)
+    
+    plt.colorbar(im2, ax=ax2, label='Sobol index')
+    plt.suptitle('Sensitivity Analysis Summary', fontsize=14)
+    plt.tight_layout()
+    plt.savefig(output_dir / 'sensitivity_summary.png', dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    # Create time series of sensitivity at selected points
+    print("Creating time series of sensitivity...")
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+    axes = axes.flatten()
+    
+    # Select points of interest
+    points_of_interest = [
+        (np.mean(layout_x), np.mean(layout_y)),  # Center of farm
+        (np.max(layout_x) + 200, np.mean(layout_y)),  # Downstream
+        (np.mean(layout_x), np.max(layout_y) + 200),  # Lateral
+        (np.min(layout_x) - 200, np.mean(layout_y)),  # Upstream
+    ]
+    
+    for idx, (px, py) in enumerate(points_of_interest):
+        ax = axes[idx]
+        
+        # Find nearest grid point
+        x_idx = np.argmin(np.abs(x_coords - px))
+        y_idx = np.argmin(np.abs(y_coords - py))
+        
+        # Plot sensitivity indices at this point
+        x_pos = np.arange(len(param_names))
+        width = 0.35
+        
+        ax.bar(x_pos - width/2, sobol_indices['S1'][:, y_idx, x_idx], 
+               width, label='First-order', alpha=0.8)
+        ax.bar(x_pos + width/2, sobol_indices['ST'][:, y_idx, x_idx], 
+               width, label='Total-order', alpha=0.8)
+        
+        ax.set_xlabel('Parameter')
+        ax.set_ylabel('Sobol Index')
+        ax.set_title(f'Point ({px:.0f}, {py:.0f}) m')
+        ax.set_xticks(x_pos)
+        ax.set_xticklabels(param_names, rotation=45, ha

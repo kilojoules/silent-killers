@@ -1,0 +1,224 @@
+Looking at your error, the issue is that one of the worker files (presumably for the 3000th optimization) is corrupted or incomplete. The error occurs during the aggregation/joining phase when trying to read all worker files, and specifically when trying to open a file with h5py that doesn't have a valid HDF5 signature.
+
+## Diagnosis
+
+1. **Corrupted Worker File**: The file for the last optimization (or potentially another one) was not written correctly - it's either empty, truncated, or has an invalid format.
+
+2. **Timing Issue**: The main process started aggregating results before all workers finished writing their files completely.
+
+3. **Race Condition**: The script doesn't properly synchronize file writing and reading operations.
+
+## Solution
+
+Here's how to modify your script to handle this reliably:
+
+### 1. **Add File Validation Before Opening**
+```python
+import h5py
+import os
+
+def is_valid_hdf5_file(filepath):
+    """Check if a file is a valid HDF5 file."""
+    try:
+        # Quick check without fully loading
+        return h5py.is_hdf5(filepath)
+    except:
+        return False
+
+# In your aggregation code:
+for worker_file in worker_files:
+    if not os.path.exists(worker_file):
+        logger.error(f"Worker file {worker_file} does not exist!")
+        sys.exit(1)
+    
+    if not is_valid_hdf5_file(worker_file):
+        logger.error(f"Worker file {worker_file} is not a valid HDF5 file!")
+        
+        # Optional: check file size to diagnose
+        if os.path.exists(worker_file):
+            size = os.path.getsize(worker_file)
+            logger.error(f"File size: {size} bytes")
+            
+        sys.exit(1)
+    
+    # Proceed with opening...
+```
+
+### 2. **Use Atomic File Writing in Workers**
+Modify your worker processes to write to a temporary file first, then rename:
+
+```python
+import tempfile
+import os
+
+def worker_process(worker_id, data):
+    # ... processing logic ...
+    
+    # Write to temporary file first
+    temp_file = f"{worker_file}.tmp"
+    final_file = f"{worker_file}"
+    
+    try:
+        with h5py.File(temp_file, 'w') as h5_out:
+            # Write your data
+            h5_out.create_dataset('results', data=results)
+        
+        # Atomic rename (ensures file is complete)
+        os.rename(temp_file, final_file)
+        
+    except Exception as e:
+        # Clean up temp file if error occurs
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
+        raise e
+```
+
+### 3. **Add File Locking or Completion Flags**
+Create a simple completion flag system:
+
+```python
+def mark_file_complete(filename):
+    """Create a completion flag file."""
+    with open(f"{filename}.complete", 'w') as f:
+        f.write(str(datetime.now()))
+
+def is_file_complete(filename):
+    """Check if file was written completely."""
+    return os.path.exists(f"{filename}.complete")
+
+# In main aggregation:
+for worker_file in worker_files:
+    if not is_file_complete(worker_file):
+        logger.error(f"Worker file {worker_file} was not marked as complete!")
+        sys.exit(1)
+    
+    # Wait a bit to ensure all writes are flushed
+    time.sleep(0.1)
+    
+    # Then validate and open...
+```
+
+### 4. **Complete Robust Aggregation Function**
+Here's a comprehensive solution:
+
+```python
+def aggregate_results(worker_files, timeout=30):
+    """Aggregate results from worker files with validation."""
+    all_results = []
+    corrupted_files = []
+    
+    for i, worker_file in enumerate(worker_files):
+        logger.info(f"Processing file {i+1}/{len(worker_files)}: {worker_file}")
+        
+        # Wait for file to exist with timeout
+        start_time = time.time()
+        while not os.path.exists(worker_file):
+            if time.time() - start_time > timeout:
+                logger.error(f"Timeout waiting for {worker_file}")
+                corrupted_files.append(worker_file)
+                break
+            time.sleep(0.1)
+        
+        if not os.path.exists(worker_file):
+            continue
+            
+        # Validate file
+        try:
+            # Check file size (minimal HDF5 header is ~1KB)
+            if os.path.getsize(worker_file) < 1024:
+                logger.error(f"File too small: {worker_file}")
+                corrupted_files.append(worker_file)
+                continue
+            
+            # Validate HDF5 format
+            if not h5py.is_hdf5(worker_file):
+                logger.error(f"Invalid HDF5 format: {worker_file}")
+                corrupted_files.append(worker_file)
+                continue
+            
+            # Try to open and read
+            with h5py.File(worker_file, 'r') as h5_in:
+                # Verify expected structure
+                if 'results' not in h5_in:
+                    logger.error(f"Missing 'results' dataset in {worker_file}")
+                    corrupted_files.append(worker_file)
+                    continue
+                
+                data = h5_in['results'][:]
+                all_results.append(data)
+                logger.debug(f"Successfully read {len(data)} results from {worker_file}")
+                
+        except Exception as e:
+            logger.error(f"Error reading {worker_file}: {str(e)}")
+            corrupted_files.append(worker_file)
+            # Don't break here - continue to check other files
+    
+    # Report and handle corrupted files
+    if corrupted_files:
+        logger.error(f"Found {len(corrupted_files)} corrupted/incomplete files:")
+        for cf in corrupted_files:
+            logger.error(f"  - {cf}")
+        
+        # Optional: save list of corrupted files for re-run
+        with open('corrupted_files.txt', 'w') as f:
+            for cf in corrupted_files:
+                f.write(f"{cf}\n")
+        
+        logger.error("Process cannot continue with corrupted files. Exiting.")
+        sys.exit(1)
+    
+    return all_results
+```
+
+### 5. **For Your Current Situation (Recovery)**
+Since you have 2999 successful files and one corrupted, you can:
+
+```python
+import glob
+import re
+
+# Find all worker files
+worker_files = glob.glob("worker_*.h5")
+
+# Sort them numerically (if named like worker_0001.h5)
+worker_files.sort(key=lambda x: int(re.search(r'worker_(\d+)\.h5', x).group(1)))
+
+# Check each file
+valid_files = []
+for wf in worker_files:
+    try:
+        if h5py.is_hdf5(wf):
+            valid_files.append(wf)
+        else:
+            print(f"Corrupted: {wf}")
+    except:
+        print(f"Corrupted: {wf}")
+
+print(f"Found {len(valid_files)} valid files out of {len(worker_files)}")
+```
+
+### 6. **Add Process-level Error Handling**
+Wrap your main aggregation in a try-except:
+
+```python
+try:
+    results = aggregate_results(worker_files)
+except Exception as e:
+    logger.critical(f"Fatal error during aggregation: {e}")
+    logger.critical("Saving progress and exiting cleanly...")
+    
+    # Save whatever results were successfully collected
+    if 'results' in locals() and results:
+        save_partial_results(results)
+    
+    sys.exit(1)  # Clean exit with error code
+```
+
+These modifications will:
+1. Validate files before opening
+2. Handle corrupted files gracefully
+3. Provide clear error messages
+4. Exit cleanly when corruption is detected
+5. Allow for recovery by identifying which files need to be re-run
+
+The key insight is that you need to check file validity **before** trying to open it with h5py, and you should implement atomic file writing in your workers to prevent partially written files.

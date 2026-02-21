@@ -1,0 +1,180 @@
+Looking at your error, I can see the issue and provide a solution. Here's what's happening:
+
+## Diagnosis
+
+1. **The Problem**: The script is trying to read an HDF5 file (`worker_file`) but the file is either corrupted or incomplete. The error `OSError: Unable to synchronously open file (file signature not found)` means the file doesn't have a valid HDF5 structure.
+
+2. **The Cause**: This typically happens when:
+   - A worker process crashed while writing the file
+   - The file wasn't properly closed (HDF5 requires explicit closing)
+   - The file was only partially written before the process ended
+   - Disk I/O issues or insufficient permissions
+
+3. **The Recovery Problem**: The script completed 2999/3000 optimizations successfully, but the joining operation failed when trying to read one of the worker files.
+
+## Solution: Modified Script with Robust Error Handling
+
+Here's how to modify your script to detect and handle these errors cleanly:
+
+```python
+import h5py
+import os
+import sys
+import traceback
+from pathlib import Path
+
+def validate_hdf5_file(filepath):
+    """Validate that an HDF5 file is readable and not corrupted."""
+    try:
+        # Check if file exists and has content
+        if not os.path.exists(filepath):
+            return False, f"File does not exist: {filepath}"
+        
+        if os.path.getsize(filepath) == 0:
+            return False, f"File is empty: {filepath}"
+        
+        # Try to open and read a small part
+        with h5py.File(filepath, 'r') as f:
+            # Try to access a key or attribute to verify it's readable
+            list(f.keys())  # This will fail if file is corrupted
+        return True, "File is valid"
+        
+    except Exception as e:
+        return False, f"Failed to read HDF5 file {filepath}: {str(e)}"
+
+def robust_h5_open(filepath, mode='r'):
+    """Safely open an HDF5 file with validation."""
+    is_valid, msg = validate_hdf5_file(filepath)
+    if not is_valid and mode == 'r':
+        raise ValueError(f"Cannot open corrupted file: {msg}")
+    return h5py.File(filepath, mode)
+
+def main():
+    # ... your existing code ...
+    
+    try:
+        # Before opening, validate all worker files
+        worker_files = []  # Your list of worker files
+        
+        print("Validating worker files before processing...")
+        corrupted_files = []
+        for worker_file in worker_files:
+            is_valid, msg = validate_hdf5_file(worker_file)
+            if not is_valid:
+                corrupted_files.append((worker_file, msg))
+                print(f"ERROR: {msg}")
+        
+        if corrupted_files:
+            print("\n" + "="*60)
+            print("ERROR: Found corrupted worker files!")
+            print("="*60)
+            for filepath, error_msg in corrupted_files:
+                print(f"  - {filepath}: {error_msg}")
+            
+            # Option 1: Stop immediately
+            sys.exit(f"Aborting due to {len(corrupted_files)} corrupted file(s)")
+            
+            # Option 2: Continue with available files (if you want partial results)
+            # print(f"WARNING: Skipping {len(corrupted_files)} corrupted file(s)")
+            # worker_files = [f for f in worker_files if f not in [cf[0] for cf in corrupted_files]]
+        
+        # Process valid files
+        valid_count = 0
+        for worker_file in worker_files:
+            try:
+                # Use the robust opener
+                with robust_h5_open(worker_file, 'r') as h5_in:
+                    # Process the file
+                    # ... your processing code ...
+                    valid_count += 1
+                    
+            except Exception as e:
+                print(f"ERROR processing {worker_file}: {str(e)}")
+                print(traceback.format_exc())
+                # Decide whether to continue or stop
+                # For strict error handling, uncomment next line:
+                # sys.exit(f"Failed to process {worker_file}")
+                continue
+        
+        print(f"Successfully processed {valid_count}/{len(worker_files)} files")
+        
+    except Exception as e:
+        print(f"Fatal error in main process: {str(e)}")
+        print(traceback.format_exc())
+        sys.exit(1)
+
+# ... rest of your script ...
+```
+
+## Additional Improvements for Worker Processes
+
+If you control the worker processes that create the files, add this to ensure proper file closure:
+
+```python
+# In your worker processes:
+import h5py
+import tempfile
+import os
+
+def worker_function(output_file):
+    """Worker that creates HDF5 files safely."""
+    # Option 1: Use context manager for guaranteed cleanup
+    try:
+        with h5py.File(output_file, 'w') as h5_out:
+            # Write your data
+            # h5_out.create_dataset(...)
+            pass
+        print(f"Successfully wrote {output_file}")
+        
+    except Exception as e:
+        print(f"Worker failed to write {output_file}: {e}")
+        # Clean up incomplete file
+        if os.path.exists(output_file):
+            os.remove(output_file)
+        raise
+    
+    # Option 2: Write to temp file first, then move
+    # temp_file = output_file + '.tmp'
+    # with h5py.File(temp_file, 'w') as h5_out:
+    #     # Write data
+    #     pass
+    # os.rename(temp_file, output_file)  # Atomic operation
+```
+
+## Recovery Strategy
+
+For your current situation, you can recover the existing data:
+
+```python
+def recover_partial_results(worker_files):
+    """Recover valid results from worker files."""
+    valid_results = []
+    
+    for worker_file in worker_files:
+        is_valid, msg = validate_hdf5_file(worker_file)
+        if is_valid:
+            try:
+                with h5py.File(worker_file, 'r') as f:
+                    data = f[...]  # Load your data
+                    valid_results.append(data)
+                    print(f"Recovered data from {worker_file}")
+            except Exception as e:
+                print(f"Failed to read valid file {worker_file}: {e}")
+        else:
+            print(f"Skipping invalid file: {msg}")
+    
+    return valid_results
+
+# Use this to process your existing files
+valid_data = recover_partial_results(your_worker_files)
+print(f"Recovered {len(valid_data)} valid results out of {len(your_worker_files)} files")
+```
+
+## Key Points:
+1. **Validate before processing**: Always check HDF5 files before trying to read them
+2. **Use context managers**: Ensure files are properly closed
+3. **Implement atomic writes**: Write to temp files first, then rename
+4. **Graceful error handling**: Don't let one bad file crash the entire process
+5. **Recovery mechanism**: Allow partial recovery of valid results
+
+This approach will help you detect and handle corrupted files early, preventing wasted computation time on large runs.

@@ -1,0 +1,180 @@
+Looking at your error, I can diagnose the issue:
+
+## Problem Diagnosis
+
+1. **The Error**: `OSError: Unable to synchronously open file (file signature not found)` indicates that one of your worker HDF5 files is corrupted or incomplete.
+
+2. **The Context**: Your script completed 2999/3000 optimizations successfully, but during the final joining/merging phase (line 448), it's trying to read a worker file that's invalid.
+
+3. **Root Cause**: This typically happens when:
+   - A worker process was interrupted (killed, crashed, or system failure)
+   - The HDF5 file wasn't properly closed
+   - Disk space ran out during writing
+   - The file was partially written
+
+## Solution: Modified Script with Robust Error Handling
+
+Here's how to modify your script to detect and handle this issue:
+
+```python
+import h5py
+import os
+import sys
+import traceback
+from pathlib import Path
+
+def validate_h5_file(filepath):
+    """Validate that an HDF5 file is readable and not corrupted."""
+    try:
+        with h5py.File(filepath, 'r') as f:
+            # Try to access a key attribute or dataset to ensure it's readable
+            _ = f.attrs.get('creation_time', None)
+            # If we get here, the file is valid
+            return True, "Valid"
+    except (OSError, IOError, ValueError) as e:
+        return False, f"Corrupted: {str(e)}"
+    except Exception as e:
+        return False, f"Unexpected error: {str(e)}"
+
+def safe_open_h5(filepath, mode='r'):
+    """Safely open an HDF5 file with validation."""
+    if mode == 'r':
+        is_valid, msg = validate_h5_file(filepath)
+        if not is_valid:
+            raise ValueError(f"Cannot open {filepath}: {msg}")
+    
+    return h5py.File(filepath, mode)
+
+def main():
+    # ... your existing code ...
+    
+    # MODIFIED: Add validation before processing worker files
+    worker_files = []  # Your list of worker files
+    
+    print("Validating worker files before merging...")
+    valid_files = []
+    corrupted_files = []
+    
+    for worker_file in worker_files:
+        if not os.path.exists(worker_file):
+            print(f"ERROR: Worker file not found: {worker_file}")
+            corrupted_files.append(worker_file)
+            continue
+            
+        is_valid, msg = validate_h5_file(worker_file)
+        if is_valid:
+            valid_files.append(worker_file)
+            print(f"✓ {worker_file}: {msg}")
+        else:
+            corrupted_files.append(worker_file)
+            print(f"✗ {worker_file}: {msg}")
+    
+    # Check if we have corrupted files
+    if corrupted_files:
+        print(f"\nERROR: Found {len(corrupted_files)} corrupted/invalid worker files:")
+        for cf in corrupted_files:
+            print(f"  - {cf}")
+        
+        # Option 1: Stop immediately
+        print("\nStopping process due to corrupted worker files.")
+        sys.exit(1)
+        
+        # Option 2: Continue with only valid files (if that makes sense for your use case)
+        # print(f"\nContinuing with {len(valid_files)} valid files.")
+        # worker_files = valid_files
+    
+    # MODIFIED: Use safe_open_h5 in your merging code
+    try:
+        # Your original line 448, now with safe opening:
+        with safe_open_h5(worker_file, 'r') as h5_in:
+            # ... your processing code ...
+            pass
+    except (ValueError, OSError) as e:
+        print(f"FATAL: Failed to process {worker_file}: {e}")
+        print("This should have been caught during validation!")
+        sys.exit(1)
+    
+    # ... rest of your code ...
+
+# Alternative: Recovery function if you want to try to salvage data
+def attempt_recovery(worker_file):
+    """Attempt to recover data from a potentially corrupted HDF5 file."""
+    try:
+        # Try to open in read-only mode first
+        with h5py.File(worker_file, 'r') as f:
+            # List all datasets
+            datasets = list(f.keys())
+            print(f"Found {len(datasets)} datasets in {worker_file}")
+            return True, datasets
+    except:
+        # If that fails, try to open with recovery mode
+        try:
+            with h5py.File(worker_file, 'r', driver='core') as f:
+                datasets = list(f.keys())
+                print(f"Recovered {len(datasets)} datasets using core driver")
+                return True, datasets
+        except Exception as e:
+            print(f"Failed to recover {worker_file}: {e}")
+            return False, []
+```
+
+## Additional Recommendations:
+
+1. **Add Checkpointing**: Modify your worker processes to write intermediate results:
+```python
+def worker_process(args):
+    try:
+        results = []
+        for i, item in enumerate(items):
+            # Process item
+            result = process_item(item)
+            results.append(result)
+            
+            # Periodic checkpointing
+            if i % checkpoint_interval == 0:
+                save_partial_results(results, checkpoint_file)
+        
+        # Final save
+        save_final_results(results, output_file)
+        return True
+    except Exception as e:
+        print(f"Worker failed: {e}")
+        # Save whatever we have
+        save_partial_results(results, f"{output_file}.partial")
+        return False
+```
+
+2. **Use File Locking**: If multiple processes might write to the same location:
+```python
+import fcntl
+
+def safe_write_h5(filepath, data):
+    with open(filepath + '.lock', 'w') as lockfile:
+        fcntl.flock(lockfile, fcntl.LOCK_EX)
+        try:
+            with h5py.File(filepath, 'w') as f:
+                # Write data
+                pass
+        finally:
+            fcntl.flock(lockfile, fcntl.LOCK_UN)
+```
+
+3. **For Your Current Situation**:
+Since you have 2999/3000 successful optimizations, you could:
+- Identify which worker file is corrupted
+- Re-run just that specific optimization
+- Then merge all files
+
+To find the bad file:
+```bash
+# Quick check of all worker files
+for f in worker_*.h5; do 
+    if h5dump -n 1 "$f" > /dev/null 2>&1; then 
+        echo "✓ $f"; 
+    else 
+        echo "✗ $f"; 
+    fi 
+done
+```
+
+This approach will catch corrupted files early, provide clear error messages, and allow for clean recovery or restart strategies.

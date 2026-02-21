@@ -1,0 +1,173 @@
+Looking at your error and output, I can diagnose the issue:
+
+## Problem Analysis
+
+1. **The error occurs during file joining phase**: The script completed 2999/3000 optimizations successfully, but failed when trying to open a worker file during the merging/joining process.
+
+2. **The specific error**: `OSError: Unable to synchronously open file (file signature not found)` indicates that one of the worker HDF5 files is corrupted or incomplete.
+
+3. **From the output**: You can see the progress bar completed 3000/3000 optimizations, but the script reports "Completed 2999/3000 optimizations successfully" - suggesting one worker file failed to save properly.
+
+4. **The repeating lines**: The repeated "130 possible points..." messages suggest multiple worker processes are trying to report results after the main process has already moved to the joining phase.
+
+## Root Cause
+One of the parallel worker processes likely:
+- Crashed or was killed during file writing
+- Ran out of disk space while saving
+- Was interrupted by a system signal
+- Had a race condition during file closure
+
+## Solution: Modified Script with Robust Error Handling
+
+Here's how to modify your script to detect and handle this issue:
+
+```python
+import h5py
+import os
+import glob
+import traceback
+from pathlib import Path
+
+def validate_h5_file(filepath):
+    """Validate that an HDF5 file is not corrupted."""
+    try:
+        with h5py.File(filepath, 'r') as f:
+            # Try to access a key to ensure file is readable
+            _ = list(f.keys())
+            return True
+    except Exception as e:
+        print(f"ERROR: Corrupted file detected: {filepath}")
+        print(f"Error details: {e}")
+        return False
+
+def safe_merge_worker_files(worker_pattern, output_file):
+    """Safely merge worker files with validation."""
+    worker_files = sorted(glob.glob(worker_pattern))
+    valid_files = []
+    corrupted_files = []
+    
+    print(f"Found {len(worker_files)} worker files to merge")
+    
+    # Validate all worker files first
+    for worker_file in worker_files:
+        if validate_h5_file(worker_file):
+            valid_files.append(worker_file)
+        else:
+            corrupted_files.append(worker_file)
+    
+    if corrupted_files:
+        print(f"\nWARNING: Found {len(corrupted_files)} corrupted files:")
+        for cf in corrupted_files:
+            print(f"  - {cf}")
+        
+        # Option 1: Stop immediately
+        raise RuntimeError(f"Found {len(corrupted_files)} corrupted worker files. Cannot proceed with merge.")
+        
+        # Option 2: Continue with valid files only (if acceptable)
+        # print(f"Proceeding with {len(valid_files)} valid files only")
+    
+    # Proceed with merge using only valid files
+    with h5py.File(output_file, 'w') as h5_out:
+        for i, worker_file in enumerate(valid_files):
+            try:
+                with h5py.File(worker_file, 'r') as h5_in:
+                    # Copy datasets from worker file to output
+                    for key in h5_in.keys():
+                        if key not in h5_out:
+                            h5_in.copy(key, h5_out)
+                        else:
+                            # Handle duplicate keys if needed
+                            pass
+                print(f"Successfully merged {worker_file} ({i+1}/{len(valid_files)})")
+                
+            except Exception as e:
+                print(f"ERROR: Failed to merge {worker_file}: {e}")
+                # Optionally, you could remove the corrupted file
+                # os.remove(worker_file)
+                raise
+    
+    print(f"\nSuccessfully merged {len(valid_files)} files into {output_file}")
+    return len(valid_files)
+
+# Also modify your worker process to handle file writing errors:
+def worker_process_safe(worker_id, data_chunk, output_file):
+    """Worker function with safe file writing."""
+    import tempfile
+    
+    try:
+        # Process data...
+        results = process_data(data_chunk)
+        
+        # Write to a temporary file first
+        temp_dir = os.path.dirname(output_file)
+        temp_filename = f"{output_file}.{worker_id}.tmp"
+        
+        with h5py.File(temp_filename, 'w') as f:
+            # Save results
+            for key, value in results.items():
+                f.create_dataset(key, data=value)
+        
+        # Atomic rename to final filename
+        os.rename(temp_filename, output_file)
+        
+        return True
+        
+    except Exception as e:
+        print(f"ERROR in worker {worker_id}: {e}")
+        # Clean up temporary file if it exists
+        if os.path.exists(temp_filename):
+            os.remove(temp_filename)
+        return False
+
+# In your main function, modify the joining section:
+def main():
+    # ... your existing code ...
+    
+    # After parallel processing, merge files safely
+    try:
+        worker_pattern = "farm_layouts_worker_*.h5"
+        output_file = "farm_layouts_complete.h5"
+        
+        num_merged = safe_merge_worker_files(worker_pattern, output_file)
+        
+        if num_merged < expected_workers:
+            print(f"\nWARNING: Only merged {num_merged}/{expected_workers} files")
+            print("Some data may be missing. Consider re-running failed workers.")
+            
+    except Exception as e:
+        print(f"\nFATAL ERROR during file merge: {e}")
+        print("Preserving worker files for manual recovery.")
+        sys.exit(1)
+```
+
+## Recovery Strategy
+
+Since you have 2999 successful files, you can:
+
+1. **Identify the corrupted file**:
+```python
+import glob
+import h5py
+
+worker_files = sorted(glob.glob("farm_layouts_worker_*.h5"))
+for wf in worker_files:
+    try:
+        with h5py.File(wf, 'r'):
+            pass
+        print(f"OK: {wf}")
+    except:
+        print(f"CORRUPTED: {wf}")
+```
+
+2. **Manual recovery options**:
+   - If you know which seed/farm combination is missing, re-run just that worker
+   - Merge the 2999 good files manually
+   - Check if the corrupted file can be partially recovered
+
+3. **Prevent future issues**:
+   - Add disk space checks before writing
+   - Use atomic file operations (write to temp, then rename)
+   - Implement heartbeat/health checks for workers
+   - Save progress checkpoints periodically
+
+Would you like me to help you implement a specific recovery strategy based on your actual file structure?

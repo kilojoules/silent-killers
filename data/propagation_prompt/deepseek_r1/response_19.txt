@@ -1,0 +1,327 @@
+Here's a comprehensive script that propagates realistic measurement uncertainties through PyWake and computes Sobol sensitivity indices for effective wind speed across the flow field:
+
+```python
+"""
+Uncertainty Propagation and Sobol Sensitivity Analysis for Wind Farm Flow Fields
+This script propagates inflow measurement uncertainties through PyWake and computes
+Sobol sensitivity indices for effective wind speed across the flow field.
+"""
+
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib import cm
+import pandas as pd
+from pathlib import Path
+from scipy.stats import qmc
+from datetime import datetime
+import logging
+from typing import Dict, List, Tuple, Optional
+
+# PyWake imports
+from py_wake import NOJ
+from py_wake.site import UniformSite
+from py_wake.wind_turbines import WindTurbine
+from py_wake.wind_turbines.power_ct_functions import PowerCtTabular
+from py_wake.examples.data.hornsrev1 import HornsrevV80
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+class UncertaintyPropagationSensitivity:
+    """
+    Class to propagate measurement uncertainties through PyWake and perform
+    Sobol sensitivity analysis on effective wind speed across flow fields.
+    """
+    
+    def __init__(self, 
+                 wt_x: np.ndarray, 
+                 wt_y: np.ndarray,
+                 wind_speed: float = 8.0,
+                 wind_direction: float = 270.0,
+                 turbulence_intensity: float = 0.1,
+                 wind_speed_unc: float = 0.5,  # ±0.5 m/s
+                 wind_dir_unc: float = 5.0,     # ±5 degrees
+                 ti_unc: float = 0.02,          # ±0.02
+                 n_samples: int = 512):
+        """
+        Initialize the uncertainty propagation and sensitivity analysis.
+        
+        Parameters:
+        -----------
+        wt_x, wt_y : np.ndarray
+            Wind turbine x and y coordinates (in meters)
+        wind_speed, wind_direction, turbulence_intensity : float
+            Nominal inflow conditions
+        wind_speed_unc, wind_dir_unc, ti_unc : float
+            Measurement uncertainties (one standard deviation)
+        n_samples : int
+            Number of Monte Carlo samples for uncertainty propagation
+        """
+        
+        # Wind turbine positions
+        self.wt_x = wt_x
+        self.wt_y = wt_y
+        
+        # Nominal inflow conditions
+        self.ws_nom = wind_speed
+        self.wd_nom = wind_direction
+        self.ti_nom = turbulence_intensity
+        
+        # Uncertainties (1σ)
+        self.ws_unc = wind_speed_unc
+        self.wd_unc = wind_dir_unc
+        self.ti_unc = ti_unc
+        
+        # Number of samples
+        self.n_samples = n_samples
+        
+        # Setup wind turbine
+        self.setup_wind_turbine()
+        
+        # Setup site and wake model
+        self.setup_pywake_model()
+        
+        # Results storage
+        self.results = {}
+        self.sensitivity_maps = {}
+        
+    def setup_wind_turbine(self):
+        """Setup wind turbine specifications."""
+        # Using Hornsrev V80 as example
+        self.wind_turbine = HornsrevV80()
+        logger.info(f"Using turbine: {self.wind_turbine.name()}")
+        logger.info(f"Diameter: {self.wind_turbine.diameter()} m")
+        logger.info(f"Hub height: {self.wind_turbine.hub_height()} m")
+    
+    def setup_pywake_model(self):
+        """Setup PyWake site and wake model."""
+        # Create a uniform site (flat terrain, no shear)
+        self.site = UniformSite(p_wd=[1.0], ti=0.1)
+        
+        # Initialize NOJ wake model
+        self.wake_model = NOJ(self.site, self.wind_turbine)
+        logger.info("PyWake NOJ model initialized")
+    
+    def generate_uncertainty_samples(self) -> Dict[str, np.ndarray]:
+        """
+        Generate Latin Hypercube samples for uncertain inflow parameters.
+        
+        Returns:
+        --------
+        samples : dict
+            Dictionary containing parameter samples
+        """
+        
+        # Define parameter bounds (nominal ± 2σ for 95% coverage)
+        bounds = {
+            'ws': [self.ws_nom - 2*self.ws_unc, self.ws_nom + 2*self.ws_unc],
+            'wd': [self.wd_nom - 2*self.wd_unc, self.wd_nom + 2*self.wd_unc],
+            'ti': [max(0.01, self.ti_nom - 2*self.ti_unc), 
+                   min(0.5, self.ti_nom + 2*self.ti_unc)]
+        }
+        
+        # Generate Latin Hypercube samples
+        sampler = qmc.LatinHypercube(d=3)
+        unit_samples = sampler.random(n=self.n_samples)
+        
+        # Scale to parameter bounds
+        samples = qmc.scale(unit_samples, bounds['ws'], bounds['wd'], bounds['ti'])
+        
+        # Create dictionary of samples
+        sample_dict = {
+            'ws': samples[:, 0],
+            'wd': samples[:, 1],
+            'ti': samples[:, 2]
+        }
+        
+        logger.info(f"Generated {self.n_samples} uncertainty samples")
+        logger.info(f"WS range: {sample_dict['ws'].min():.2f} - {sample_dict['ws'].max():.2f} m/s")
+        logger.info(f"WD range: {sample_dict['wd'].min():.1f} - {sample_dict['wd'].max():.1f} deg")
+        logger.info(f"TI range: {sample_dict['ti'].min():.3f} - {sample_dict['ti'].max():.3f}")
+        
+        return sample_dict
+    
+    def compute_flow_field(self, ws: float, wd: float, ti: float, 
+                          grid_resolution: int = 100) -> Tuple[np.ndarray, Dict]:
+        """
+        Compute flow field for given inflow conditions.
+        
+        Parameters:
+        -----------
+        ws, wd, ti : float
+            Inflow conditions
+        grid_resolution : int
+            Resolution for flow field grid
+            
+        Returns:
+        --------
+        flow_field : np.ndarray
+            2D array of effective wind speeds
+        flow_data : dict
+            Additional flow field data
+        """
+        
+        # Define grid boundaries
+        x_min, x_max = self.wt_x.min() - 500, self.wt_x.max() + 1500
+        y_min, y_max = self.wt_y.min() - 500, self.wt_y.max() + 500
+        
+        # Create grid
+        x = np.linspace(x_min, x_max, grid_resolution)
+        y = np.linspace(y_min, y_max, grid_resolution)
+        X, Y = np.meshgrid(x, y)
+        
+        # Simulate flow field
+        sim_res = self.wake_model(
+            x=self.wt_x,
+            y=self.wt_y,
+            wd=[wd],
+            ws=[ws],
+            TI=ti
+        )
+        
+        # Calculate flow field on grid
+        flow_map = sim_res.flow_map(X=X.flatten(), Y=Y.flatten())
+        ws_eff_grid = flow_map.WS_eff.values.reshape(grid_resolution, grid_resolution)
+        
+        flow_data = {
+            'X': X,
+            'Y': Y,
+            'x': x,
+            'y': y,
+            'sim_res': sim_res,
+            'flow_map': flow_map
+        }
+        
+        return ws_eff_grid, flow_data
+    
+    def propagate_uncertainties(self, grid_resolution: int = 50) -> Dict:
+        """
+        Propagate uncertainties through the wake model.
+        
+        Parameters:
+        -----------
+        grid_resolution : int
+            Resolution for flow field grid
+            
+        Returns:
+        --------
+        results : dict
+            Dictionary containing all simulation results
+        """
+        
+        logger.info("Starting uncertainty propagation...")
+        
+        # Generate uncertainty samples
+        samples = self.generate_uncertainty_samples()
+        
+        # Initialize storage for flow fields
+        n_grid = grid_resolution * grid_resolution
+        flow_fields = np.zeros((self.n_samples, grid_resolution, grid_resolution))
+        
+        # Initialize storage for turbine-level results
+        wt_ws_eff = np.zeros((self.n_samples, len(self.wt_x)))
+        
+        # Store grid coordinates (same for all simulations)
+        _, flow_data = self.compute_flow_field(
+            self.ws_nom, self.wd_nom, self.ti_nom, grid_resolution
+        )
+        
+        # Run Monte Carlo simulations
+        for i in range(self.n_samples):
+            if (i + 1) % 50 == 0:
+                logger.info(f"Running simulation {i+1}/{self.n_samples}")
+            
+            # Get sample parameters
+            ws = samples['ws'][i]
+            wd = samples['wd'][i]
+            ti = samples['ti'][i]
+            
+            # Compute flow field
+            flow_field, _ = self.compute_flow_field(ws, wd, ti, grid_resolution)
+            flow_fields[i] = flow_field
+            
+            # Get turbine effective wind speeds
+            sim_res = self.wake_model(
+                x=self.wt_x,
+                y=self.wt_y,
+                wd=[wd],
+                ws=[ws],
+                TI=ti
+            )
+            wt_ws_eff[i] = sim_res.WS_eff.squeeze()
+        
+        # Store results
+        self.results = {
+            'samples': samples,
+            'flow_fields': flow_fields,
+            'wt_ws_eff': wt_ws_eff,
+            'grid_data': flow_data,
+            'grid_resolution': grid_resolution,
+            'wt_x': self.wt_x,
+            'wt_y': self.wt_y
+        }
+        
+        logger.info("Uncertainty propagation completed")
+        
+        return self.results
+    
+    def compute_sobol_sensitivity(self) -> Dict[str, np.ndarray]:
+        """
+        Compute Sobol sensitivity indices for each grid point.
+        
+        Returns:
+        --------
+        sensitivity_maps : dict
+            Dictionary containing sensitivity maps
+        """
+        
+        logger.info("Computing Sobol sensitivity indices...")
+        
+        if not self.results:
+            raise ValueError("Run propagate_uncertainties() first")
+        
+        # Extract data
+        flow_fields = self.results['flow_fields']
+        samples = self.results['samples']
+        n_samples = self.n_samples
+        grid_res = self.results['grid_resolution']
+        
+        # Reshape flow fields to 2D: (n_samples, n_grid_points)
+        n_grid_points = grid_res * grid_res
+        flow_fields_flat = flow_fields.reshape(n_samples, n_grid_points)
+        
+        # Initialize sensitivity arrays
+        S1 = np.zeros((3, n_grid_points))  # First-order indices
+        ST = np.zeros((3, n_grid_points))  # Total indices
+        
+        # Parameter names
+        param_names = ['WS', 'WD', 'TI']
+        
+        # For each parameter, compute sensitivity indices
+        for param_idx, param_name in enumerate(param_names):
+            logger.info(f"Computing sensitivity for {param_name}...")
+            
+            # Group samples by parameter bins for simple Sobol estimation
+            # (This is a simplified approach; for more accurate results,
+            # use a proper Sobol analysis library like SALib)
+            
+            # Sort by parameter value
+            sorted_idx = np.argsort(samples[param_name.lower()])
+            sorted_flow = flow_fields_flat[sorted_idx]
+            
+            # Split into two halves
+            n_half = n_samples // 2
+            group1 = sorted_flow[:n_half]
+            group2 = sorted_flow[n_half:]
+            
+            # Compute mean and variance
+            mean_all = np.mean(flow_fields_flat, axis=0)
+            var_all = np.var(flow_fields_flat, axis=0)
+            
+            # Compute means for each group
+            mean_group1 = np.mean(group1, axis=0)
+            mean_group2 = np.mean(group2, axis=0)
+            
+            # Simplified first-order index (variance of conditional means)
+            var_

@@ -1,0 +1,184 @@
+Looking at your error, I can diagnose the issue:
+
+## Problem Diagnosis:
+1. **The error occurs during file joining/merging phase** - After all 3000 optimizations completed (2999 successful, 1 failed), the script tries to read worker files to merge results.
+
+2. **Corrupted HDF5 file**: The error `OSError: Unable to synchronously open file (file signature not found)` indicates one of the worker HDF5 files is corrupted/incomplete. This happens when:
+   - A worker process was interrupted/killed during file writing
+   - Disk I/O error occurred while saving
+   - Process crashed before fully closing the HDF5 file
+   - File is empty or has invalid HDF5 structure
+
+3. **The script successfully completed 2999/3000 optimizations** but fails during post-processing when trying to read results.
+
+## Solution - Modify the script to:
+
+### 1. Add file validation before reading:
+```python
+import os
+import h5py
+
+def validate_h5_file(filepath):
+    """Check if HDF5 file is valid and complete."""
+    if not os.path.exists(filepath):
+        return False, "File does not exist"
+    
+    if os.path.getsize(filepath) == 0:
+        return False, "File is empty"
+    
+    try:
+        with h5py.File(filepath, 'r') as f:
+            # Check if file has expected structure/datasets
+            if len(f.keys()) == 0:
+                return False, "File has no datasets"
+            return True, "Valid"
+    except (OSError, IOError) as e:
+        return False, f"Corrupted HDF5: {str(e)}"
+    except Exception as e:
+        return False, f"Unexpected error: {str(e)}"
+```
+
+### 2. Modify the main reading/joining logic:
+```python
+def main():
+    # ... existing code ...
+    
+    worker_files = get_worker_files()  # Your existing logic
+    
+    corrupted_files = []
+    valid_files = []
+    
+    # Validate all worker files first
+    for worker_file in worker_files:
+        is_valid, message = validate_h5_file(worker_file)
+        if is_valid:
+            valid_files.append(worker_file)
+        else:
+            corrupted_files.append((worker_file, message))
+            logging.error(f"Invalid worker file: {worker_file} - {message}")
+    
+    if corrupted_files:
+        logging.error(f"Found {len(corrupted_files)} corrupted files:")
+        for f, msg in corrupted_files:
+            logging.error(f"  {f}: {msg}")
+        
+        # Option 1: Stop cleanly
+        logging.error("Stopping due to corrupted worker files")
+        sys.exit(1)
+        
+        # Option 2: Continue with only valid files
+        # logging.warning(f"Continuing with {len(valid_files)} valid files")
+        # worker_files = valid_files
+    
+    # Process only valid files
+    for worker_file in valid_files:
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                # ... your processing code ...
+                pass
+        except Exception as e:
+            logging.error(f"Failed to process {worker_file}: {e}")
+            # Remove corrupted file to prevent future issues
+            os.remove(worker_file)
+            raise
+    
+    # ... rest of code ...
+```
+
+### 3. Add checkpointing and recovery mechanism:
+```python
+import glob
+import pickle
+
+def get_incomplete_tasks(all_tasks, completed_files):
+    """Identify which tasks need to be re-run."""
+    completed_seeds = set()
+    for f in completed_files:
+        # Extract seed/farm info from filename
+        # Adapt this to your naming convention
+        seed = extract_seed_from_filename(f)
+        completed_seeds.add(seed)
+    
+    incomplete = [task for task in all_tasks if task['seed'] not in completed_seeds]
+    return incomplete
+
+# Use this to recover and continue from where it left off
+def recover_and_continue():
+    # Find all completed worker files
+    worker_files = glob.glob("worker_*.h5")
+    
+    # Validate them
+    valid_files = [f for f in worker_files if validate_h5_file(f)[0]]
+    
+    # Load original task list
+    with open("task_list.pkl", "rb") as f:
+        all_tasks = pickle.load(f)
+    
+    # Find incomplete tasks
+    incomplete_tasks = get_incomplete_tasks(all_tasks, valid_files)
+    
+    if incomplete_tasks:
+        logging.info(f"Recovering: {len(incomplete_tasks)} tasks to re-run")
+        # Re-run only incomplete tasks
+        run_optimizations(incomplete_tasks)
+```
+
+### 4. Add atomic file writing in workers:
+Modify your worker processes to write to temporary files first, then rename:
+```python
+def save_worker_results(results, output_path):
+    """Save results atomically to avoid corruption."""
+    temp_path = output_path + ".tmp"
+    
+    try:
+        with h5py.File(temp_path, 'w') as f:
+            # Save your data
+            f.create_dataset('results', data=results)
+        
+        # Atomic rename (usually atomic on Unix systems)
+        os.rename(temp_path, output_path)
+        return True
+    except Exception as e:
+        # Clean up temp file on error
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        logging.error(f"Failed to save {output_path}: {e}")
+        return False
+```
+
+### 5. Immediate fix for your current situation:
+Since you have 2999 successful files, you can:
+1. Identify the corrupted file by testing each one
+2. Manually remove it
+3. Re-run just that specific seed/farm combination
+
+```python
+# Quick diagnostic script
+import glob
+import h5py
+import os
+
+worker_files = glob.glob("path/to/worker_*.h5")  # Adjust pattern
+
+for wf in worker_files:
+    try:
+        with h5py.File(wf, 'r') as f:
+            print(f"✓ {wf}: Valid, {len(f.keys())} datasets")
+    except Exception as e:
+        print(f"✗ {wf}: CORRUPTED - {e}")
+        # Optionally move/delete corrupted file
+        os.rename(wf, wf + ".corrupted")
+```
+
+## Recommendations:
+1. **Add file validation** at the start of the joining phase
+2. **Implement atomic file writing** in workers
+3. **Add checkpointing** to resume from interruptions
+4. **Log file validation results** before attempting to open
+5. **Clean up corrupted files** automatically or move them aside
+
+This approach ensures your script will:
+- Detect corrupted files early
+- Stop cleanly with informative error messages
+- Allow for recovery/re-running of only failed tasks
+- Prevent silent data corruption

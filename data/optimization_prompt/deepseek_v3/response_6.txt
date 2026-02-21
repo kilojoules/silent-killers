@@ -1,0 +1,185 @@
+Looking at your error, I can see the issue clearly:
+
+## Diagnosis
+
+1. **The Problem**: The script completed 2999 out of 3000 optimizations successfully, but when it tried to open one of the worker output files (`worker_file`) to join/merge results, it encountered a corrupted/incomplete HDF5 file with error "file signature not found".
+
+2. **Root Cause**: One of your worker processes likely:
+   - Crashed or was killed during execution
+   - Didn't properly close the HDF5 file (missing `h5py.File.close()` or context manager exit)
+   - Was interrupted (SIGKILL, out of memory, etc.) while writing to the file
+   - Left a partially written/incomplete HDF5 file
+
+3. **The Join Operation**: Yes, the joining operation is what failed because it's trying to read a corrupted worker file.
+
+## Solution: Modified Script with Robust Error Handling
+
+Here's how to modify your script to detect and handle this reliably:
+
+```python
+import h5py
+import os
+import sys
+import traceback
+from pathlib import Path
+
+def is_valid_hdf5_file(filepath):
+    """Check if a file is a valid HDF5 file."""
+    try:
+        with h5py.File(filepath, 'r'):
+            return True
+    except (OSError, IOError) as e:
+        return False
+
+def safe_open_hdf5(filepath, mode='r'):
+    """Safely open an HDF5 file with validation."""
+    if mode == 'r' and not os.path.exists(filepath):
+        raise FileNotFoundError(f"File not found: {filepath}")
+    
+    if mode == 'r':
+        if not is_valid_hdf5_file(filepath):
+            raise ValueError(f"Corrupted HDF5 file: {filepath}")
+    
+    return h5py.File(filepath, mode)
+
+def main():
+    # ... your existing code ...
+    
+    # MODIFIED: When joining worker files, add validation
+    worker_files = []  # Your list of worker files
+    
+    # Validate all worker files before attempting to join
+    valid_files = []
+    corrupted_files = []
+    
+    for worker_file in worker_files:
+        if os.path.exists(worker_file):
+            if is_valid_hdf5_file(worker_file):
+                valid_files.append(worker_file)
+            else:
+                corrupted_files.append(worker_file)
+                print(f"WARNING: Corrupted worker file detected: {worker_file}")
+        else:
+            print(f"WARNING: Missing worker file: {worker_file}")
+    
+    if corrupted_files:
+        print(f"ERROR: Found {len(corrupted_files)} corrupted worker files:")
+        for cf in corrupted_files:
+            print(f"  - {cf}")
+        
+        # Option 1: Stop immediately
+        sys.exit(f"Fatal: Corrupted worker files detected. Cannot proceed.")
+        
+        # Option 2: Continue with valid files only (if acceptable)
+        # print(f"Continuing with {len(valid_files)} valid files...")
+        # worker_files = valid_files
+    
+    # MODIFIED: Safe file opening in the join operation
+    try:
+        # Your original line 448 would become:
+        with safe_open_hdf5(worker_file, 'r') as h5_in:
+            # Process the file
+            pass
+    except (ValueError, OSError, IOError) as e:
+        print(f"ERROR: Failed to open {worker_file}: {e}")
+        print("This worker file is corrupted or incomplete.")
+        sys.exit(1)
+    
+    # ... rest of your code ...
+
+# Alternative: Add validation at worker creation time
+def worker_function(worker_id, output_file):
+    """Worker function with proper file handling."""
+    try:
+        # Use context manager to ensure file is properly closed
+        with h5py.File(output_file, 'w') as h5_out:
+            # Do work and write results
+            # ... your worker code ...
+            
+            # Explicitly flush and close
+            h5_out.flush()
+    except Exception as e:
+        # Log the error and ensure no corrupted file is left
+        print(f"ERROR in worker {worker_id}: {e}")
+        traceback.print_exc()
+        
+        # Clean up potentially corrupted file
+        if os.path.exists(output_file):
+            try:
+                os.remove(output_file)
+            except:
+                pass
+        
+        # Re-raise or handle appropriately
+        raise
+    
+    return output_file
+
+# Add checkpointing to recover from partial runs
+def recover_partial_run(worker_files, expected_count):
+    """Identify which workers need to be re-run."""
+    completed = []
+    to_rerun = []
+    
+    for i in range(expected_count):
+        worker_file = f"worker_{i}.h5"  # Adjust to your naming pattern
+        
+        if os.path.exists(worker_file) and is_valid_hdf5_file(worker_file):
+            completed.append(worker_file)
+        else:
+            to_rerun.append(i)
+            # Clean up corrupted files
+            if os.path.exists(worker_file):
+                try:
+                    os.remove(worker_file)
+                except:
+                    pass
+    
+    print(f"Recovery: Found {len(completed)} valid files, {len(to_rerun)} to re-run")
+    return completed, to_rerun
+```
+
+## Additional Recommendations:
+
+1. **Add File Size Validation**:
+```python
+def validate_worker_file(filepath, min_size_kb=1):
+    """Check if file exists, is valid HDF5, and has minimum size."""
+    if not os.path.exists(filepath):
+        return False, "File does not exist"
+    
+    if os.path.getsize(filepath) < min_size_kb * 1024:
+        return False, f"File too small ({os.path.getsize(filepath)} bytes)"
+    
+    if not is_valid_hdf5_file(filepath):
+        return False, "Invalid HDF5 format"
+    
+    return True, "OK"
+```
+
+2. **Use Atomic Writes** (prevents partial files):
+```python
+def atomic_write_hdf5(data, final_path):
+    """Write to temporary file then rename atomically."""
+    temp_path = final_path + ".tmp"
+    
+    try:
+        with h5py.File(temp_path, 'w') as h5_out:
+            # Write data
+            pass
+        
+        # Atomic rename (works on most Unix systems)
+        os.rename(temp_path, final_path)
+    finally:
+        # Clean up temp file if it exists
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+```
+
+3. **For Your Current Situation**:
+   - Check which worker file is corrupted (probably the last one)
+   - Delete the corrupted file(s)
+   - Re-run only the missing/corrupted workers
+   - Use the recovery function above to identify what needs re-running
+
+The key insight is to validate files **before** trying to read them, and to ensure workers handle file I/O robustly with proper cleanup on failure.

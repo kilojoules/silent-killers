@@ -1,4 +1,4 @@
-# scripts/process_files.py 
+# scripts/process_files.py
 """
 process_files.py
 ================
@@ -17,64 +17,82 @@ from collections import defaultdict
 
 import silent_killers.metrics_definitions as md
 
-# This regex is used to find Python code blocks in the response text.
-RE_CODE_BLOCK = re.compile(r"```(?:python|py)?\n(.*?)\n```", re.DOTALL)
+# Only match explicitly-tagged Python code blocks (```python or ```py).
+# Bare ``` blocks are excluded to avoid capturing shell, YAML, tracebacks, etc.
+RE_CODE_BLOCK = re.compile(r"```(?:python|py)\s*\n(.*?)\n```", re.DOTALL)
 
-def process_response_file(path: Path):
+
+def process_response_file(path: Path, strict: bool = False):
     """
     Processes a single response file, returning a dictionary for response
     metrics and another for aggregated code metrics.
+
+    Always returns a code_metrics dict (even when no code blocks are found),
+    so that every response file gets a row in the CSV.
     """
     raw_text = path.read_text(encoding="utf-8", errors="ignore")
-    
+
     # 1. Calculate response-level metrics (naive text search)
     response_metrics = {m.name: m.value for m in md.response_metrics(raw_text)}
 
     # 2. Find all Python code blocks and calculate aggregated AST metrics
     code_blocks = RE_CODE_BLOCK.findall(raw_text)
-    
-    # If no code blocks are found, return empty code metrics
+
+    # If no code blocks are found, return a row with zeros so the file
+    # appears in the CSV (distinguishable from "API call never made").
     if not code_blocks:
-        return response_metrics, {}
+        return response_metrics, {
+            "code_block_count": 0,
+            "loc": 0,
+            "exception_handling_blocks": 0,
+            "bad_exception_blocks": 0,
+            "bad_exception_rate": 0.0,
+            "pass_exception_blocks": 0,
+            "total_pass_statements": 0,
+            "uses_traceback": False,
+            "parsing_error": "",
+        }
 
     # Use defaultdict to easily sum up metrics from multiple code blocks
-    aggregated_metrics = defaultdict(float)
+    aggregated = defaultdict(float)
     parsing_errors = []
+    parsed_block_count = 0
 
     for i, code in enumerate(code_blocks):
-        try:
-            # Run the robust AST analysis on the code block
-            tree = md.ast.parse(code)
-            visitor = md._CodeMetricsVisitor()
-            visitor.visit(tree)
-            
-            # Aggregate the key metrics by summing them
-            aggregated_metrics["loc"] += len(code.splitlines())
-            aggregated_metrics["exception_handling_blocks"] += visitor.total_excepts
-            aggregated_metrics["bad_exception_blocks"] += visitor.bad_excepts
-            aggregated_metrics["pass_exception_blocks"] += visitor.pass_exception_blocks
-            aggregated_metrics["total_pass_statements"] += visitor.total_pass_statements
-            if visitor.uses_traceback:
-                 aggregated_metrics["uses_traceback"] = 1 # Mark as true if used in any block
-        
-        except SyntaxError as e:
-            parsing_errors.append(f"Block {i+1}: {e}")
+        # Use the public code_metrics() API so strict mode is respected
+        block_metrics = {m.name: m.value for m in md.code_metrics(code, strict=strict)}
+
+        if block_metrics.get("parsing_error"):
+            parsing_errors.append(f"Block {i+1}: {block_metrics['parsing_error']}")
+            continue
+
+        parsed_block_count += 1
+        aggregated["loc"] += block_metrics["loc"]
+        aggregated["exception_handling_blocks"] += block_metrics["exception_handling_blocks"]
+        aggregated["bad_exception_blocks"] += block_metrics["bad_exception_blocks"]
+        aggregated["pass_exception_blocks"] += block_metrics["pass_exception_blocks"]
+        aggregated["total_pass_statements"] += block_metrics["total_pass_statements"]
+        if block_metrics.get("uses_traceback"):
+            aggregated["uses_traceback"] = 1
 
     # Finalize aggregated metrics
-    total_excepts = aggregated_metrics["exception_handling_blocks"]
-    bad_excepts = aggregated_metrics["bad_exception_blocks"]
-    
-    aggregated_metrics["parsing_error"] = "; ".join(parsing_errors) if parsing_errors else ""
-    aggregated_metrics["bad_exception_rate"] = round(bad_excepts / total_excepts, 2) if total_excepts else 0.0
-    aggregated_metrics['code_block_count'] = len(code_blocks)
+    total_excepts = aggregated["exception_handling_blocks"]
+    bad_excepts = aggregated["bad_exception_blocks"]
 
-    return response_metrics, dict(aggregated_metrics)
+    code_result = dict(aggregated)
+    code_result["parsing_error"] = "; ".join(parsing_errors) if parsing_errors else ""
+    code_result["bad_exception_rate"] = round(bad_excepts / total_excepts, 2) if total_excepts else 0.0
+    code_result["code_block_count"] = len(code_blocks)
+
+    return response_metrics, code_result
 
 
-def main(argv: list[str] | None = None):
+def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--base-dir", required=True,
                     help="Prompt directory that contains the model sub-folders")
+    ap.add_argument("--strict", action="store_true",
+                    help="Flag ANY exception handler without re-raise as bad")
     args = ap.parse_args(argv)
 
     base = Path(args.base_dir).resolve()
@@ -88,15 +106,17 @@ def main(argv: list[str] | None = None):
     model_dirs = [d for d in base.iterdir() if d.is_dir()]
     for model_dir in model_dirs:
         for fname in sorted(model_dir.glob("response_*.txt")):
-            resp_metrics, code_metrics = process_response_file(fname)
-            
+            resp_metrics, code_metrics_dict = process_response_file(
+                fname, strict=args.strict
+            )
+
             # Create the row structure with metadata
             base_row = {"model": model_dir.name, "file": fname.name, "path": str(fname)}
-            
+
             if resp_metrics:
                 response_rows.append(base_row | resp_metrics)
-            if code_metrics:
-                code_rows.append(base_row | code_metrics)
+            # Always write a code row (even for zero-block responses)
+            code_rows.append(base_row | code_metrics_dict)
 
     # --- Write CSVs ---
     if response_rows:
@@ -104,13 +124,13 @@ def main(argv: list[str] | None = None):
     if code_rows:
         _write_csv(base / "llm_code_metrics.csv", code_rows)
 
-    print("✅  Metrics written")
+    print(f"✅  Metrics written (strict={args.strict})")
 
 def _write_csv(path: Path, rows: list[dict]):
     # Helper to write list of dictionaries to a CSV file
     field_set = {k for row in rows for k in row.keys()}
     fieldnames = sorted(list(field_set))
-    
+
     with path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()

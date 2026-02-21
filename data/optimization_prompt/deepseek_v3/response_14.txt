@@ -1,0 +1,207 @@
+Looking at your error, the issue is clear: **one of the worker output files is corrupted or incomplete** (specifically, the HDF5 file signature is missing). This happens when:
+
+1. **A worker process crashed or was killed** before finishing writing its HDF5 file
+2. **Disk I/O error** occurred during writing
+3. **Process was interrupted** (Ctrl+C, timeout, OOM killer, etc.) while writing
+
+The script completed 2999/3000 optimizations successfully, but when it tries to read worker file #3000 (or another one) during the merge phase, it finds a corrupted file.
+
+## Diagnosis
+
+The pattern shows:
+- Progress bar completes to 3000/3000
+- Many repeated "130 possible points..." messages (likely from workers finishing)
+- Main process tries to merge results
+- **Fails on `h5py.File(worker_file, 'r')`** because a worker file is invalid
+
+## Solution: Modify the script to detect and handle corrupted worker files
+
+Here's how to modify your script to handle this reliably:
+
+### 1. **Add file validation before merging**
+
+```python
+import os
+import h5py
+import traceback
+
+def is_valid_hdf5_file(filepath):
+    """Check if a file is a valid HDF5 file."""
+    if not os.path.exists(filepath):
+        return False
+    
+    if os.path.getsize(filepath) == 0:
+        return False
+    
+    try:
+        with h5py.File(filepath, 'r'):
+            return True
+    except (OSError, IOError, ValueError) as e:
+        print(f"Invalid HDF5 file {filepath}: {e}")
+        return False
+
+def safe_read_hdf5(filepath):
+    """Safely read HDF5 file with error handling."""
+    try:
+        with h5py.File(filepath, 'r') as h5_in:
+            # Read your data here
+            data = h5_in['layouts'][:]
+            return data
+    except Exception as e:
+        print(f"Error reading {filepath}: {e}")
+        raise
+```
+
+### 2. **Modify your main merging logic**
+
+In your `main()` function where you read worker files:
+
+```python
+def main():
+    # ... existing code ...
+    
+    # Find all worker files
+    worker_files = sorted(glob.glob(f"farm_layouts_worker_*.h5"))
+    
+    # Validate all files before processing
+    valid_files = []
+    corrupted_files = []
+    
+    for wf in worker_files:
+        if is_valid_hdf5_file(wf):
+            valid_files.append(wf)
+        else:
+            corrupted_files.append(wf)
+            print(f"WARNING: Corrupted worker file detected: {wf}")
+    
+    if corrupted_files:
+        print(f"ERROR: Found {len(corrupted_files)} corrupted worker files:")
+        for cf in corrupted_files:
+            print(f"  - {cf}")
+        
+        # Option 1: Stop immediately
+        raise RuntimeError(f"Corrupted worker files found. Cannot proceed with merge.")
+        
+        # Option 2: Continue with valid files only (if acceptable)
+        # print(f"Continuing with {len(valid_files)} valid files...")
+        # worker_files = valid_files
+    
+    # Now process only valid files
+    for worker_file in worker_files:
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                # ... your merging code ...
+        except Exception as e:
+            print(f"FATAL: Failed to read {worker_file}: {e}")
+            print("Stopping process to prevent data corruption.")
+            raise
+    
+    # ... rest of your code ...
+```
+
+### 3. **Add atomic writing in workers**
+
+To prevent partial/corrupted files, modify your worker processes to write atomically:
+
+```python
+import tempfile
+import shutil
+
+def worker_function(args):
+    # ... compute layouts ...
+    
+    # Write to temporary file first
+    temp_file = tempfile.NamedTemporaryFile(suffix='.h5', delete=False)
+    temp_path = temp_file.name
+    temp_file.close()
+    
+    try:
+        with h5py.File(temp_path, 'w') as h5_out:
+            # Write your data
+            h5_out.create_dataset('layouts', data=layouts, compression='gzip')
+        
+        # Atomically rename to final location
+        final_path = f"farm_layouts_worker_{worker_id}.h5"
+        shutil.move(temp_path, final_path)
+        
+    except Exception as e:
+        # Clean up temp file on error
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
+        raise
+```
+
+### 4. **Add checkpointing for recovery**
+
+Modify the script to track which workers completed successfully:
+
+```python
+def main():
+    # ... existing code ...
+    
+    # Create a completion marker file for each worker
+    completed_markers = []
+    
+    # In worker process, after successful write:
+    marker_file = f"worker_{worker_id}.done"
+    with open(marker_file, 'w') as f:
+        f.write("completed")
+    completed_markers.append(marker_file)
+    
+    # In main process, check for completion:
+    expected_workers = 3000  # or whatever
+    completed = []
+    
+    for i in range(expected_workers):
+        marker = f"worker_{i}.done"
+        if os.path.exists(marker):
+            completed.append(i)
+    
+    print(f"Completed workers: {len(completed)}/{expected_workers}")
+    
+    # Only process files for completed workers
+    worker_files = []
+    for i in completed:
+        wf = f"farm_layouts_worker_{i}.h5"
+        if os.path.exists(wf):
+            worker_files.append(wf)
+```
+
+### 5. **Immediate fix for your current situation**
+
+To recover what you can from your existing run:
+
+```python
+import glob
+import h5py
+import os
+
+# Find all worker files
+worker_files = sorted(glob.glob("farm_layouts_worker_*.h5"))
+
+# Test each file
+valid_data = []
+for wf in worker_files:
+    try:
+        with h5py.File(wf, 'r') as f:
+            data = f['layouts'][:]
+            valid_data.append((wf, data))
+            print(f"✓ {wf}: {data.shape}")
+    except Exception as e:
+        print(f"✗ {wf}: {e}")
+
+print(f"\nRecovered {len(valid_data)}/{len(worker_files)} files")
+```
+
+## Recommendations
+
+1. **Always use atomic writes** (write to temp file, then rename)
+2. **Validate files before merging**
+3. **Add progress tracking** to know which workers completed
+4. **Consider using a more robust storage format** for intermediate results (e.g., pickle with checksums, or a database)
+5. **Implement a resume mechanism** so you don't lose all progress if one worker fails
+
+The root cause is likely that worker #3000 (or another) was interrupted during file writing. With these modifications, your script will either:
+- Stop cleanly with a clear error message
+- Skip corrupted files and continue with valid ones
+- Allow for recovery/resumption of interrupted runs

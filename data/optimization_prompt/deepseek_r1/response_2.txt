@@ -1,0 +1,184 @@
+Looking at the error and the context, I can diagnose several issues:
+
+## Problem Diagnosis:
+
+1. **Corrupted HDF5 file**: The error `"file signature not found"` indicates one of the worker HDF5 files is corrupted, incomplete, or empty. This happens when:
+   - The worker process was killed while writing the file
+   - Disk I/O error occurred during writing
+   - Process was interrupted before file was properly closed
+
+2. **Silent failure in worker processes**: The main process shows "Completed 2999/3000 optimizations successfully" but one worker failed silently. The repeated lines about "130 possible points" suggest worker processes may have continued running after an error.
+
+3. **Missing error propagation**: When a worker fails, the error isn't properly propagated to stop the entire process.
+
+## Solution - Modified Script:
+
+Here's how to modify the script to detect and handle these issues reliably:
+
+```python
+# Add at the beginning of your main() function or before processing:
+import os
+import h5py
+import logging
+from pathlib import Path
+
+def validate_hdf5_file(filepath):
+    """Validate HDF5 file is complete and readable."""
+    filepath = Path(filepath)
+    
+    # Check 1: File exists
+    if not filepath.exists():
+        logging.error(f"Worker file does not exist: {filepath}")
+        return False
+    
+    # Check 2: File has reasonable size (not empty/corrupted)
+    min_size = 1024  # 1KB minimum for HDF5 files with data
+    if filepath.stat().st_size < min_size:
+        logging.error(f"Worker file is too small (likely incomplete): {filepath} (size: {filepath.stat().st_size} bytes)")
+        return False
+    
+    # Check 3: Can open and read the file
+    try:
+        with h5py.File(filepath, 'r') as f:
+            # Check 4: File has expected structure/datasets
+            if len(f.keys()) == 0:
+                logging.error(f"Worker file has no datasets: {filepath}")
+                return False
+            return True
+    except (OSError, IOError) as e:
+        logging.error(f"Cannot open HDF5 file {filepath}: {str(e)}")
+        return False
+    except Exception as e:
+        logging.error(f"Unexpected error reading {filepath}: {str(e)}")
+        return False
+
+# In your main() function, add validation before joining:
+def main():
+    # ... your existing code ...
+    
+    # After optimization, before joining:
+    worker_files = [...]  # Your list of worker files
+    
+    # Validate all worker files
+    valid_files = []
+    invalid_files = []
+    
+    for worker_file in worker_files:
+        if validate_hdf5_file(worker_file):
+            valid_files.append(worker_file)
+        else:
+            invalid_files.append(worker_file)
+    
+    if invalid_files:
+        logging.error(f"Found {len(invalid_files)} invalid worker files:")
+        for f in invalid_files:
+            logging.error(f"  - {f}")
+        
+        # Option 1: Stop immediately (recommended)
+        logging.error("Aborting process due to invalid worker files")
+        raise RuntimeError(f"{len(invalid_files)} worker files are invalid/corrupted")
+        
+        # Option 2: Continue with only valid files (if you want partial results)
+        # logging.warning(f"Continuing with {len(valid_files)} valid files only")
+        # worker_files = valid_files
+    
+    # Now proceed with joining only valid files
+    # ... rest of your joining code ...
+```
+
+## Additional Improvements:
+
+1. **Add checkpointing in workers**:
+```python
+# In each worker process, write to temporary file first, then rename
+import tempfile
+import shutil
+
+def worker_process(args):
+    try:
+        # Create temporary file
+        with tempfile.NamedTemporaryFile(mode='wb', delete=False, suffix='.h5') as tmp:
+            tmp_path = tmp.name
+        
+        # Write to temporary file
+        with h5py.File(tmp_path, 'w') as f:
+            # ... write data ...
+        
+        # Atomic rename to final location
+        shutil.move(tmp_path, final_output_path)
+        
+    except Exception as e:
+        # Clean up temp file on error
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        raise
+```
+
+2. **Add worker timeout and monitoring**:
+```python
+import signal
+import multiprocessing as mp
+
+def worker_with_timeout(func, args, timeout=3600):
+    """Run worker with timeout."""
+    pool = mp.Pool(1)
+    try:
+        result = pool.apply_async(func, args)
+        return result.get(timeout=timeout)
+    except mp.TimeoutError:
+        logging.error(f"Worker timeout after {timeout} seconds")
+        pool.terminate()
+        pool.join()
+        raise
+    finally:
+        pool.close()
+```
+
+3. **Periodic validation during optimization**:
+```python
+# Add periodic checks during long runs
+def check_worker_files_periodically(worker_dir, expected_count, interval=300):
+    """Check worker files periodically during optimization."""
+    while True:
+        time.sleep(interval)
+        files = list(Path(worker_dir).glob("*.h5"))
+        valid_count = sum(1 for f in files if validate_hdf5_file(f))
+        
+        if len(files) != expected_count or valid_count != len(files):
+            logging.warning(f"File check: {valid_count}/{len(files)}/{expected_count} files valid")
+            
+            # Optionally raise early
+            if valid_count < len(files) - 5:  # More than 5 corrupted files
+                raise RuntimeError("Multiple corrupted files detected")
+```
+
+## Recovery Strategy:
+
+Since you have 2999 successful files out of 3000:
+
+1. **Identify the missing/corrupted file**:
+```python
+# Find which seed/farm is missing
+expected_files = {f"farm_{f}_seed_{s}.h5" for f in farms for s in seeds}
+existing_files = {f.name for f in Path(worker_dir).glob("*.h5")}
+missing = expected_files - existing_files
+logging.info(f"Missing files: {missing}")
+```
+
+2. **Recover specific missing optimizations**:
+```python
+# Re-run only the missing optimization
+if missing:
+    for missing_file in missing:
+        # Parse farm and seed from filename
+        # ... parsing logic ...
+        farm_id, seed_id = parse_filename(missing_file)
+        logging.info(f"Re-running optimization for farm {farm_id}, seed {seed_id}")
+        # Run single optimization
+```
+
+This approach will:
+- Detect corrupted files early
+- Provide clear error messages
+- Allow for recovery of missing data
+- Prevent silent failures from corrupting final results

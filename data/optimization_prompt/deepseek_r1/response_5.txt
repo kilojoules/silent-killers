@@ -1,0 +1,165 @@
+Looking at the traceback and log output, I can diagnose the issue and provide solutions.
+
+## **Diagnosis**
+
+The error occurs during the final step when the main process tries to read and merge results from worker files created by multiprocessing workers. Specifically:
+
+1. **The process completed 2999/3000 optimizations successfully** (as shown in the log)
+2. **One worker file is corrupted/incomplete** - when trying to open `worker_file` with `h5py.File()`, it fails with "file signature not found"
+3. **Cause likely**: A worker process crashed or was interrupted while writing its HDF5 file, leaving a partial/invalid file
+
+## **Modified Script with Robust Error Handling**
+
+Here's how to modify the script to detect and handle this issue:
+
+```python
+import os
+import sys
+import h5py
+import signal
+import traceback
+from pathlib import Path
+
+def validate_h5_file(filepath):
+    """Validate that an HDF5 file is complete and readable."""
+    if not os.path.exists(filepath):
+        return False, f"File does not exist: {filepath}"
+    
+    if os.path.getsize(filepath) == 0:
+        return False, f"File is empty: {filepath}"
+    
+    try:
+        with h5py.File(filepath, 'r') as f:
+            # Check if file has basic structure (optional)
+            # Example: check for expected datasets
+            if 'layouts' in f:
+                return True, f"Valid HDF5 file with {len(f['layouts'])} layouts"
+            return True, "Valid HDF5 file"
+    except (OSError, IOError) as e:
+        return False, f"Invalid HDF5 file {filepath}: {str(e)}"
+
+def safe_file_read(worker_file):
+    """Safely read an HDF5 file with validation and error handling."""
+    # First validate the file
+    is_valid, message = validate_h5_file(worker_file)
+    if not is_valid:
+        # Log detailed error and optionally attempt recovery
+        print(f"ERROR: {message}", file=sys.stderr)
+        
+        # Option 1: Try to recover by re-running specific worker
+        # You could extract seed/farm info from filename and rerun
+        print(f"Worker file {worker_file} is corrupted. Data for this seed may be lost.", 
+              file=sys.stderr)
+        
+        # Return None to skip this file or raise exception
+        raise ValueError(f"Corrupted worker file: {worker_file}")
+    
+    # File is valid, proceed with reading
+    return h5py.File(worker_file, 'r')
+
+def main():
+    # ... existing code ...
+    
+    try:
+        # In the section where you read worker files (around line 448):
+        valid_files = []
+        corrupted_files = []
+        
+        for worker_file in worker_files_list:  # You need to define this list
+            try:
+                # Use our safe reader
+                with safe_file_read(worker_file) as h5_in:
+                    # Process the file
+                    valid_files.append(worker_file)
+                    # ... your processing code ...
+            except (ValueError, OSError, IOError) as e:
+                corrupted_files.append(worker_file)
+                print(f"ERROR: Skipping corrupted file {worker_file}: {e}", 
+                      file=sys.stderr)
+                continue
+        
+        # Report statistics
+        print(f"Successfully processed {len(valid_files)}/{len(worker_files_list)} worker files")
+        if corrupted_files:
+            print(f"Corrupted files ({len(corrupted_files)}): {corrupted_files}")
+            
+            # Optional: save list of corrupted files for rerun
+            with open("corrupted_workers.txt", "w") as f:
+                for cf in corrupted_files:
+                    f.write(f"{cf}\n")
+            
+            # Decide whether to continue or abort
+            if len(corrupted_files) > len(worker_files_list) * 0.1:  # >10% corrupted
+                print("ERROR: Too many corrupted files. Aborting.", file=sys.stderr)
+                sys.exit(1)
+                
+    except Exception as e:
+        print(f"Fatal error in main: {e}", file=sys.stderr)
+        traceback.print_exc()
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
+```
+
+## **Alternative: Atomic File Writing**
+
+To prevent corrupted files in the first place, modify worker processes to write files atomically:
+
+```python
+import tempfile
+import shutil
+
+def write_results_atomically(results, output_path):
+    """Write results to a temporary file, then atomically rename to final path."""
+    # Create temporary file in same directory
+    temp_dir = os.path.dirname(output_path)
+    with tempfile.NamedTemporaryFile(mode='wb', dir=temp_dir, 
+                                     delete=False, suffix='.h5.tmp') as tmp_file:
+        temp_path = tmp_file.name
+        
+        # Write to temporary file
+        with h5py.File(temp_path, 'w') as h5_out:
+            # Write your data
+            h5_out.create_dataset('layouts', data=results['layouts'])
+            # ... other datasets ...
+        
+        # Force sync to disk
+        h5_out.flush()
+        os.fsync(h5_out.fileno())
+    
+    # Atomically rename to final location
+    shutil.move(temp_path, output_path)
+```
+
+## **Recovery Strategy**
+
+Since you have 2999/3000 successful files, you can recover:
+
+1. **Identify the corrupted file**: Check which seed is missing from your 0-49 range
+2. **Rerun only the missing seed**: Modify your script to accept a seed range parameter
+3. **Merge results**: The modified script above will handle partial results gracefully
+
+## **Quick Patch for Your Current Script**
+
+For a minimal fix at line 448:
+
+```python
+try:
+    with h5py.File(worker_file, 'r') as h5_in:
+        # ... existing processing code ...
+except (OSError, IOError) as e:
+    print(f"ERROR: Failed to open {worker_file}: {e}")
+    print(f"Skipping this worker file. Data for this seed will be missing.")
+    continue  # Skip to next file instead of crashing
+```
+
+## **Recommendations**
+
+1. **Use atomic file writes** in worker processes
+2. **Validate files before reading** in the main process
+3. **Implement checkpointing** - save progress periodically
+4. **Add timeout handling** for stuck worker processes
+5. **Consider using a database** instead of individual files for better transactional integrity
+
+The key insight is that multiprocessing + file I/O can lead to race conditions where files are partially written. By validating before reading and using atomic writes, you can make the process much more robust.

@@ -1,0 +1,722 @@
+I'll create a script that propagates measurement uncertainties through PyWake and computes Sobol sensitivity indices for the effective wind speed (WS_eff). This script will generate flow field images showing how different parameters affect the wake flow.
+
+```python
+"""
+Script for propagating measurement uncertainties through PyWake and computing
+Sobol sensitivity indices for effective wind speed (WS_eff).
+Generates flow field images showing sensitivity to inflow variations.
+"""
+
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.colors import Normalize
+import pandas as pd
+from pathlib import Path
+import xarray as xr
+import time
+from datetime import datetime
+from scipy import stats
+import json
+import warnings
+warnings.filterwarnings('ignore')
+
+# PyWake imports
+from py_wake import Fuga
+from py_wake.examples.data.hornsrev1 import Hornsrev1Site, V80
+from py_wake.deficit_models.gaussian import BastankhahGaussian
+from py_wake.wind_turbines import WindTurbine
+from py_wake.wind_farm_models import All2AllIterative
+from py_wake.flow_map import XYGrid
+from py_wake.turbulence_models import STF2017TurbulenceModel
+
+# Uncertainty/sensitivity analysis imports
+from SALib.sample import saltelli
+from SALib.analyze import sobol
+
+class WakeUncertaintyPropagation:
+    """
+    Class for propagating measurement uncertainties through PyWake
+    and computing Sobol sensitivity indices for WS_eff.
+    """
+    
+    def __init__(self, turbine_locations=None, turbine_type=None, 
+                 domain_bounds=None, grid_resolution=100):
+        """
+        Initialize the uncertainty propagation analysis.
+        
+        Parameters
+        ----------
+        turbine_locations : list of tuples, optional
+            (x, y) positions of turbines in meters
+        turbine_type : WindTurbine, optional
+            PyWake wind turbine object
+        domain_bounds : tuple, optional
+            (x_min, x_max, y_min, y_max) in meters
+        grid_resolution : int, default 100
+            Resolution for flow field grid
+        """
+        
+        # Default to Hornsrev1 wind farm
+        if turbine_locations is None:
+            self.site = Hornsrev1Site()
+            self.turbines = V80()
+            x, y = self.site.initial_position.T
+            self.turbine_locations = list(zip(x, y))
+        else:
+            self.turbine_locations = turbine_locations
+            self.site = Hornsrev1Site()
+            self.turbines = turbine_type or V80()
+        
+        # Default domain bounds
+        if domain_bounds is None:
+            x_coords = [loc[0] for loc in self.turbine_locations]
+            y_coords = [loc[1] for loc in self.turbine_locations]
+            x_padding = 500
+            y_padding = 500
+            self.domain_bounds = (min(x_coords) - x_padding, 
+                                  max(x_coords) + x_padding,
+                                  min(y_coords) - y_padding, 
+                                  max(y_coords) + y_padding)
+        else:
+            self.domain_bounds = domain_bounds
+            
+        self.grid_resolution = grid_resolution
+        
+        # Define PyWake model (using BastankhahGaussian wake model)
+        self.wake_model = BastankhahGaussian(self.site, self.turbines)
+        
+        # Define problem for Sobol analysis
+        self.problem = {
+            'num_vars': 4,
+            'names': ['wind_speed', 'wind_direction', 'turbulence_intensity', 'shear_exponent'],
+            'bounds': [[5, 15],          # wind_speed [m/s]
+                       [240, 300],       # wind_direction [deg]
+                       [0.05, 0.15],     # turbulence_intensity [-]
+                       [0.1, 0.3]]       # shear_exponent [-]
+        }
+        
+        # Create output directory
+        self.output_dir = Path(f"uncertainty_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+        self.output_dir.mkdir(exist_ok=True)
+        
+        # Initialize results storage
+        self.results = {}
+        
+    def simulate_wake_field(self, wind_speed=10, wind_direction=270, 
+                            turbulence_intensity=0.1, shear_exponent=0.2):
+        """
+        Simulate wake field for given inflow conditions.
+        
+        Parameters
+        ----------
+        wind_speed : float
+            Wind speed at hub height [m/s]
+        wind_direction : float
+            Wind direction [deg]
+        turbulence_intensity : float
+            Turbulence intensity [-]
+        shear_exponent : float
+            Wind shear exponent [-]
+            
+        Returns
+        -------
+        flow_map : xarray.DataArray
+            Flow field with WS_eff
+        """
+        
+        # Convert turbine locations to arrays
+        x = np.array([loc[0] for loc in self.turbine_locations])
+        y = np.array([loc[1] for loc in self.turbine_locations])
+        
+        # Create grid for flow map
+        x_grid = np.linspace(self.domain_bounds[0], self.domain_bounds[1], 
+                            self.grid_resolution)
+        y_grid = np.linspace(self.domain_bounds[2], self.domain_bounds[3], 
+                            self.grid_resolution)
+        
+        # Run simulation
+        sim_result = self.wake_model(
+            x, y,
+            ws=wind_speed,
+            wd=wind_direction,
+            TI=turbulence_intensity,
+            shear=shear_exponent
+        )
+        
+        # Calculate flow map
+        flow_map = sim_result.flow_map(grid=XYGrid(x=x_grid, y=y_grid))
+        
+        return flow_map.WS_eff_xylk
+    
+    def generate_samples(self, n_base_samples=512):
+        """
+        Generate parameter samples using Saltelli sequence for Sobol analysis.
+        
+        Parameters
+        ----------
+        n_base_samples : int
+            Base number of samples (actual samples = n_base_samples * (2*D + 2))
+            
+        Returns
+        -------
+        param_samples : numpy.ndarray
+            Array of parameter samples
+        """
+        D = self.problem['num_vars']
+        param_samples = saltelli.sample(self.problem, n_base_samples, 
+                                        calc_second_order=True)
+        
+        print(f"Generated {len(param_samples)} samples for Sobol analysis")
+        return param_samples
+    
+    def run_uncertainty_propagation(self, n_base_samples=512, parallel=True):
+        """
+        Run uncertainty propagation through PyWake model.
+        
+        Parameters
+        ----------
+        n_base_samples : int
+            Base number of samples for Saltelli sequence
+        parallel : bool
+            Whether to use parallel processing (requires joblib)
+            
+        Returns
+        -------
+        sensitivity_maps : dict
+            Sobol sensitivity indices for each grid point
+        """
+        
+        # Generate parameter samples
+        param_samples = self.generate_samples(n_base_samples)
+        
+        # Create grid for storing results
+        x_grid = np.linspace(self.domain_bounds[0], self.domain_bounds[1], 
+                            self.grid_resolution)
+        y_grid = np.linspace(self.domain_bounds[2], self.domain_bounds[3], 
+                            self.grid_resolution)
+        
+        # Pre-allocate arrays for model outputs at each grid point
+        n_samples = len(param_samples)
+        n_grid_points = self.grid_resolution * self.grid_resolution
+        
+        print(f"Running {n_samples} simulations...")
+        
+        if parallel:
+            # Parallel execution using joblib
+            try:
+                from joblib import Parallel, delayed
+                
+                def run_single_sim(i):
+                    """Run single simulation for sample i."""
+                    ws, wd, ti, shear = param_samples[i]
+                    flow_map = self.simulate_wake_field(ws, wd, ti, shear)
+                    return flow_map.values
+                
+                # Run in parallel
+                all_results = Parallel(n_jobs=-1)(
+                    delayed(run_single_sim)(i) for i in range(n_samples)
+                )
+                
+                # Stack results
+                model_outputs = np.stack(all_results)
+                
+            except ImportError:
+                print("joblib not installed, falling back to sequential execution")
+                parallel = False
+        
+        if not parallel:
+            # Sequential execution
+            model_outputs = []
+            for i, sample in enumerate(param_samples):
+                if i % 50 == 0:
+                    print(f"  Completed {i}/{n_samples} simulations")
+                
+                ws, wd, ti, shear = sample
+                flow_map = self.simulate_wake_field(ws, wd, ti, shear)
+                model_outputs.append(flow_map.values)
+            
+            model_outputs = np.array(model_outputs)
+        
+        print("Simulations completed. Computing Sobol indices...")
+        
+        # Reshape outputs for Sobol analysis at each grid point
+        model_outputs_reshaped = model_outputs.reshape(n_samples, n_grid_points)
+        
+        # Compute Sobol indices for each grid point
+        sensitivity_maps = {
+            'S1': np.zeros((n_grid_points, self.problem['num_vars'])),  # First order
+            'ST': np.zeros((n_grid_points, self.problem['num_vars'])),  # Total order
+            'S2': None  # Second order (optional)
+        }
+        
+        # Compute Sobol indices for each grid point
+        for i in range(n_grid_points):
+            if i % 1000 == 0 and i > 0:
+                print(f"  Computing Sobol indices for grid point {i}/{n_grid_points}")
+            
+            Y = model_outputs_reshaped[:, i]
+            sobol_indices = sobol.analyze(self.problem, Y, 
+                                          calc_second_order=True,
+                                          print_to_console=False)
+            
+            sensitivity_maps['S1'][i, :] = sobol_indices['S1']
+            sensitivity_maps['ST'][i, :] = sobol_indices['ST']
+        
+        # Reshape back to grid
+        for key in ['S1', 'ST']:
+            sensitivity_maps[key] = sensitivity_maps[key].reshape(
+                self.grid_resolution, self.grid_resolution, self.problem['num_vars']
+            )
+        
+        # Store results
+        self.results['param_samples'] = param_samples
+        self.results['model_outputs'] = model_outputs
+        self.results['sensitivity_maps'] = sensitivity_maps
+        self.results['x_grid'] = x_grid
+        self.results['y_grid'] = y_grid
+        
+        # Save results
+        self.save_results()
+        
+        return sensitivity_maps
+    
+    def save_results(self):
+        """Save all results to disk."""
+        
+        # Save metadata
+        metadata = {
+            'problem_definition': self.problem,
+            'turbine_locations': self.turbine_locations,
+            'domain_bounds': self.domain_bounds,
+            'grid_resolution': self.grid_resolution,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        with open(self.output_dir / 'metadata.json', 'w') as f:
+            json.dump(metadata, f, indent=2)
+        
+        # Save parameter samples
+        np.save(self.output_dir / 'param_samples.npy', 
+                self.results.get('param_samples', None))
+        
+        # Save sensitivity maps if available
+        if 'sensitivity_maps' in self.results:
+            np.savez(self.output_dir / 'sensitivity_maps.npz',
+                     S1=self.results['sensitivity_maps']['S1'],
+                     ST=self.results['sensitivity_maps']['ST'],
+                     x_grid=self.results['x_grid'],
+                     y_grid=self.results['y_grid'])
+        
+        print(f"Results saved to {self.output_dir}")
+    
+    def plot_flow_field(self, wind_speed=10, wind_direction=270, 
+                       turbulence_intensity=0.1, shear_exponent=0.2,
+                       save_fig=True, fig_title=None):
+        """
+        Plot flow field for specific conditions.
+        
+        Parameters
+        ----------
+        wind_speed : float
+            Wind speed at hub height [m/s]
+        wind_direction : float
+            Wind direction [deg]
+        turbulence_intensity : float
+            Turbulence intensity [-]
+        shear_exponent : float
+            Wind shear exponent [-]
+        save_fig : bool
+            Whether to save the figure
+        fig_title : str, optional
+            Custom figure title
+            
+        Returns
+        -------
+        fig : matplotlib.figure.Figure
+            Generated figure
+        """
+        
+        # Simulate flow field
+        flow_map_data = self.simulate_wake_field(wind_speed, wind_direction,
+                                                 turbulence_intensity, shear_exponent)
+        
+        # Create figure
+        fig, ax = plt.subplots(figsize=(12, 10))
+        
+        # Plot flow field
+        im = ax.imshow(flow_map_data.squeeze().T, 
+                      extent=self.domain_bounds,
+                      origin='lower',
+                      cmap='viridis',
+                      aspect='equal')
+        
+        # Add colorbar
+        cbar = plt.colorbar(im, ax=ax, shrink=0.8)
+        cbar.set_label('Effective Wind Speed [m/s]', fontsize=12)
+        
+        # Add turbine locations
+        x_turb = [loc[0] for loc in self.turbine_locations]
+        y_turb = [loc[1] for loc in self.turbine_locations]
+        ax.scatter(x_turb, y_turb, c='red', s=50, marker='^', 
+                  edgecolors='black', linewidth=1.5, label='Turbines')
+        
+        # Add wind direction arrow
+        arrow_length = 200
+        arrow_x = self.domain_bounds[0] + 100
+        arrow_y = self.domain_bounds[2] + 100
+        dx = arrow_length * np.cos(np.radians(wind_direction))
+        dy = arrow_length * np.sin(np.radians(wind_direction))
+        ax.arrow(arrow_x, arrow_y, dx, dy, 
+                head_width=30, head_length=50, fc='white', ec='black', 
+                linewidth=2)
+        
+        # Set title and labels
+        if fig_title is None:
+            fig_title = (f"Wake Flow Field\n"
+                        f"WS={wind_speed:.1f} m/s, WD={wind_direction:.0f}°, "
+                        f"TI={turbulence_intensity:.2f}, Shear={shear_exponent:.2f}")
+        
+        ax.set_title(fig_title, fontsize=14, fontweight='bold')
+        ax.set_xlabel('x [m]', fontsize=12)
+        ax.set_ylabel('y [m]', fontsize=12)
+        ax.legend(loc='upper right')
+        ax.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        
+        if save_fig:
+            filename = (f"flow_field_ws{wind_speed:.1f}_wd{wind_direction:.0f}_"
+                       f"ti{turbulence_intensity:.2f}_shear{shear_exponent:.2f}.png")
+            fig.savefig(self.output_dir / filename, dpi=150, bbox_inches='tight')
+            print(f"Saved flow field plot: {filename}")
+        
+        return fig
+    
+    def plot_sensitivity_maps(self, sensitivity_maps=None, save_fig=True):
+        """
+        Plot Sobol sensitivity maps for all parameters.
+        
+        Parameters
+        ----------
+        sensitivity_maps : dict, optional
+            Sobol sensitivity maps (if None, use stored results)
+        save_fig : bool
+            Whether to save the figures
+            
+        Returns
+        -------
+        figs : list
+            List of generated figures
+        """
+        
+        if sensitivity_maps is None:
+            if 'sensitivity_maps' not in self.results:
+                raise ValueError("No sensitivity maps available. Run uncertainty_propagation first.")
+            sensitivity_maps = self.results['sensitivity_maps']
+        
+        param_names = self.problem['names']
+        n_params = len(param_names)
+        
+        figs = []
+        
+        # Create figure for first order indices
+        fig1, axes1 = plt.subplots(2, 2, figsize=(16, 14))
+        axes1 = axes1.ravel()
+        
+        # Create figure for total order indices
+        fig2, axes2 = plt.subplots(2, 2, figsize=(16, 14))
+        axes2 = axes2.ravel()
+        
+        # Plot turbine locations
+        x_turb = [loc[0] for loc in self.turbine_locations]
+        y_turb = [loc[1] for loc in self.turbine_locations]
+        
+        for i, (param_name, ax1, ax2) in enumerate(zip(param_names, axes1, axes2)):
+            # First order indices
+            im1 = ax1.imshow(sensitivity_maps['S1'][:, :, i].T,
+                            extent=self.domain_bounds,
+                            origin='lower',
+                            cmap='RdYlBu_r',
+                            vmin=0, vmax=1,
+                            aspect='equal')
+            
+            # Total order indices
+            im2 = ax2.imshow(sensitivity_maps['ST'][:, :, i].T,
+                            extent=self.domain_bounds,
+                            origin='lower',
+                            cmap='RdYlBu_r',
+                            vmin=0, vmax=1,
+                            aspect='equal')
+            
+            # Add turbine locations
+            for ax in [ax1, ax2]:
+                ax.scatter(x_turb, y_turb, c='black', s=30, marker='^',
+                          alpha=0.8)
+                ax.set_xlabel('x [m]')
+                ax.set_ylabel('y [m]')
+                ax.grid(True, alpha=0.3)
+            
+            ax1.set_title(f'First Order: {param_name}', fontsize=12, fontweight='bold')
+            ax2.set_title(f'Total Order: {param_name}', fontsize=12, fontweight='bold')
+            
+            # Add colorbars
+            plt.colorbar(im1, ax=ax1, shrink=0.9).set_label('Sensitivity Index', fontsize=10)
+            plt.colorbar(im2, ax=ax2, shrink=0.9).set_label('Sensitivity Index', fontsize=10)
+        
+        fig1.suptitle('First Order Sobol Sensitivity Indices for WS_eff', 
+                     fontsize=16, fontweight='bold', y=0.95)
+        fig2.suptitle('Total Order Sobol Sensitivity Indices for WS_eff', 
+                     fontsize=16, fontweight='bold', y=0.95)
+        
+        plt.tight_layout()
+        
+        if save_fig:
+            fig1.savefig(self.output_dir / 'sobol_first_order.png', 
+                        dpi=150, bbox_inches='tight')
+            fig2.savefig(self.output_dir / 'sobol_total_order.png', 
+                        dpi=150, bbox_inches='tight')
+            print("Saved sensitivity maps")
+        
+        figs.extend([fig1, fig2])
+        
+        # Create summary figure comparing all parameters
+        fig3, axes3 = plt.subplots(n_params, 2, figsize=(14, 4*n_params))
+        
+        for i, param_name in enumerate(param_names):
+            # First order
+            im1 = axes3[i, 0].imshow(sensitivity_maps['S1'][:, :, i].T,
+                                    extent=self.domain_bounds,
+                                    origin='lower',
+                                    cmap='RdYlBu_r',
+                                    vmin=0, vmax=1,
+                                    aspect='equal')
+            axes3[i, 0].scatter(x_turb, y_turb, c='black', s=20, marker='^', alpha=0.8)
+            axes3[i, 0].set_title(f'{param_name} - First Order', fontsize=11)
+            axes3[i, 0].set_ylabel('y [m]')
+            
+            # Total order
+            im2 = axes3[i, 1].imshow(sensitivity_maps['ST'][:, :, i].T,
+                                    extent=self.domain_bounds,
+                                    origin='lower',
+                                    cmap='RdYlBu_r',
+                                    vmin=0, vmax=1,
+                                    aspect='equal')
+            axes3[i, 1].scatter(x_turb, y_turb, c='black', s=20, marker='^', alpha=0.8)
+            axes3[i, 1].set_title(f'{param_name} - Total Order', fontsize=11)
+            
+            # Add colorbar for each row
+            plt.colorbar(im1, ax=axes3[i, 0], shrink=0.8)
+            plt.colorbar(im2, ax=axes3[i, 1], shrink=0.8)
+        
+        axes3[-1, 0].set_xlabel('x [m]')
+        axes3[-1, 1].set_xlabel('x [m]')
+        
+        fig3.suptitle('Sobol Sensitivity Indices Comparison', 
+                     fontsize=14, fontweight='bold', y=0.98)
+        plt.tight_layout()
+        
+        if save_fig:
+            fig3.savefig(self.output_dir / 'sobol_comparison.png', 
+                        dpi=150, bbox_inches='tight')
+        
+        figs.append(fig3)
+        
+        return figs
+    
+    def create_animation_series(self, wind_speeds=None, wind_directions=None,
+                               turbulence_intensities=None, shear_exponents=None):
+        """
+        Create a series of flow field images for different conditions.
+        
+        Parameters
+        ----------
+        wind_speeds : list, optional
+            List of wind speeds to simulate
+        wind_directions : list, optional
+            List of wind directions to simulate
+        turbulence_intensities : list, optional
+            List of turbulence intensities to simulate
+        shear_exponents : list, optional
+            List of shear exponents to simulate
+            
+        Returns
+        -------
+        None (saves figures to disk)
+        """
+        
+        # Default values if not provided
+        if wind_speeds is None:
+            wind_speeds = [8, 10, 12]
+        if wind_directions is None:
+            wind_directions = [240, 270, 300]
+        if turbulence_intensities is None:
+            turbulence_intensities = [0.08, 0.12]
+        if shear_exponents is None:
+            shear_exponents = [0.15, 0.25]
+        
+        # Create series directory
+        series_dir = self.output_dir / 'flow_field_series'
+        series_dir.mkdir(exist_ok=True)
+        
+        # Counter for naming
+        counter = 0
+        
+        # Generate all combinations
+        for ws in wind_speeds:
+            for wd in wind_directions:
+                for ti in turbulence_intensities:
+                    for shear in shear_exponents:
+                        counter += 1
+                        
+                        fig = self.plot_flow_field(
+                            wind_speed=ws,
+                            wind_direction=wd,
+                            turbulence_intensity=ti,
+                            shear_exponent=shear,
+                            save_fig=False
+                        )
+                        
+                        # Customize title
+                        title = (f"Flow Field #{counter}\n"
+                                f"WS={ws:.1f} m/s, WD={wd:.0f}°, "
+                                f"TI={ti:.2f}, Shear={shear:.2f}")
+                        fig.axes[0].set_title(title, fontsize=12)
+                        
+                        # Save figure
+                        filename = series_dir / f"flow_field_{counter:03d}.png"
+                        fig.savefig(filename, dpi=150, bbox_inches='tight')
+                        plt.close(fig)
+                        
+                        print(f"Saved flow field #{counter}: {filename.name}")
+        
+        print(f"\nCreated {counter} flow field images in {series_dir}")
+        
+        # Create a summary CSV file
+        summary_data = []
+        counter = 0
+        for ws in wind_speeds:
+            for wd in wind_directions:
+                for ti in turbulence_intensities:
+                    for shear in shear_exponents:
+                        counter += 1
+                        summary_data.append({
+                            'file': f"flow_field_{counter:03d}.png",
+                            'wind_speed': ws,
+                            'wind_direction': wd,
+                            'turbulence_intensity': ti,
+                            'shear_exponent': shear
+                        })
+        
+        summary_df = pd.DataFrame(summary_data)
+        summary_df.to_csv(series_dir / 'flow_field_series_summary.csv', index=False)
+        
+        print(f"Summary saved to {series_dir / 'flow_field_series_summary.csv'}")
+    
+    def generate_report(self):
+        """
+        Generate a summary report of the uncertainty analysis.
+        """
+        
+        report_file = self.output_dir / 'analysis_report.txt'
+        
+        with open(report_file, 'w') as f:
+            f.write("=" * 80 + "\n")
+            f.write("WAKE UNCERTAINTY PROPAGATION ANALYSIS REPORT\n")
+            f.write("=" * 80 + "\n\n")
+            
+            f.write(f"Analysis Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"Output Directory: {self.output_dir}\n\n")
+            
+            f.write("1. WIND FARM CONFIGURATION\n")
+            f.write("-" * 40 + "\n")
+            f.write(f"Number of turbines: {len(self.turbine_locations)}\n")
+            f.write(f"Domain bounds: {self.domain_bounds}\n")
+            f.write(f"Grid resolution: {self.grid_resolution} x {self.grid_resolution}\n\n")
+            
+            f.write("2. UNCERTAINTY PARAMETERS\n")
+            f.write("-" * 40 + "\n")
+            for i, name in enumerate(self.problem['names']):
+                bounds = self.problem['bounds'][i]
+                f.write(f"{name}: {bounds[0]} to {bounds[1]}\n")
+            f.write("\n")
+            
+            if 'sensitivity_maps' in self.results:
+                f.write("3. SENSITIVITY ANALYSIS RESULTS\n")
+                f.write("-" * 40 + "\n")
+                
+                # Calculate average sensitivity indices
+                S1_avg = np.mean(self.results['sensitivity_maps']['S1'], axis=(0, 1))
+                ST_avg = np.mean(self.results['sensitivity_maps']['ST'], axis=(0, 1))
+                
+                f.write("\nAverage First Order Sobol Indices:\n")
+                for name, value in zip(self.problem['names'], S1_avg):
+                    f.write(f"  {name}: {value:.4f}\n")
+                
+                f.write("\nAverage Total Order Sobol Indices:\n")
+                for name, value in zip(self.problem['names'], ST_avg):
+                    f.write(f"  {name}: {value:.4f}\n")
+                
+                f.write("\nInterpretation:\n")
+                f.write("- First order indices (S1) show the direct effect of each parameter.\n")
+                f.write("- Total order indices (ST) include interactions with other parameters.\n")
+                f.write("- Values closer to 1 indicate higher sensitivity.\n")
+                f.write("- Values closer to 0 indicate lower sensitivity.\n")
+            
+            f.write("\n4. GENERATED OUTPUT FILES\n")
+            f.write("-" * 40 + "\n")
+            
+            # List generated files
+            for file_path in self.output_dir.rglob('*'):
+                if file_path.is_file():
+                    rel_path = file_path.relative_to(self.output_dir)
+                    file_size = file_path.stat().st_size / 1024  # KB
+                    f.write(f"{rel_path}: {file_size:.1f} KB\n")
+        
+        print(f"Report saved to {report_file}")
+
+
+def main():
+    """
+    Main execution function demonstrating the uncertainty propagation.
+    """
+    
+    print("Starting wake uncertainty propagation analysis...")
+    
+    # Initialize the analysis
+    analysis = WakeUncertaintyPropagation(
+        grid_resolution=80  # Lower resolution for faster testing
+    )
+    
+    # 1. Create baseline flow field
+    print("\n1. Creating baseline flow field...")
+    baseline_fig = analysis.plot_flow_field(
+        wind_speed=10,
+        wind_direction=270,
+        turbulence_intensity=0.1,
+        shear_exponent=0.2,
+        save_fig=True
+    )
+    
+    # 2. Create series of flow fields for different conditions
+    print("\n2. Creating flow field series...")
+    analysis.create_animation_series(
+        wind_speeds=[8, 10, 12],
+        wind_directions=[240, 270, 300],
+        turbulence_intensities=[0.08, 0.12],
+        shear_exponents=[0.15, 0.25]
+    )
+    
+    # 3. Run uncertainty propagation (use smaller sample size for testing)
+    print("\n3. Running uncertainty propagation (Sobol analysis)...")
+    print("   Note: This may take several minutes...")
+    
+    try:
+        sensitivity_maps = analysis.run_uncertainty_propagation(
+            n_base_samples=128  # Smaller for testing; increase for production
+        )
+        
+        # 4. Plot sensitivity maps
+        print("\n4. Creating sensitivity maps...")
+        analysis.plot_sensitivity_maps(save_fig=True)
+        
+    except Exception as e

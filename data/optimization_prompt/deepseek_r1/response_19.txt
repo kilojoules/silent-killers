@@ -1,0 +1,29 @@
+Looking at your error, the issue is that one of the worker HDF5 files (likely the last one) is corrupted or incomplete. The error occurs when the main process tries to open and combine the worker files after all parallel processing is complete.
+
+## Diagnosis:
+
+1. **The error happens during file joining**: The script successfully processed 2999/3000 farms, but the last worker file is corrupted (has invalid HDF5 signature)
+
+2. **Possible causes**:
+   - Worker process was interrupted before completing file write
+   - Filesystem I/O issues during parallel writing
+   - Process termination before all buffers were flushed
+
+3. **Recovery options**:
+   - You have 2999 valid files - you could save that work
+   - Need to identify which specific farm/seed is missing
+
+## Modified Script Solution:
+
+Here's how to modify your script to detect and handle this reliably:
+
+### Option 1: Add validation before processing (recommended)
+
+```python
+import h5py
+import os
+import glob
+import traceback
+
+def is_valid_hdf5(filepath):
+    """Check if a file is

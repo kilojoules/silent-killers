@@ -1,0 +1,164 @@
+Looking at your error, I can see the issue clearly. The script completed 2999/3000 optimizations successfully, but when it tried to open one of the worker output files to join the results, it encountered a corrupted HDF5 file (file signature not found). This suggests that one of the worker processes either:
+
+1. **Crashed while writing** its output file
+2. **Didn't properly close** the HDF5 file before exiting
+3. **Generated an incomplete/corrupted file** due to some issue
+
+## Diagnosis
+
+The problem occurs in the file joining phase (line 448) where the script tries to open `worker_file` with `h5py.File(worker_file, 'r')`. One of these worker files is corrupted, causing the entire process to fail at the very end.
+
+## Solution: Modify the Script
+
+Here's how to modify your script to handle this gracefully:
+
+### Option 1: Add Robust File Validation (Recommended)
+
+```python
+import os
+import h5py
+import traceback
+
+def is_valid_hdf5_file(filepath):
+    """Check if a file is a valid HDF5 file."""
+    if not os.path.exists(filepath):
+        return False
+    
+    if os.path.getsize(filepath) == 0:
+        return False
+    
+    try:
+        with h5py.File(filepath, 'r'):
+            return True
+    except (OSError, IOError, ValueError) as e:
+        print(f"WARNING: Invalid HDF5 file {filepath}: {e}")
+        return False
+
+def main():
+    # ... your existing code ...
+    
+    # In the file joining section, add validation:
+    valid_worker_files = []
+    corrupted_files = []
+    
+    for worker_file in worker_files:
+        if is_valid_hdf5_file(worker_file):
+            valid_worker_files.append(worker_file)
+        else:
+            corrupted_files.append(worker_file)
+            print(f"ERROR: Corrupted worker file detected: {worker_file}")
+    
+    if corrupted_files:
+        print(f"WARNING: Found {len(corrupted_files)} corrupted files:")
+        for cf in corrupted_files:
+            print(f"  - {cf}")
+        
+        # Option 1: Continue with valid files
+        print(f"Continuing with {len(valid_worker_files)} valid files...")
+        worker_files = valid_worker_files
+        
+        # Option 2: Or exit with error
+        # raise RuntimeError(f"Found {len(corrupted_files)} corrupted worker files")
+    
+    # Now process only valid files
+    for worker_file in valid_worker_files:
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                # ... process file ...
+                pass
+        except Exception as e:
+            print(f"ERROR: Failed to process {worker_file}: {e}")
+            traceback.print_exc()
+            continue
+    
+    # ... rest of your code ...
+```
+
+### Option 2: Add Retry Logic for File Opening
+
+```python
+def open_hdf5_with_retry(filepath, max_retries=3, delay=1):
+    """Attempt to open an HDF5 file with retries."""
+    import time
+    
+    for attempt in range(max_retries):
+        try:
+            return h5py.File(filepath, 'r')
+        except (OSError, IOError) as e:
+            if attempt == max_retries - 1:
+                raise
+            print(f"Attempt {attempt + 1} failed for {filepath}: {e}")
+            time.sleep(delay)
+    
+    raise OSError(f"Failed to open {filepath} after {max_retries} attempts")
+
+# In your main function:
+for worker_file in worker_files:
+    try:
+        h5_in = open_hdf5_with_retry(worker_file)
+        with h5_in:
+            # ... process file ...
+            pass
+    except Exception as e:
+        print(f"ERROR: Skipping corrupted file {worker_file}: {e}")
+        continue
+```
+
+### Option 3: Add Worker File Integrity Check (Preventative)
+
+Modify your worker processes to ensure files are properly closed:
+
+```python
+# In your worker function:
+def worker_process(args):
+    try:
+        # ... your optimization code ...
+        
+        # Save results
+        with h5py.File(output_file, 'w') as h5_out:
+            # ... write data ...
+            pass  # File automatically closed by context manager
+        
+        return True
+    except Exception as e:
+        print(f"ERROR in worker: {e}")
+        # Clean up potentially corrupted file
+        if os.path.exists(output_file):
+            try:
+                os.remove(output_file)
+            except:
+                pass
+        return False
+```
+
+## Recovery Strategy
+
+Since you have 2999 successful optimizations out of 3000, you can:
+
+1. **Identify the corrupted file(s):**
+   ```bash
+   python -c "
+   import h5py, os
+   for f in os.listdir('.'):
+       if f.startswith('worker_') and f.endswith('.h5'):
+           try:
+               with h5py.File(f, 'r'):
+                   print(f'{f}: OK')
+           except:
+               print(f'{f}: CORRUPTED')
+   "
+   ```
+
+2. **Re-run only the missing/corrupted optimizations:**
+   - Identify which seed/farm combination failed
+   - Run a targeted optimization for just that case
+
+3. **Modify your main script** to skip corrupted files and continue with the rest, then manually handle the missing data.
+
+## Recommended Approach
+
+1. **Immediate fix:** Implement Option 1 (file validation) in your script
+2. **Preventative fix:** Implement Option 3 (proper cleanup in workers)
+3. **Recovery:** Identify which specific optimization failed and re-run it separately
+
+This way, your script will be resilient to individual worker failures and you won't lose all your progress when one file gets corrupted.

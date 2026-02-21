@@ -1,0 +1,177 @@
+Looking at your error, the issue is clear: **one of the worker output files is corrupted or incomplete**. The script successfully processed 2999 out of 3000 optimizations, but when it tried to open `worker_file` for merging results, it encountered a corrupted HDF5 file (error: "file signature not found").
+
+## Diagnosis
+
+1. **The problem**: One worker process crashed or was killed while writing its HDF5 file, leaving it in an incomplete/corrupted state
+2. **The symptom**: The main process can't read the corrupted file during the merge phase
+3. **The consequence**: All 2999 successful optimizations are lost because the merge fails
+
+## Solution: Modify the script to:
+
+### 1. Add validation before merging
+```python
+import os
+import h5py
+import traceback
+
+def validate_h5_file(filepath):
+    """Check if an HDF5 file is valid and can be opened."""
+    try:
+        with h5py.File(filepath, 'r') as f:
+            # Try to access a key attribute or dataset
+            if 'layouts' not in f:
+                return False, "Missing 'layouts' dataset"
+            return True, "File is valid"
+    except Exception as e:
+        return False, f"Failed to open file: {str(e)}"
+
+def main():
+    # ... existing code ...
+    
+    # Before merging, validate all worker files
+    valid_files = []
+    corrupted_files = []
+    
+    for worker_file in worker_files:
+        is_valid, message = validate_h5_file(worker_file)
+        if is_valid:
+            valid_files.append(worker_file)
+        else:
+            corrupted_files.append((worker_file, message))
+            print(f"WARNING: Corrupted file detected: {worker_file}")
+            print(f"  Reason: {message}")
+    
+    if corrupted_files:
+        print(f"\nERROR: Found {len(corrupted_files)} corrupted worker files:")
+        for filepath, reason in corrupted_files:
+            print(f"  - {filepath}: {reason}")
+        
+        # Option 1: Stop immediately
+        # raise RuntimeError("Corrupted worker files detected. Aborting merge.")
+        
+        # Option 2: Continue with valid files and log what's missing
+        print(f"Continuing with {len(valid_files)} valid files out of {len(worker_files)} total")
+        worker_files = valid_files
+    
+    # Proceed with merging only valid files
+    # ... rest of merging code ...
+```
+
+### 2. Add atomic file writing for workers
+Modify the worker processes to write to a temporary file first, then rename:
+
+```python
+def worker_function(args):
+    # ... computation code ...
+    
+    # Write to temporary file first
+    temp_file = f"{output_file}.tmp"
+    with h5py.File(temp_file, 'w') as h5_out:
+        # Write your data
+        h5_out.create_dataset('layouts', data=layouts, compression='gzip')
+        # ... other datasets ...
+    
+    # Atomic rename (this is atomic on most filesystems)
+    os.rename(temp_file, output_file)
+    
+    return output_file
+```
+
+### 3. Add checkpointing to recover partial results
+```python
+def merge_with_checkpointing(worker_files, output_file):
+    """Merge worker files with checkpointing to avoid losing all progress."""
+    
+    # Create a checkpoint file to track merge progress
+    checkpoint_file = f"{output_file}.merge_checkpoint"
+    
+    # Load previous checkpoint if it exists
+    merged_files = set()
+    if os.path.exists(checkpoint_file):
+        with open(checkpoint_file, 'r') as f:
+            merged_files = set(line.strip() for line in f)
+    
+    # Open output file in append mode
+    with h5py.File(output_file, 'a') as h5_out:
+        for worker_file in worker_files:
+            if worker_file in merged_files:
+                print(f"Skipping already merged: {worker_file}")
+                continue
+                
+            try:
+                with h5py.File(worker_file, 'r') as h5_in:
+                    # Merge data from h5_in to h5_out
+                    # ... your merge logic ...
+                    
+                # Record successful merge
+                with open(checkpoint_file, 'a') as f:
+                    f.write(f"{worker_file}\n")
+                    
+            except Exception as e:
+                print(f"ERROR: Failed to merge {worker_file}: {e}")
+                print("Stopping merge to preserve partial results.")
+                print(f"Partial results saved to {output_file}")
+                print(f"Checkpoint file: {checkpoint_file}")
+                raise
+    
+    # Clean up checkpoint file on successful completion
+    if os.path.exists(checkpoint_file):
+        os.remove(checkpoint_file)
+```
+
+### 4. For your current situation: Recovery script
+Since you have 2999 successful optimizations, you can recover them:
+
+```python
+import glob
+import h5py
+import os
+
+def recover_results(worker_pattern, output_file):
+    """Recover valid results from worker files."""
+    worker_files = glob.glob(worker_pattern)
+    valid_data = []
+    
+    for wf in worker_files:
+        try:
+            with h5py.File(wf, 'r') as f:
+                # Extract the data you need
+                if 'layouts' in f:
+                    data = f['layouts'][:]
+                    valid_data.append((wf, data))
+                    print(f"Recovered data from {wf}")
+        except Exception as e:
+            print(f"Skipping corrupted file {wf}: {e}")
+    
+    # Combine all valid data
+    if valid_data:
+        print(f"\nSuccessfully recovered {len(valid_data)}/{len(worker_files)} files")
+        
+        # Save combined results
+        with h5py.File(output_file, 'w') as f_out:
+            # Combine all layouts
+            all_layouts = []
+            for _, data in valid_data:
+                all_layouts.append(data)
+            
+            # Assuming data can be concatenated
+            combined = np.concatenate(all_layouts, axis=0)
+            f_out.create_dataset('layouts', data=combined, compression='gzip')
+            
+        print(f"Saved recovered results to {output_file}")
+    else:
+        print("No valid data found to recover")
+
+# Usage
+recover_results("worker_*.h5", "recovered_results.h5")
+```
+
+## Key modifications to prevent future issues:
+
+1. **Validate before merge**: Check each worker file before attempting to merge
+2. **Atomic writes**: Workers write to temp files then rename
+3. **Checkpoint merging**: Track merge progress to resume if interrupted
+4. **Better error handling**: Catch and report corrupted files without crashing entire process
+5. **Progress logging**: Log which specific seeds/farms failed for rerunning
+
+This approach ensures that a single corrupted worker file doesn't cause you to lose all your results from a 9+ hour computation.

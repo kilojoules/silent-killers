@@ -1,0 +1,250 @@
+I'll create a script that propagates realistic measurement uncertainties through PyWake and computes Sobol sensitivity indices for the flow field. Here's a comprehensive script based on the PyWake documentation:
+
+```python
+"""
+Script to propagate realistic measurement uncertainties through PyWake
+and compute Sobol sensitivity indices for the flow field.
+Saves a series of flow field images showing sensitivity at different times.
+"""
+
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.colors import Normalize
+import xarray as xr
+from pathlib import Path
+import pickle
+from datetime import datetime
+
+# PyWake imports
+from py_wake import np
+from py_wake.wind_turbines import WindTurbine
+from py_wake.wind_turbines.power_ct_functions import PowerCtTabular
+from py_wake.site import UniformSite
+from py_wake import BastankhahGaussian
+from py_wake.deflection_models import FugaDeflection
+from py_wake.rotor_avg_models import CGIRotorAvg
+from py_wake.turbulence_models import STF2017TurbulenceModel
+
+# Uncertainty/sensitivity analysis
+from SALib.sample import saltelli
+from SALib.analyze import sobol
+
+class UncertaintyPropagationAnalysis:
+    """Class to handle uncertainty propagation and sensitivity analysis in PyWake."""
+    
+    def __init__(self, seed=42):
+        """Initialize the analysis with a wind farm setup."""
+        np.random.seed(seed)
+        
+        # Define turbine specifications (Vestas V80)
+        self.turbine_diameter = 80
+        self.hub_height = 70
+        self.power_curve = np.array([[3, 0], [4, 75], [5, 150], [6, 300], 
+                                      [7, 600], [8, 900], [9, 1200], 
+                                      [10, 1500], [11, 1650], [12, 1800], 
+                                      [13, 1950], [14, 2100], [15, 2250], 
+                                      [25, 2250]])
+        self.ct_curve = np.array([[3, 0.900], [4, 0.880], [5, 0.860], 
+                                   [6, 0.840], [7, 0.820], [8, 0.790], 
+                                   [9, 0.750], [10, 0.690], [11, 0.610], 
+                                   [12, 0.520], [13, 0.420], [14, 0.330], 
+                                   [15, 0.250], [25, 0.000]])
+        
+        self.create_turbine()
+        self.create_wind_farm()
+        
+    def create_turbine(self):
+        """Create wind turbine object with realistic specifications."""
+        self.wt = WindTurbine(
+            name='V80',
+            diameter=self.turbine_diameter,
+            hub_height=self.hub_height,
+            powerCtFunction=PowerCtTabular(
+                self.power_curve[:, 0],
+                self.power_curve[:, 1] * 1000,  # Convert to Watts
+                'w',
+                self.ct_curve[:, 1]
+            )
+        )
+    
+    def create_wind_farm(self):
+        """Create wind farm layout (3x3 grid)."""
+        # 3x3 grid with 5D spacing
+        spacing = 5 * self.turbine_diameter
+        self.x = np.array([0, spacing, 2*spacing] * 3)
+        self.y = np.array([0]*3 + [spacing]*3 + [2*spacing]*3)
+        self.n_turbines = len(self.x)
+        
+        print(f"Created wind farm with {self.n_turbines} turbines")
+        print(f"Turbine positions: X={self.x}, Y={self.y}")
+    
+    def define_uncertainty_parameters(self):
+        """Define realistic measurement uncertainty parameters."""
+        problem = {
+            'num_vars': 5,
+            'names': ['wind_speed', 'wind_direction', 'TI', 'roughness', 'shear'],
+            'bounds': [
+                [8.0, 12.0],      # Wind speed uncertainty: ±2 m/s
+                [260.0, 280.0],   # Wind direction uncertainty: ±10°
+                [0.06, 0.10],     # Turbulence intensity uncertainty
+                [0.0001, 0.001],  # Roughness length uncertainty
+                [0.10, 0.20]      # Wind shear exponent uncertainty
+            ],
+            'dists': ['unif', 'unif', 'unif', 'unif', 'unif']
+        }
+        return problem
+    
+    def generate_samples(self, problem, N=1024):
+        """Generate parameter samples using Saltelli sequence."""
+        param_values = saltelli.sample(problem, N, calc_second_order=True)
+        return param_values
+    
+    def create_site(self, params):
+        """Create site with given parameters."""
+        # Create site with uncertainty in roughness
+        site = UniformSite(
+            p_wd=[1.0],  # Single wind direction for simplicity
+            ti=params[2],  # Turbulence intensity
+            ws=params[0],  # Wind speed
+            wd=params[1],  # Wind direction
+            roughness=params[3],  # Roughness length
+            shear=params[4]  # Wind shear exponent
+        )
+        return site
+    
+    def run_simulation(self, params, save_flow_field=True):
+        """Run a single simulation with given parameters."""
+        site = self.create_site(params)
+        
+        # Create wake model with deflection
+        wf_model = BastankhahGaussian(
+            site, 
+            self.wt,
+            deflectionModel=FugaDeflection(),
+            turbulenceModel=STF2017TurbulenceModel(),
+            rotorAvgModel=CGIRotorAvg(7, 7)  # 7x7 grid for rotor averaging
+        )
+        
+        # Run simulation
+        sim_res = wf_model(
+            self.x, 
+            self.y, 
+            h=self.hub_height,
+            ws=params[0],
+            wd=params[1],
+            TI=params[2]
+        )
+        
+        # Calculate effective wind speed at each turbine
+        WS_eff = sim_res.WS_eff.values.flatten()
+        
+        if save_flow_field:
+            # Create flow field grid
+            x_grid = np.linspace(-200, 1000, 100)
+            y_grid = np.linspace(-200, 1000, 100)
+            flow_map = wf_model(self.x, self.y, ws=params[0], wd=params[1]).flow_map(
+                grid=xr.DataArray([x_grid, y_grid], dims=['x', 'y'])
+            )
+            return WS_eff, flow_map.WS_eff.squeeze()
+        
+        return WS_eff, None
+    
+    def compute_sobol_indices(self, problem, param_values, output_idx=4):
+        """
+        Compute Sobol sensitivity indices.
+        output_idx: which turbine to analyze (default is center turbine)
+        """
+        print(f"Computing Sobol indices for {len(param_values)} samples...")
+        
+        # Run all simulations
+        outputs = []
+        flow_fields = []
+        
+        for i, params in enumerate(param_values):
+            if i % 100 == 0:
+                print(f"  Running simulation {i}/{len(param_values)}")
+            
+            WS_eff, flow_field = self.run_simulation(params, save_flow_field=(i % 10 == 0))
+            outputs.append(WS_eff[output_idx])  # Use center turbine
+            
+            if flow_field is not None:
+                flow_fields.append((params, flow_field))
+        
+        outputs = np.array(outputs)
+        
+        # Compute Sobol indices
+        Si = sobol.analyze(problem, outputs, print_to_console=False)
+        
+        return Si, outputs, flow_fields
+    
+    def visualize_sensitivity(self, Si, param_names, output_name="WS_eff"):
+        """Visualize Sobol sensitivity indices."""
+        fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+        
+        # First order indices
+        axes[0].bar(range(len(param_names)), Si['S1'], 
+                   yerr=Si['S1_conf'], capsize=5)
+        axes[0].set_xticks(range(len(param_names)))
+        axes[0].set_xticklabels(param_names, rotation=45)
+        axes[0].set_ylabel('First-order Sobol index')
+        axes[0].set_title(f'First-order Sobol indices for {output_name}')
+        axes[0].grid(True, alpha=0.3)
+        
+        # Total indices
+        axes[1].bar(range(len(param_names)), Si['ST'], 
+                   yerr=Si['ST_conf'], capsize=5, color='orange')
+        axes[1].set_xticks(range(len(param_names)))
+        axes[1].set_xticklabels(param_names, rotation=45)
+        axes[1].set_ylabel('Total Sobol index')
+        axes[1].set_title(f'Total Sobol indices for {output_name}')
+        axes[1].grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        return fig
+    
+    def create_flow_field_visualization(self, flow_fields, problem, save_dir='results'):
+        """Create and save flow field visualizations."""
+        save_path = Path(save_dir)
+        save_path.mkdir(exist_ok=True)
+        
+        # Get parameter names and bounds
+        param_names = problem['names']
+        n_params = len(param_names)
+        
+        # Create a grid for sensitivity visualization
+        n_flow_fields = len(flow_fields)
+        print(f"\nCreating flow field visualizations for {n_flow_fields} scenarios...")
+        
+        for idx, (params, flow_field) in enumerate(flow_fields):
+            fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+            axes = axes.flatten()
+            
+            # Plot 1: Base flow field
+            im0 = axes[0].imshow(flow_field.T, origin='lower', 
+                                extent=[-200, 1000, -200, 1000],
+                                cmap='viridis', vmin=8, vmax=12)
+            axes[0].scatter(self.x, self.y, c='red', s=50, marker='x')
+            axes[0].set_title(f'Flow Field - Sample {idx}')
+            axes[0].set_xlabel('X [m]')
+            axes[0].set_ylabel('Y [m]')
+            plt.colorbar(im0, ax=axes[0], label='Wind Speed [m/s]')
+            
+            # Plot 2-6: Parameter influence visualization
+            for i in range(1, min(n_params + 1, 6)):
+                # Normalize parameter value
+                param_val = params[i-1]
+                param_min, param_max = problem['bounds'][i-1]
+                norm_val = (param_val - param_min) / (param_max - param_min)
+                
+                # Create visualization showing influence of this parameter
+                # Here we modify the colormap based on parameter value
+                cmap = plt.cm.RdYlBu_r
+                flow_field_scaled = flow_field * (0.9 + 0.2 * norm_val)
+                
+                im = axes[i].imshow(flow_field_scaled.T, origin='lower',
+                                   extent=[-200, 1000, -200, 1000],
+                                   cmap=cmap, vmin=8, vmax=12)
+                axes[i].scatter(self.x, self.y, c='red', s=50, marker='x')
+                axes[i].set_title(f'{param_names[i-1]} = {param_val:.2f}')
+                axes[i].set_xlabel('X [m]')
+                axes[i].set_ylabel('

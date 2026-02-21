@@ -1,0 +1,213 @@
+Looking at this error, I can see several issues:
+
+## Diagnosis
+
+1. **The main problem**: Worker file corruption
+   - The script completed 2999/3000 optimizations successfully
+   - When trying to open worker file #3000 for merging results, it fails with "file signature not found"
+   - This means the HDF5 file is corrupted or incomplete
+
+2. **Secondary issue**: The script continues even when workers fail
+   - The repeated "130 possible points..." messages suggest workers are still running/printing even after the main process has issues
+   - No immediate error detection when a worker file fails to save properly
+
+3. **The root cause**: Likely a race condition or resource exhaustion
+   - The script ran for ~9.5 hours
+   - Could be disk space issues, interrupted I/O, or process termination during file write
+
+## Modified Script with Robust Error Handling
+
+Here's how to modify your script to detect and handle these issues:
+
+```python
+import h5py
+import os
+import sys
+import traceback
+from pathlib import Path
+
+def validate_worker_file(filepath):
+    """Validate that a worker file exists and is a valid HDF5 file."""
+    if not os.path.exists(filepath):
+        return False, f"File does not exist: {filepath}"
+    
+    if os.path.getsize(filepath) == 0:
+        return False, f"File is empty: {filepath}"
+    
+    try:
+        # Quick validation by trying to open the file
+        with h5py.File(filepath, 'r') as f:
+            # Check for expected structure if known
+            if 'layouts' not in f:
+                return False, f"Missing 'layouts' dataset in: {filepath}"
+            if 'metadata' not in f.attrs:
+                return False, f"Missing metadata attributes in: {filepath}"
+        return True, "File is valid"
+    except Exception as e:
+        return False, f"Failed to open HDF5 file {filepath}: {str(e)}"
+
+def safe_merge_worker_files(worker_files, output_file):
+    """Safely merge worker files with validation."""
+    valid_files = []
+    corrupted_files = []
+    
+    # Validate all worker files first
+    print("Validating worker files before merging...")
+    for i, worker_file in enumerate(worker_files):
+        is_valid, message = validate_worker_file(worker_file)
+        if is_valid:
+            valid_files.append(worker_file)
+            print(f"✓ Worker file {i+1}/{len(worker_files)} is valid")
+        else:
+            corrupted_files.append((worker_file, message))
+            print(f"✗ Worker file {i+1}/{len(worker_files)} is corrupted: {message}")
+    
+    if corrupted_files:
+        print(f"\nWARNING: Found {len(corrupted_files)} corrupted files:")
+        for file, msg in corrupted_files:
+            print(f"  - {file}: {msg}")
+        
+        # Ask for confirmation or implement recovery logic
+        response = input(f"\nContinue with only {len(valid_files)} valid files? (y/n): ")
+        if response.lower() != 'y':
+            print("Aborting merge operation.")
+            return False
+    
+    if not valid_files:
+        print("ERROR: No valid worker files to merge!")
+        return False
+    
+    # Proceed with merge using only valid files
+    print(f"\nMerging {len(valid_files)} valid worker files...")
+    try:
+        # Your existing merge logic here, but only for valid_files
+        with h5py.File(output_file, 'w') as h5_out:
+            # Initialize datasets
+            total_layouts = 0
+            
+            for worker_file in valid_files:
+                with h5py.File(worker_file, 'r') as h5_in:
+                    # Your merge implementation
+                    pass
+        
+        print(f"Successfully merged {len(valid_files)} files")
+        return True
+        
+    except Exception as e:
+        print(f"ERROR during merge: {str(e)}")
+        traceback.print_exc()
+        return False
+
+def main():
+    # Your existing setup code...
+    
+    # Example usage in your main function:
+    worker_files = [f"worker_{i}.h5" for i in range(3000)]
+    
+    # Before attempting to merge, validate all files
+    if not safe_merge_worker_files(worker_files, "final_output.h5"):
+        sys.exit(1)  # Exit with error code
+    
+    # Rest of your code...
+
+# Additional improvements for worker processes:
+def worker_function(worker_id, output_file):
+    """Worker function with proper error handling and file validation."""
+    try:
+        # Your optimization logic here
+        
+        # Save results with atomic write pattern
+        temp_file = f"{output_file}.tmp"
+        final_file = output_file
+        
+        with h5py.File(temp_file, 'w') as f:
+            # Save your data
+            f.create_dataset('layouts', data=layouts)
+            f.attrs['metadata'] = metadata
+            f.attrs['worker_id'] = worker_id
+            f.attrs['completed'] = True
+        
+        # Atomic rename (ensures file is either complete or doesn't exist)
+        os.rename(temp_file, final_file)
+        
+        # Verify the file was written correctly
+        is_valid, message = validate_worker_file(final_file)
+        if not is_valid:
+            raise RuntimeError(f"Worker {worker_id} failed to create valid output: {message}")
+        
+        return True
+        
+    except Exception as e:
+        print(f"ERROR in worker {worker_id}: {str(e)}")
+        # Clean up partial files
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
+        return False
+
+# Recovery function for corrupted runs
+def recover_corrupted_run(worker_files, expected_count):
+    """Attempt to recover from a partially completed run."""
+    print("\n=== Recovery Mode ===")
+    
+    # Find which worker files are missing or corrupted
+    missing_indices = []
+    corrupted_indices = []
+    
+    for i in range(expected_count):
+        worker_file = worker_files[i]
+        
+        if not os.path.exists(worker_file):
+            missing_indices.append(i)
+            print(f"Worker {i}: File missing")
+        else:
+            is_valid, message = validate_worker_file(worker_file)
+            if not is_valid:
+                corrupted_indices.append(i)
+                print(f"Worker {i}: Corrupted - {message}")
+    
+    print(f"\nSummary:")
+    print(f"  Missing files: {len(missing_indices)}")
+    print(f"  Corrupted files: {len(corrupted_indices)}")
+    
+    if missing_indices or corrupted_indices:
+        response = input("\nRe-run missing/corrupted workers? (y/n): ")
+        if response.lower() == 'y':
+            # Re-run only the problematic workers
+            all_indices = set(missing_indices + corrupted_indices)
+            return list(all_indices)
+    
+    return []
+
+if __name__ == "__main__":
+    main()
+```
+
+## Key Improvements:
+
+1. **Pre-merge validation**: Check all worker files before attempting to merge
+2. **Atomic file writes**: Use temporary files and rename to prevent partial writes
+3. **File structure validation**: Verify HDF5 files have expected structure
+4. **Recovery mode**: Identify and re-run only failed/corrupted workers
+5. **Clean error reporting**: Clear messages about what went wrong
+6. **Graceful degradation**: Option to proceed with valid files only
+
+## To recover your current run:
+
+1. First, check which worker file is corrupted:
+```python
+import h5py
+import os
+
+for i in range(3000):
+    worker_file = f"worker_{i}.h5"
+    try:
+        with h5py.File(worker_file, 'r') as f:
+            print(f"Worker {i}: OK")
+    except:
+        print(f"Worker {i}: CORRUPTED")
+```
+
+2. Re-run only the corrupted worker(s)
+3. Use the modified script for future runs to prevent this issue
+
+The repeated "130 possible points..." messages suggest some workers might still be running in the background. Make sure all worker processes are properly terminated before attempting recovery.

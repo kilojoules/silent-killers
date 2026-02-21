@@ -1,0 +1,43 @@
+The error message
+
+  OSError: Unable to synchronously open file (file signature not found)
+
+indicates that the script is trying to open an HDF5 worker file that isn’t a valid HDF5 file (or is corrupted/truncated). In a valid HDF5 file the first few bytes ("signature") must be intact, and if not, h5py raises this error. It’s likely occurring during the “joining” phase when the main process attempts to load each worker’s results.
+
+To ensure that an invalid worker file is detected reliably and causes the script to exit cleanly, you can modify the joining section to wrap the file–open operation in a try/except block. This way, as soon as an invalid or corrupted file is encountered, you can log a clear error and stop the process rather than continuing silently or crashing unpredictably later on.
+
+For example, suppose you have a loop over worker files like this:
+
+---------------------------------------------------------------
+for worker_file in worker_files:
+    with h5py.File(worker_file, 'r') as h5_in:
+         process(h5_in)
+---------------------------------------------------------------
+
+You can modify it to:
+
+---------------------------------------------------------------
+import sys
+import logging
+
+logging.basicConfig(level=logging.INFO)  # or your preferred configuration
+
+for worker_file in worker_files:
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            process(h5_in)
+    except OSError as e:
+        logging.error("Failed to open worker file %s: %s", worker_file, e)
+        # Optionally, log any additional debug information here.
+        sys.exit(1)  # Stop the process immediately with a non-zero exit code.
+---------------------------------------------------------------
+
+Here’s what this change accomplishes:
+
+1. The try/except block catches the OSError thrown by h5py when the file’s signature isn’t found.
+2. Logging reports exactly which file failed and why.
+3. Calling sys.exit(1) immediately stops the script, ensuring that you don’t mistakenly process incomplete or corrupted data.
+
+If you expect to run the procedure for multiple seeds (like 50 seeds) and need the process to exit as soon as one worker file is problematic, this approach provides a clean and reliable method to do so.
+
+In summary, wrap the file-opening logic in a try/except block that catches OSError, log a meaningful error message, and terminate the process. This change will help you detect invalid worker files reliably and stop the process before any further processing is attempted.
