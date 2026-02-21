@@ -9,7 +9,7 @@
 > lets anyone quantify that risk across thousands of generated scripts
 > in seconds.
 
-![example results](data/example_run.png)
+![example results](plots/grid_bad_exception_count.png)
 
 ---
 
