@@ -1,0 +1,55 @@
+The error
+
+  OSError: Unable to synchronously open file (file signature not found)
+
+typically indicates that one of the HDF5 “worker” files is either incomplete, corrupted, or otherwise not a valid HDF5 file. In your workflow the joining operation (e.g., merging or post‐processing of all worker files) is encountering an invalid file and crashing when it reaches that file. One desired improvement is to detect an invalid worker file as soon as it’s encountered and stop the process cleanly rather than letting it proceed until a later join operation.
+
+Two key modifications are useful here:
+
+1. When opening each file (using h5py.File) in your processing or join loop, wrap the operation in a try/except block. For example, catching OSError catches the “file signature not found” error. In the except clause you can log an informative message and then stop the overall process (using sys.exit, raising an exception that bubbles up, or by otherwise notifying the parent process).
+
+2. Optionally precheck the file before processing (for example, verify that the file exists and that its size is nonzero). However, a try/except block is the most robust because it catches any issues the low‐level h5py code might throw when the file is not a proper HDF5 file.
+
+Below is a code snippet that illustrates one way to modify your script. Suppose you have something like:
+
+-------------------------------------------------
+for worker_file in worker_files:
+    with h5py.File(worker_file, 'r') as h5_in:
+         process(h5_in)
+-------------------------------------------------
+
+Modify it as follows:
+
+-------------------------------------------------
+import sys
+import os
+import h5py
+import logging
+
+logger = logging.getLogger("mp_main")
+
+def validate_and_process_file(worker_file):
+    # Optionally check if file exists and isn't empty
+    if not os.path.exists(worker_file) or os.path.getsize(worker_file) == 0:
+        logger.error(f"Worker file {worker_file} is missing or empty.")
+        sys.exit(1)
+
+    # Try opening the file. If it fails, log the error and exit.
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            process(h5_in)  # Replace with your actual processing
+    except OSError as e:
+        logger.error(f"Error opening {worker_file}: {e}")
+        sys.exit(1)
+
+for worker_file in worker_files:
+    validate_and_process_file(worker_file)
+-------------------------------------------------
+
+With these changes, if any worker file is invalid (e.g., due to an incomplete write or corruption), the script will catch the OSError immediately, log a clear error message, and then terminate the process cleanly.
+
+If you are running multiple seeds (or in a multiprocess pool) then you might consider propagating the error from a worker and having a master process that then cancels the remaining jobs. For example, if you’re using Python’s multiprocessing.Pool you might use apply_async with an error callback so that any error in a child process forces termination of all worker processes.
+
+The key takeaway is to not assume that every file is valid – wrap your file-opening logic in a try/except block so that when one file is invalid, the error is caught and you can stop the process (or handle it appropriately) instead of letting the uncaught exception cause an unclean termination at join time.
+
+This approach ensures that invalid worker files are detected reliably and that the process is stopped cleanly, making it easier for you to diagnose and remedy underlying issues with file generation.

@@ -1,0 +1,156 @@
+Looking at the error and the context, I can diagnose the issue and provide a solution:
+
+## Diagnosis
+
+The error occurs during the file joining operation at the end of a long parallel optimization process. The script processed 2999/3000 optimizations successfully, but when trying to open a worker file to read results, it encounters:
+- `OSError: Unable to synchronously open file (file signature not found)`
+
+This typically means:
+1. **The worker file is corrupted/incomplete** - likely because the worker process crashed or was interrupted during writing
+2. **The file is empty or contains partial data** - "file signature" refers to HDF5's internal header structure
+3. **The joining process assumes all files are valid** but doesn't verify them before attempting to read
+
+## Solution
+
+Modify the script to include robust validation before attempting to merge files. Here's a modified approach:
+
+```python
+import os
+import h5py
+import logging
+from pathlib import Path
+
+def is_valid_hdf5_file(filepath):
+    """Check if a file is a valid HDF5 file."""
+    try:
+        with h5py.File(filepath, 'r'):
+            return True
+    except (OSError, IOError) as e:
+        return False
+
+def verify_worker_files(worker_dir, expected_count):
+    """Verify all worker files exist and are valid HDF5 files."""
+    worker_files = []
+    corrupted_files = []
+    missing_files = []
+    
+    # Find all worker files
+    for i in range(expected_count):
+        worker_file = os.path.join(worker_dir, f"worker_{i}.h5")  # Adjust pattern as needed
+        if not os.path.exists(worker_file):
+            missing_files.append(worker_file)
+        elif not is_valid_hdf5_file(worker_file):
+            corrupted_files.append(worker_file)
+        else:
+            worker_files.append(worker_file)
+    
+    return worker_files, corrupted_files, missing_files
+
+def safe_merge_worker_files(worker_dir, output_file, expected_count):
+    """Safely merge worker files with validation."""
+    
+    # Verify all files first
+    valid_files, corrupted_files, missing_files = verify_worker_files(
+        worker_dir, expected_count
+    )
+    
+    # Report issues
+    if corrupted_files:
+        logging.error(f"Found {len(corrupted_files)} corrupted worker files:")
+        for f in corrupted_files[:5]:  # Show first 5
+            logging.error(f"  - {f}")
+        
+        # Try to get file sizes to diagnose
+        for f in corrupted_files[:3]:
+            if os.path.exists(f):
+                size = os.path.getsize(f)
+                logging.error(f"    File size: {size} bytes")
+    
+    if missing_files:
+        logging.error(f"Missing {len(missing_files)} worker files")
+    
+    # Stop if there are any issues
+    if corrupted_files or missing_files:
+        logging.error("Aborting merge due to corrupted/missing worker files")
+        logging.error(f"Successfully processed: {len(valid_files)}/{expected_count}")
+        return False
+    
+    # Proceed with merge
+    logging.info(f"All {len(valid_files)} worker files are valid. Proceeding with merge...")
+    
+    try:
+        with h5py.File(output_file, 'w') as h5_out:
+            # Your existing merge logic here
+            for worker_file in valid_files:
+                with h5py.File(worker_file, 'r') as h5_in:
+                    # Copy datasets/groups as needed
+                    pass
+        return True
+    except Exception as e:
+        logging.error(f"Error during merge: {e}")
+        return False
+
+# In your main function, modify the merge section:
+def main():
+    # ... your existing setup code ...
+    
+    # After all workers complete
+    worker_dir = "/path/to/worker/files"  # Update with your path
+    output_file = "/path/to/output.h5"    # Update with your path
+    expected_count = 3000  # or 50 * number_of_farms
+    
+    success = safe_merge_worker_files(worker_dir, output_file, expected_count)
+    
+    if not success:
+        logging.error("Merge failed. Some worker files may be corrupted.")
+        logging.error("Consider re-running failed optimizations or using partial results.")
+        sys.exit(1)
+    
+    # Continue with rest of processing...
+```
+
+## Alternative: Incremental Validation
+
+For even better reliability, validate files as they're created:
+
+```python
+def write_with_validation(data, filename):
+    """Write data with immediate validation."""
+    # Write to temporary file first
+    temp_file = filename + ".tmp"
+    
+    try:
+        with h5py.File(temp_file, 'w') as f:
+            # Write your data
+            pass
+        
+        # Validate the file
+        if is_valid_hdf5_file(temp_file):
+            # Atomically rename to final name
+            os.rename(temp_file, filename)
+            return True
+        else:
+            logging.error(f"Failed to create valid HDF5 file: {filename}")
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
+            return False
+    except Exception as e:
+        logging.error(f"Error writing {filename}: {e}")
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
+        return False
+```
+
+## Recovery Strategy
+
+Given you have 2999 successful optimizations out of 3000:
+
+1. **Identify the corrupted file**: Check file sizes - corrupted ones will likely be 0 bytes or very small.
+
+2. **Partial recovery**: Modify the script to accept the 2999 valid files and optionally:
+   - Re-run just the missing optimization
+   - Proceed with partial results (if acceptable)
+
+3. **Add checkpointing**: For long runs, implement periodic checkpointing so you don't lose all progress if one file fails.
+
+The key insight is to **validate before assuming**, especially when dealing with parallel file I/O where workers might fail silently.

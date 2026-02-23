@@ -1,0 +1,193 @@
+## Diagnosis
+
+The error indicates that one of the worker HDF5 files is corrupted or incomplete. The script successfully completed 2999 out of 3000 optimizations but failed when trying to open a worker file during the aggregation phase. The error "file signature not found" suggests that either:
+
+1. The file was not properly closed/written by a worker process
+2. The file is empty or truncated
+3. There was a disk I/O error during writing
+
+Looking at the pattern, it seems like multiple workers were printing the same "130 possible points..." message repeatedly at the end, which might indicate some workers were stuck or terminated unexpectedly.
+
+## Solution
+
+Modify the script to implement proper error checking and graceful termination. Here's how to modify `precompute_farm_layouts.py`:
+
+### 1. Add a file validation function
+Add this near the top of your script:
+
+```python
+import os
+import h5py
+import sys
+import signal
+
+def is_valid_hdf5(filepath):
+    """Check if an HDF5 file is valid and can be opened."""
+    try:
+        with h5py.File(filepath, 'r') as f:
+            # Try to access some metadata to ensure file is readable
+            _ = f.attrs.get('created', None)
+            return True
+    except (OSError, IOError, KeyError):
+        return False
+```
+
+### 2. Modify the main aggregation section
+Around line 448 where the error occurs, modify the code to:
+
+```python
+def main():
+    # ... existing code ...
+    
+    # After worker processes complete, before aggregation
+    logger = logging.getLogger('main')
+    
+    # Check all worker files before attempting to aggregate
+    worker_files = [os.path.join(output_dir, f) for f in os.listdir(output_dir) 
+                   if f.startswith('worker_') and f.endswith('.h5')]
+    
+    # Validate all worker files
+    corrupted_files = []
+    for wf in worker_files:
+        if not is_valid_hdf5(wf):
+            corrupted_files.append(wf)
+            logger.error(f"Corrupted/incomplete worker file detected: {wf}")
+    
+    if corrupted_files:
+        logger.error(f"Found {len(corrupted_files)} corrupted worker files.")
+        logger.error("This usually indicates a worker process crashed or was killed.")
+        logger.error("Consider removing corrupted files and re-running failed seeds.")
+        
+        # Option 1: Exit cleanly
+        sys.exit(1)
+        
+        # Option 2: Try to recover (if appropriate for your use case)
+        # for cf in corrupted_files:
+        #     try:
+        #         os.remove(cf)
+        #         logger.info(f"Removed corrupted file: {cf}")
+        #     except:
+        #         pass
+        # logger.info("Removed corrupted files. Some results may be lost.")
+    
+    # Proceed with aggregation
+    for worker_file in worker_files:
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                # ... existing processing code ...
+        except OSError as e:
+            logger.error(f"Failed to process {worker_file}: {e}")
+            logger.error("Aborting aggregation due to file corruption.")
+            sys.exit(1)
+```
+
+### 3. Add error handling in worker processes
+If you have control over the worker code, add proper cleanup:
+
+```python
+def worker_function(args):
+    """Worker process with proper error handling."""
+    try:
+        # ... worker computation code ...
+        
+        # Write results
+        with h5py.File(output_file, 'w') as f:
+            # Write data
+            f.create_dataset('results', data=results)
+            f.attrs['created'] = time.time()
+            f.attrs['completed'] = True
+            
+    except Exception as e:
+        # Log error but don't crash the entire process pool
+        logging.error(f"Worker failed: {e}")
+        # Create a marker file or write error status
+        with open(output_file + '.error', 'w') as errf:
+            errf.write(str(e))
+        return None
+    finally:
+        # Ensure any cleanup happens here
+        pass
+```
+
+### 4. Add timeout and health checking (optional but recommended)
+For long-running processes:
+
+```python
+import multiprocessing as mp
+from multiprocessing import Pool, TimeoutError
+
+def run_with_timeout(func, args, timeout=3600):  # 1 hour timeout
+    """Run a function with timeout."""
+    pool = mp.Pool(processes=1)
+    try:
+        result = pool.apply_async(func, args)
+        return result.get(timeout=timeout)
+    except TimeoutError:
+        logger.error(f"Process timeout after {timeout} seconds")
+        pool.terminate()
+        pool.join()
+        return None
+    finally:
+        pool.close()
+```
+
+### 5. Recovery strategy
+Since you mentioned wanting to recover data, you could:
+
+```python
+def recover_partial_results(output_dir, total_expected):
+    """Check what results were successfully computed."""
+    valid_files = []
+    for f in os.listdir(output_dir):
+        if f.startswith('worker_') and f.endswith('.h5'):
+            if is_valid_hdf5(os.path.join(output_dir, f)):
+                valid_files.append(f)
+    
+    logger.info(f"Found {len(valid_files)}/{total_expected} valid result files")
+    
+    # Extract which seeds/farms were successfully computed
+    computed = []
+    for vf in valid_files:
+        try:
+            with h5py.File(os.path.join(output_dir, vf), 'r') as h5f:
+                # Extract seed/farm info from filename or file attributes
+                # This depends on your naming convention
+                seed = int(vf.split('_')[1].split('.')[0])  # adjust as needed
+                computed.append(seed)
+        except:
+            continue
+    
+    return computed
+```
+
+## Prevention Tips
+
+1. **Use atomic writes**: Write to a temporary file first, then rename:
+   ```python
+   temp_file = output_file + '.tmp'
+   with h5py.File(temp_file, 'w') as f:
+       # write data
+   os.rename(temp_file, output_file)
+   ```
+
+2. **Add progress checkpoints**: Save intermediate results periodically.
+
+3. **Monitor worker health**: Implement heartbeat or periodic status updates.
+
+4. **Use smaller batch sizes**: Instead of 50 seeds at once, run in smaller batches (e.g., 10 seeds).
+
+5. **Add validation at write time**:
+   ```python
+   def safe_h5_write(filename, data_dict):
+       """Safely write data to HDF5 with validation."""
+       with h5py.File(filename, 'w') as f:
+           for key, value in data_dict.items():
+               f.create_dataset(key, data=value)
+           # Add validation checksum
+           f.attrs['checksum'] = hash(str(data_dict))
+       
+       # Verify write was successful
+       assert is_valid_hdf5(filename), f"Failed to write valid HDF5: {filename}"
+   ```
+
+These modifications will help detect corrupted files early, provide cleaner error messages, and allow for partial recovery of results.

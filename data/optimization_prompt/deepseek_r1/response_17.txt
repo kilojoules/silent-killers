@@ -1,0 +1,239 @@
+Looking at the error and the log output, I can diagnose the issue and provide a solution.
+
+## Diagnosis
+
+The problem occurs during the **file merging/joining phase** after all worker processes have completed their optimizations. Specifically:
+
+1. **The main process completed 2999/3000 optimizations successfully**
+2. The process got to the joining stage (likely merging results from worker files into a final output file)
+3. When trying to open one of the worker files with `h5py.File(worker_file, 'r')`, it failed with:
+   ```
+   OSError: Unable to synchronously open file (file signature not found)
+   ```
+4. This is an **HDF5 file corruption error** - one of the worker files is either:
+   - Incomplete/truncated (worker crashed or was killed during write)
+   - Empty (0 bytes)
+   - Contains invalid HDF5 structure
+
+The repeated "130 possible points..." messages suggest some workers might have printed debug output but didn't properly flush/close their HDF5 files before exiting.
+
+## Solution: Modify the Script for Robustness
+
+Here's how to modify the script to detect and handle this issue reliably:
+
+### 1. **Add File Validation Before Processing**
+
+In the joining/merging code (around line 448), add validation:
+
+```python
+import os
+import h5py
+
+def validate_h5_file(filepath):
+    """Check if file exists and is a valid HDF5 file."""
+    if not os.path.exists(filepath):
+        return False, f"File does not exist: {filepath}"
+    
+    if os.path.getsize(filepath) == 0:
+        return False, f"File is empty (0 bytes): {filepath}"
+    
+    try:
+        with h5py.File(filepath, 'r') as f:
+            # Quick test - try to access file metadata
+            _ = f.keys()  # or check for specific datasets if known
+        return True, "File is valid"
+    except (OSError, IOError) as e:
+        return False, f"Invalid HDF5 file: {e}"
+
+def main():
+    # ... your existing code ...
+    
+    # In the joining section, before opening files:
+    worker_files = []  # Your list of worker files
+    
+    # Validate all worker files first
+    valid_files = []
+    corrupted_files = []
+    
+    for worker_file in worker_files:
+        is_valid, message = validate_h5_file(worker_file)
+        if is_valid:
+            valid_files.append(worker_file)
+        else:
+            corrupted_files.append((worker_file, message))
+            logger.error(f"Corrupted worker file detected: {worker_file} - {message}")
+    
+    if corrupted_files:
+        logger.error(f"Found {len(corrupted_files)} corrupted files out of {len(worker_files)} total")
+        
+        # Option 1: Stop immediately (clean exit)
+        logger.error("Stopping process due to corrupted worker files")
+        logger.error("Corrupted files:")
+        for filepath, reason in corrupted_files:
+            logger.error(f"  - {filepath}: {reason}")
+        
+        # Optional: Save list of corrupted files for recovery
+        with open("corrupted_files.txt", "w") as f:
+            for filepath, reason in corrupted_files:
+                f.write(f"{filepath}: {reason}\n")
+        
+        # Exit with error code
+        sys.exit(1)
+    
+    # Continue with only valid files
+    logger.info(f"Proceeding with {len(valid_files)} valid worker files")
+    
+    for worker_file in valid_files:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # ... process file ...
+```
+
+### 2. **Add Timeout and Retry Logic for File Operations**
+
+In the worker processes, ensure proper file closing:
+
+```python
+def worker_function(args):
+    """Worker function that writes results to HDF5 file."""
+    result = compute_optimization(args)
+    
+    # Use context manager to ensure file is properly closed
+    output_file = f"worker_{args.seed}_{args.farm_type}.h5"
+    
+    try:
+        with h5py.File(output_file, 'w') as f:
+            # Write your data
+            f.create_dataset('results', data=result)
+            f.attrs['seed'] = args.seed
+            f.attrs['farm_type'] = args.farm_type
+            f.attrs['completed'] = True
+    except Exception as e:
+        # Log error and write to a simple text file as backup
+        logger.error(f"Failed to write HDF5 file {output_file}: {e}")
+        # Write minimal backup data
+        with open(f"{output_file}.backup.txt", 'w') as backup:
+            backup.write(f"seed={args.seed}, farm_type={args.farm_type}\n")
+        raise  # Re-raise to signal failure
+```
+
+### 3. **Add Checkpointing to Resume from Failures**
+
+Modify the main process to track completed work:
+
+```python
+import json
+from pathlib import Path
+
+def save_checkpoint(checkpoint_file, completed_seeds):
+    """Save checkpoint of completed work."""
+    with open(checkpoint_file, 'w') as f:
+        json.dump({
+            'completed_seeds': list(completed_seeds),
+            'timestamp': time.time()
+        }, f)
+
+def load_checkpoint(checkpoint_file):
+    """Load checkpoint if exists."""
+    if Path(checkpoint_file).exists():
+        with open(checkpoint_file, 'r') as f:
+            return set(json.load(f)['completed_seeds'])
+    return set()
+
+def main():
+    # Load checkpoint
+    checkpoint_file = "optimization_checkpoint.json"
+    completed_seeds = load_checkpoint(checkpoint_file)
+    
+    # Filter out already completed seeds
+    seeds_to_process = [s for s in all_seeds if s not in completed_seeds]
+    
+    # Process seeds
+    for seed in seeds_to_process:
+        try:
+            result = process_seed(seed)
+            completed_seeds.add(seed)
+            save_checkpoint(checkpoint_file, completed_seeds)
+        except Exception as e:
+            logger.error(f"Failed processing seed {seed}: {e}")
+            # Don't add to completed_seeds
+            break  # or continue with next seed
+    
+    logger.info(f"Completed {len(completed_seeds)}/{len(all_seeds)} seeds")
+```
+
+### 4. **Add Command-line Recovery Option**
+
+Add a recovery mode to skip corrupted files:
+
+```python
+import argparse
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--recover', action='store_true', 
+                       help='Recover from previous run, skipping corrupted files')
+    parser.add_argument('--skip-corrupted', action='store_true',
+                       help='Skip corrupted files instead of exiting')
+    args = parser.parse_args()
+    
+    if args.recover:
+        # Try to identify what was completed
+        # ... recovery logic ...
+        pass
+    
+    # In file validation:
+    if corrupted_files and args.skip_corrupted:
+        logger.warning(f"Skipping {len(corrupted_files)} corrupted files")
+        # Continue with valid files only
+    elif corrupted_files:
+        # Exit as before
+        sys.exit(1)
+```
+
+### 5. **Immediate Fix for Current Situation**
+
+For your current failed run, you can:
+
+1. **Identify the corrupted file(s):**
+   ```bash
+   # Check file sizes
+   ls -lh worker_*.h5 | sort -k5
+   
+   # Try to open each file
+   python -c "import h5py; h5py.File('worker_X.h5', 'r')"
+   ```
+
+2. **Create a recovery script to continue from 2999 completed optimizations:**
+   ```python
+   import os
+   import h5py
+   import glob
+   
+   # Find all worker files
+   worker_files = glob.glob("worker_*.h5")
+   
+   # Filter valid files
+   valid_files = []
+   for wf in worker_files:
+       try:
+           with h5py.File(wf, 'r'):
+               valid_files.append(wf)
+       except:
+           print(f"Skipping corrupted file: {wf}")
+           continue
+   
+   print(f"Found {len(valid_files)} valid files out of {len(worker_files)}")
+   
+   # Now manually join the valid files
+   # ... your joining logic using only valid_files ...
+   ```
+
+## Key Recommendations
+
+1. **Always validate files before opening** in the joining phase
+2. **Add proper error handling and cleanup** in worker processes
+3. **Implement checkpointing** to allow resuming from failures
+4. **Consider using a more robust file format** or adding checksums for critical data
+5. **Add timeout mechanisms** for worker processes that might hang
+
+The most critical fix is adding file validation before the merging step to prevent the entire process from failing at the very end after hours of computation.

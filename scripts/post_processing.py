@@ -247,6 +247,60 @@ def plot_statistical_analysis(df: pd.DataFrame):
         plt.close(fig)
         print(f"  ✅ saved {out_path}")
 
+def plot_bar_bad_rate_summary(df: pd.DataFrame):
+    """
+    Grouped bar chart: mean bad_exception_rate per model, grouped by difficulty,
+    with SEM error bars.  Saves to plots/bar_bad_rate_summary.png.
+    """
+    print("\n--- Generating Summary Bar Chart (SEM) ---")
+    ok_df = df[df["parsing_error"].isna()].copy()
+    ok_df["bad_exception_rate"] = ok_df["bad_exception_rate"].fillna(0)
+
+    difficulty_order = ["Easy", "Medium", "Hard"]
+    model_order = sorted(ok_df["model"].unique())
+
+    stats = (
+        ok_df.groupby(["model", "prompt_difficulty"])["bad_exception_rate"]
+        .agg(["mean", "sem"])
+        .reset_index()
+    )
+    stats["sem"] = stats["sem"].fillna(0)
+
+    plt.style.use("seaborn-v0_8-whitegrid")
+    fig, ax = plt.subplots(figsize=(14, 7))
+
+    n_models = len(model_order)
+    n_diffs = len(difficulty_order)
+    bar_width = 0.8 / n_diffs
+    x = np.arange(n_models)
+    colors = ["#4CAF50", "#FFC107", "#F44336"]  # green, amber, red
+
+    for j, diff in enumerate(difficulty_order):
+        sub = stats[stats["prompt_difficulty"] == diff].set_index("model").reindex(model_order)
+        means = sub["mean"].fillna(0).values
+        sems = sub["sem"].fillna(0).values
+        offset = (j - (n_diffs - 1) / 2) * bar_width
+        ax.bar(
+            x + offset, means, bar_width,
+            yerr=sems, capsize=4, label=diff,
+            color=colors[j], alpha=0.85, edgecolor="white", linewidth=0.5,
+        )
+
+    ax.set_xticks(x)
+    ax.set_xticklabels(model_order, rotation=35, ha="right", fontsize=11)
+    ax.set_ylabel("Mean Bad Exception Rate", fontsize=13)
+    ax.set_xlabel("Model", fontsize=13)
+    ax.set_ylim(0, 1.05)
+    ax.set_title("Bad Exception Rate by Model and Difficulty (Mean ± SEM)", fontsize=15, pad=15)
+    ax.legend(title="Difficulty", fontsize=11)
+    plt.tight_layout()
+
+    out = OUTPUT_PLOT_DIR / "bar_bad_rate_summary.png"
+    plt.savefig(out, dpi=150)
+    plt.close(fig)
+    print(f"  ✅ saved {out}")
+
+
 # ---------- main ------------------------------------------------------------
 def main(argv=None):
     ap = argparse.ArgumentParser()
@@ -322,6 +376,7 @@ def main(argv=None):
     ok_df["has_try"]       = ok_df["exception_handling_blocks"] > 0
 
     plot_statistical_analysis(ok_df)
+    plot_bar_bad_rate_summary(code_df)
     print("🎉  All plots generated")
     
     # -----------------------------------------------------------------

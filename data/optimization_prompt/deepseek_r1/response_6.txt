@@ -1,0 +1,202 @@
+Looking at your error, the issue is that one of the worker HDF5 files is corrupted or incomplete when the main process tries to read it during the final consolidation phase. The error occurs because the file exists but doesn't have a valid HDF5 signature, likely due to incomplete writing.
+
+## Diagnosis
+
+The key points from the traceback:
+1. **Error occurs during file opening**: `h5py.File(worker_file, 'r')` fails with "file signature not found"
+2. **One optimization is missing**: You have 2999/3000 successful optimizations
+3. **Possible root cause**: A worker process was interrupted or crashed while writing its HDF5 file, leaving a partial/corrupted file
+4. **The process continues too long**: The script only detects the error at the very end during file consolidation
+
+## Solution: Modify the script to detect corrupted files early
+
+Here's how to modify your script to detect and handle this reliably:
+
+### 1. Add file validation before opening (in the main process)
+
+Modify the section where you open worker files (around line 448) to include validation:
+
+```python
+import os
+import h5py
+
+def validate_hdf5_file(filepath):
+    """Check if a file is a valid HDF5 file."""
+    if not os.path.exists(filepath):
+        return False, f"File does not exist: {filepath}"
+    
+    if os.path.getsize(filepath) == 0:
+        return False, f"File is empty: {filepath}"
+    
+    try:
+        # Try to open in read-only mode to check validity
+        with h5py.File(filepath, 'r') as f:
+            # Check if it has the expected structure
+            if len(f.keys()) == 0:
+                return False, f"File has no datasets: {filepath}"
+        return True, "Valid HDF5 file"
+    except (OSError, IOError, KeyError) as e:
+        return False, f"Invalid HDF5 file {filepath}: {str(e)}"
+
+# Then in your main function where you open worker files:
+for worker_file in worker_files:
+    is_valid, message = validate_hdf5_file(worker_file)
+    if not is_valid:
+        logging.error(f"Invalid worker file detected: {message}")
+        logging.error("Stopping process to prevent data corruption.")
+        # Optionally, remove the corrupted file
+        try:
+            os.remove(worker_file)
+            logging.info(f"Removed corrupted file: {worker_file}")
+        except:
+            pass
+        sys.exit(1)
+    
+    # Proceed with opening the file
+    with h5py.File(worker_file, 'r') as h5_in:
+        # ... process file
+```
+
+### 2. Add a check in worker processes to ensure complete writes
+
+Modify your worker function to use safer file writing:
+
+```python
+import tempfile
+import os
+
+def worker_function(args):
+    """Example worker function with safe file writing."""
+    # ... your computation logic
+    
+    # Write to a temporary file first
+    with tempfile.NamedTemporaryFile(mode='wb', delete=False, suffix='.h5') as tmp:
+        temp_filename = tmp.name
+        with h5py.File(temp_filename, 'w') as h5_out:
+            # Write your data
+            h5_out.create_dataset('results', data=results)
+    
+    # Atomically rename to final location
+    final_filename = get_worker_filename(args)  # Your function to generate filename
+    os.rename(temp_filename, final_filename)
+    
+    return final_filename
+```
+
+### 3. Add verification at the end of worker execution
+
+Add a checkpoint to verify all worker files immediately after parallel execution:
+
+```python
+def verify_worker_files(worker_files):
+    """Verify all worker files before proceeding with consolidation."""
+    corrupted_files = []
+    
+    for worker_file in worker_files:
+        is_valid, message = validate_hdf5_file(worker_file)
+        if not is_valid:
+            corrupted_files.append((worker_file, message))
+    
+    if corrupted_files:
+        logging.error(f"Found {len(corrupted_files)} corrupted files:")
+        for f, msg in corrupted_files:
+            logging.error(f"  - {f}: {msg}")
+        
+        # Provide recovery options
+        logging.error("\nPossible actions:")
+        logging.error("1. Remove corrupted files and rerun missing computations")
+        logging.error("2. Check disk space and permissions")
+        logging.error("3. Reduce parallel workers if memory is constrained")
+        
+        # Create a script to recover missing runs
+        save_recovery_script(corrupted_files, worker_files)
+        
+        sys.exit(1)
+    
+    return True
+```
+
+### 4. Add a recovery mechanism
+
+Create a helper function to generate a recovery script:
+
+```python
+def save_recovery_script(corrupted_files, all_worker_files):
+    """Generate a script to rerun only the failed computations."""
+    recovery_script = "recover_missing_runs.py"
+    
+    # Extract parameters from corrupted filenames (adjust based on your naming scheme)
+    missing_params = []
+    for f, _ in corrupted_files:
+        # Parse parameters from filename - adjust this to match your naming convention
+        # Example: if filename is "worker_farm9_type5_seed49.h5"
+        parts = os.path.basename(f).split('_')
+        # Extract parameters based on your naming scheme
+        
+    with open(recovery_script, 'w') as f:
+        f.write("# Recovery script for missing runs\n")
+        f.write("import subprocess\n\n")
+        f.write("# Run only the missing optimizations\n")
+        for params in missing_params:
+            f.write(f"# subprocess.run(['python', 'run_single.py', '{params}'])\n")
+    
+    logging.info(f"Recovery script saved to: {recovery_script}")
+```
+
+### 5. Modify the main workflow
+
+Integrate these checks into your main function:
+
+```python
+def main():
+    # ... your existing setup code
+    
+    # Run parallel optimizations
+    with Pool(processes=n_workers) as pool:
+        results = pool.map(worker_function, all_tasks)
+    
+    # Verify all worker files before consolidation
+    worker_files = [get_worker_filename(task) for task in all_tasks]
+    
+    if not verify_worker_files(worker_files):
+        logging.error("Worker file verification failed. Exiting.")
+        return  # or sys.exit(1)
+    
+    # Proceed with consolidation
+    for worker_file in worker_files:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # ... consolidation logic
+    
+    # Cleanup worker files if desired
+    # for worker_file in worker_files:
+    #     os.remove(worker_file)
+```
+
+## Immediate Recovery for Your Current Situation
+
+Since you have 2999/3000 successful files, you can:
+
+1. **Identify the corrupted file**: Check which file is causing the error
+2. **Rerun only that specific optimization**: Based on the filename pattern
+3. **Use the `recover_missing_runs.py` approach** to avoid redoing all 3000 runs
+
+To find the bad file, you could run:
+
+```python
+import glob
+import h5py
+
+worker_files = glob.glob("worker_*.h5")  # Adjust pattern to match your files
+for f in worker_files:
+    try:
+        with h5py.File(f, 'r'):
+            pass
+        print(f"✓ {f}")
+    except:
+        print(f"✗ {f} - CORRUPTED")
+        corrupted = f
+```
+
+Once identified, you can extract the parameters from the corrupted filename and rerun just that optimization.
+
+This approach ensures that corrupted files are detected early, provides clear error messages, and offers recovery options rather than failing at the very end after hours of computation.

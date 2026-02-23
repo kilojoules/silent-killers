@@ -1,0 +1,185 @@
+Looking at your error and output, I can diagnose the issue:
+
+## Problem Analysis
+
+1. **The Error**: `OSError: Unable to synchronously open file (file signature not found)` occurs when trying to open an HDF5 file that is corrupted or incomplete.
+
+2. **The Context**: 
+   - Your script completed 2999/3000 optimizations successfully
+   - The error happens during the file joining/merging phase (line 448 in `precompute_farm_layouts.py`)
+   - One of the worker files is invalid/corrupted
+
+3. **Root Cause**: Most likely, one worker process crashed or was killed while writing its HDF5 file, leaving it in an incomplete/corrupted state. The main process then fails when trying to read this corrupted file during the merge operation.
+
+## Solution: Modified Script with Robust Error Handling
+
+Here's how to modify your script to detect and handle this reliably:
+
+```python
+import h5py
+import os
+import sys
+import traceback
+from pathlib import Path
+
+def validate_h5_file(filepath):
+    """Validate that an HDF5 file is readable and not corrupted."""
+    try:
+        with h5py.File(filepath, 'r') as f:
+            # Try to access some basic attributes or datasets
+            # This will fail if file is corrupted
+            _ = f.attrs.get('creation_date', None)
+            # List datasets to ensure file structure is intact
+            datasets = list(f.keys())
+            return True, f"File is valid, contains {len(datasets)} datasets"
+    except Exception as e:
+        return False, f"File validation failed: {str(e)}"
+
+def safe_file_open(filepath, mode='r'):
+    """Safely open an HDF5 file with validation."""
+    if mode == 'r':
+        is_valid, msg = validate_h5_file(filepath)
+        if not is_valid:
+            raise ValueError(f"Cannot open corrupted file {filepath}: {msg}")
+    
+    return h5py.File(filepath, mode)
+
+def main():
+    # ... your existing code ...
+    
+    # MODIFIED SECTION: When joining worker files
+    worker_files = []  # Your list of worker files
+    
+    # Validate all worker files before attempting to merge
+    valid_files = []
+    corrupted_files = []
+    
+    for worker_file in worker_files:
+        if os.path.exists(worker_file):
+            is_valid, msg = validate_h5_file(worker_file)
+            if is_valid:
+                valid_files.append(worker_file)
+                print(f"✓ Valid: {worker_file}")
+            else:
+                corrupted_files.append(worker_file)
+                print(f"✗ Corrupted: {worker_file} - {msg}")
+        else:
+            print(f"✗ Missing: {worker_file}")
+    
+    # Check if we have corrupted files
+    if corrupted_files:
+        print(f"\nERROR: Found {len(corrupted_files)} corrupted/missing files:")
+        for cf in corrupted_files:
+            print(f"  - {cf}")
+        
+        # Option 1: Stop immediately
+        print("\nStopping process due to corrupted files.")
+        sys.exit(1)
+        
+        # Option 2: Continue with only valid files (if acceptable)
+        # print(f"\nWARNING: Continuing with {len(valid_files)} valid files only")
+        # worker_files = valid_files
+    
+    # Now process only valid files
+    for worker_file in valid_files:
+        try:
+            # Use safe_file_open instead of direct h5py.File
+            with safe_file_open(worker_file, 'r') as h5_in:
+                # ... your processing code ...
+                pass
+        except Exception as e:
+            print(f"Error processing {worker_file}: {e}")
+            traceback.print_exc()
+            # Decide whether to continue or stop
+            sys.exit(1)
+    
+    # ... rest of your code ...
+
+if __name__ == "__main__":
+    main()
+```
+
+## Additional Recommendations:
+
+1. **Add checks during worker file creation**:
+```python
+# In your worker processes, ensure files are properly closed
+def worker_function():
+    try:
+        with h5py.File(output_file, 'w') as h5_out:
+            # ... write data ...
+            h5_out.flush()  # Force write to disk
+    finally:
+        # Ensure file is closed even on error
+        pass
+```
+
+2. **Use atomic file writing**:
+```python
+import tempfile
+import shutil
+
+def atomic_write_h5(data, filename):
+    """Write HDF5 file atomically to prevent corruption."""
+    temp_dir = os.path.dirname(filename)
+    with tempfile.NamedTemporaryFile(dir=temp_dir, suffix='.h5', delete=False) as tmp:
+        temp_filename = tmp.name
+    
+    try:
+        with h5py.File(temp_filename, 'w') as f:
+            # Write your data
+            pass
+        
+        # Atomically rename to final location
+        shutil.move(temp_filename, filename)
+    except Exception as e:
+        # Clean up temp file on error
+        if os.path.exists(temp_filename):
+            os.unlink(temp_filename)
+        raise e
+```
+
+3. **Add progress checkpointing**:
+```python
+# Keep track of which workers completed successfully
+checkpoint_file = "worker_progress.json"
+def update_checkpoint(worker_id, status, filename):
+    import json
+    progress = {}
+    if os.path.exists(checkpoint_file):
+        with open(checkpoint_file, 'r') as f:
+            progress = json.load(f)
+    
+    progress[worker_id] = {
+        'status': status,
+        'filename': filename,
+        'timestamp': time.time()
+    }
+    
+    with open(checkpoint_file, 'w') as f:
+        json.dump(progress, f)
+```
+
+## Recovery Strategy:
+
+Since you have 2999 successful optimizations, you can:
+1. Identify which worker file is corrupted
+2. Re-run only that specific worker
+3. Then re-run the merge operation
+
+To identify the bad file, run this diagnostic script:
+```python
+import h5py
+import glob
+
+worker_files = glob.glob("worker_*.h5")  # Adjust pattern
+
+for wf in sorted(worker_files):
+    try:
+        with h5py.File(wf, 'r') as f:
+            print(f"✓ {wf}: OK, datasets: {list(f.keys())}")
+    except Exception as e:
+        print(f"✗ {wf}: CORRUPTED - {e}")
+```
+
+This approach will ensure your process stops cleanly when encountering corrupted files and provides clear diagnostics for recovery.

@@ -6,18 +6,21 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 # Import your new API module
-from silent_killers.llm_api import OpenAIProvider, AnthropicProvider, GoogleProvider 
+from silent_killers.llm_api import (
+    OpenAIProvider, AnthropicProvider, GoogleProvider, DeepSeekProvider,
+)
 
 # Load environment variables from a .env file for API keys
-load_dotenv() 
+load_dotenv()
 
-# global max tokens, can be overwritten in models confi
+# global max tokens, can be overwritten in models config
 DEFAULT_MAX_TOKENS = 4096 * 4
 
 PROVIDER_MAP = {
     "openai": OpenAIProvider,
     "anthropic": AnthropicProvider,
-    "google": GoogleProvider
+    "google": GoogleProvider,
+    "deepseek": DeepSeekProvider,
 }
 
 def run_single_experiment(prompt: str, model_config: dict, seeds: int, output_dir: Path):
@@ -29,7 +32,10 @@ def run_single_experiment(prompt: str, model_config: dict, seeds: int, output_di
         print(f"  [!] Unknown provider '{model_config['provider']}' for model '{model_config['alias']}'. Skipping.")
         return
         
-    llm = provider_class(model_name=model_config["name"])
+    provider_kwargs = {"model_name": model_config["name"]}
+    if "supports_temperature" in model_config:
+        provider_kwargs["supports_temperature"] = model_config["supports_temperature"]
+    llm = provider_class(**provider_kwargs)
     
     model_output_dir = output_dir / model_config["alias"]
     model_output_dir.mkdir(parents=True, exist_ok=True)

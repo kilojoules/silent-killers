@@ -1,0 +1,597 @@
+I'll help you create a script that propagates measurement uncertainties through PyWake and computes Sobol sensitivities for the flow field. Based on typical wind energy measurement uncertainties, here's a comprehensive script:
+
+```python
+"""
+Script to propagate realistic measurement uncertainties through PyWake
+and compute Sobol sensitivities of WS_eff across the flow field.
+"""
+
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.colors import Normalize
+import xarray as xr
+from pathlib import Path
+import pickle
+from datetime import datetime
+import time
+
+# PyWake imports
+from py_wake import NOJ, Fuga
+from py_wake.site import UniformSite
+from py_wake.examples.data.iea37 import IEA37_WindTurbines, IEA37Site
+from py_wake.wind_turbines import WindTurbines
+from py_wake.wind_turbines.power_ct_functions import PowerCtTabular
+from py_wake.flow_map import HorizontalGrid
+
+# Uncertainty quantification imports
+from SALib.sample import saltelli
+from SALib.analyze import sobol
+import pandas as pd
+
+# Suppress some warnings for cleaner output
+import warnings
+warnings.filterwarnings('ignore')
+
+# ============================================================================
+# CONFIGURATION
+# ============================================================================
+class Config:
+    """Configuration parameters for the uncertainty propagation"""
+    
+    # Measurement uncertainties (realistic values based on wind energy standards)
+    UNCERTAINTIES = {
+        'wind_speed': {
+            'nominal': 8.0,           # m/s
+            'std_dev': 0.4,           # 5% uncertainty at 8 m/s (typical cup anemometer)
+            'distribution': 'normal',
+            'bounds': (6.0, 10.0)     # Physical bounds
+        },
+        'wind_direction': {
+            'nominal': 270.0,         # degrees (west)
+            'std_dev': 2.0,           # degrees (typical vane uncertainty)
+            'distribution': 'normal',
+            'bounds': (240.0, 300.0)  # Sector bounds
+        },
+        'turbulence_intensity': {
+            'nominal': 0.1,           # 10%
+            'std_dev': 0.01,          # 10% relative uncertainty
+            'distribution': 'normal',
+            'bounds': (0.05, 0.15)
+        },
+        'air_density': {
+            'nominal': 1.225,         # kg/m³
+            'std_dev': 0.01,          # 0.8% uncertainty
+            'distribution': 'normal',
+            'bounds': (1.15, 1.30)
+        },
+        'wind_shear': {
+            'nominal': 0.2,           # shear exponent
+            'std_dev': 0.02,          # 10% uncertainty
+            'distribution': 'normal',
+            'bounds': (0.1, 0.3)
+        }
+    }
+    
+    # Simulation parameters
+    N_SAMPLES = 1024  # Number of samples for Sobol analysis (must be 2^N)
+    N_TURBINES = 9
+    GRID_RESOLUTION = 100  # Points in each direction for flow field
+    WAKE_MODEL = 'NOJ'  # Options: 'NOJ', 'Fuga' (requires Fuga license)
+    
+    # Output settings
+    OUTPUT_DIR = Path('./uncertainty_results')
+    SAVE_INTERMEDIATE = True
+    PLOT_FORMAT = 'png'
+    DPI = 300
+
+# ============================================================================
+# UNCERTAINTY SAMPLING
+# ============================================================================
+class UncertaintySampler:
+    """Handle sampling of uncertain parameters for Sobol analysis"""
+    
+    def __init__(self, config):
+        self.config = config
+        self.uncertainties = config.UNCERTAINTIES
+        self.param_names = list(self.uncertainties.keys())
+        
+    def define_problem(self):
+        """Define the problem for SALib"""
+        problem = {
+            'num_vars': len(self.param_names),
+            'names': self.param_names,
+            'bounds': [self.uncertainties[name]['bounds'] 
+                      for name in self.param_names]
+        }
+        return problem
+    
+    def generate_samples(self, problem):
+        """Generate samples using Saltelli sequence"""
+        print(f"Generating {self.config.N_SAMPLES} samples for {len(self.param_names)} parameters...")
+        param_values = saltelli.sample(
+            problem, 
+            self.config.N_SAMPLES, 
+            calc_second_order=True
+        )
+        return param_values
+    
+    def transform_samples(self, param_values):
+        """Transform uniform samples to appropriate distributions"""
+        transformed = np.zeros_like(param_values)
+        
+        for i, name in enumerate(self.param_names):
+            unc = self.uncertainties[name]
+            
+            if unc['distribution'] == 'normal':
+                # Convert uniform [0,1] to normal using inverse CDF
+                from scipy.stats import norm
+                # Map from uniform to standard normal
+                std_norm = norm.ppf(param_values[:, i])
+                # Scale and shift to desired mean and std
+                transformed[:, i] = unc['nominal'] + std_norm * unc['std_dev']
+                # Apply physical bounds
+                transformed[:, i] = np.clip(
+                    transformed[:, i], 
+                    unc['bounds'][0], 
+                    unc['bounds'][1]
+                )
+            else:
+                # Uniform distribution (default for Sobol)
+                transformed[:, i] = param_values[:, i]
+                
+        return transformed
+
+# ============================================================================
+# WIND FARM MODEL
+# ============================================================================
+class WindFarmModel:
+    """Wrapper for PyWake wind farm simulations"""
+    
+    def __init__(self, config):
+        self.config = config
+        
+        # Create wind turbines (IEA 3.4MW reference turbine)
+        self.wind_turbines = IEA37_WindTurbines()
+        
+        # Create site
+        ti = config.UNCERTAINTIES['turbulence_intensity']['nominal']
+        self.site = IEA37Site(n_wt=config.N_TURBINES, ti=ti)
+        
+        # Create wake model
+        if config.WAKE_MODEL == 'NOJ':
+            self.wake_model = NOJ(self.site, self.wind_turbines)
+        elif config.WAKE_MODEL == 'Fuga':
+            # Note: Requires Fuga license
+            self.wake_model = Fuga(self.site, self.wind_turbines)
+        else:
+            raise ValueError(f"Unknown wake model: {config.WAKE_MODEL}")
+        
+        # Create turbine layout (3x3 grid)
+        self.x, self.y = self._create_turbine_layout()
+        
+        # Define flow field grid
+        self.grid = self._create_flow_grid()
+        
+    def _create_turbine_layout(self):
+        """Create a regular turbine layout"""
+        n = int(np.sqrt(self.config.N_TURBINES))
+        if n * n != self.config.N_TURBINES:
+            n = int(np.ceil(np.sqrt(self.config.N_TURBINES)))
+            
+        spacing = 700  # meters
+        x_positions = np.arange(0, n * spacing, spacing)
+        y_positions = np.arange(0, n * spacing, spacing)
+        
+        x, y = np.meshgrid(x_positions, y_positions)
+        return x.flatten()[:self.config.N_TURBINES], y.flatten()[:self.config.N_TURBINES]
+    
+    def _create_flow_grid(self):
+        """Create grid for flow field visualization"""
+        x_min, x_max = self.x.min() - 500, self.x.max() + 1500
+        y_min, y_max = self.y.min() - 500, self.y.max() + 500
+        
+        return HorizontalGrid(
+            x=np.linspace(x_min, x_max, self.config.GRID_RESOLUTION),
+            y=np.linspace(y_min, y_max, self.config.GRID_RESOLUTION),
+            h=100  # hub height
+        )
+    
+    def simulate(self, params):
+        """
+        Run a single simulation with given parameters
+        
+        Parameters:
+        -----------
+        params : dict
+            Dictionary with keys: wind_speed, wind_direction, 
+            turbulence_intensity, air_density, wind_shear
+            
+        Returns:
+        --------
+        flow_field : xarray.Dataset
+            Flow field including WS_eff
+        """
+        # Update site parameters
+        ti = params['turbulence_intensity']
+        ws = params['wind_speed']
+        wd = params['wind_direction']
+        
+        # Create site with current parameters
+        site = UniformSite(
+            p_wd=[1.0],  # Single wind direction
+            ti=ti,
+            ws=ws,
+            wd=[wd]
+        )
+        
+        # Recreate wake model with updated site
+        if self.config.WAKE_MODEL == 'NOJ':
+            wake_model = NOJ(site, self.wind_turbines)
+        else:
+            wake_model = Fuga(site, self.wind_turbines)
+        
+        # Run simulation
+        sim_result = wake_model(
+            self.x, 
+            self.y, 
+            ws=ws, 
+            wd=wd
+        )
+        
+        # Extract flow field
+        flow_map = sim_result.flow_map(grid=self.grid)
+        
+        return flow_map.data
+
+# ============================================================================
+# SENSITIVITY ANALYSIS
+# ============================================================================
+class SensitivityAnalyzer:
+    """Compute Sobol sensitivity indices"""
+    
+    def __init__(self, config):
+        self.config = config
+        
+    def compute_sobol_indices(self, problem, model_outputs):
+        """
+        Compute Sobol indices for each grid point
+        
+        Parameters:
+        -----------
+        problem : dict
+            SALib problem definition
+        model_outputs : numpy.ndarray
+            Array of shape (n_samples, grid_x, grid_y)
+            
+        Returns:
+        --------
+        sobol_indices : dict
+            Dictionary containing first-order and total-order indices
+        """
+        print("Computing Sobol indices...")
+        
+        # Reshape outputs for SALib (flatten spatial dimensions)
+        n_samples, n_x, n_y = model_outputs.shape
+        outputs_flat = model_outputs.reshape(n_samples, -1)
+        
+        # Initialize arrays for Sobol indices
+        n_points = outputs_flat.shape[1]
+        n_params = problem['num_vars']
+        
+        S1 = np.zeros((n_params, n_points))  # First-order indices
+        ST = np.zeros((n_params, n_points))  # Total-order indices
+        
+        # Compute Sobol indices for each grid point
+        for i in range(n_points):
+            if i % 1000 == 0:
+                print(f"  Processing point {i}/{n_points}")
+            
+            Y = outputs_flat[:, i]
+            analysis = sobol.analyze(
+                problem, 
+                Y, 
+                calc_second_order=False,
+                print_to_console=False
+            )
+            
+            S1[:, i] = analysis['S1']
+            ST[:, i] = analysis['ST']
+        
+        # Reshape back to spatial dimensions
+        S1 = S1.reshape(n_params, n_x, n_y)
+        ST = ST.reshape(n_params, n_x, n_y)
+        
+        return {
+            'S1': S1,  # First-order indices
+            'ST': ST,  # Total-order indices
+            'param_names': problem['names'],
+            'grid_x': n_x,
+            'grid_y': n_y
+        }
+    
+    def visualize_sensitivities(self, sobol_indices, flow_grid, output_dir):
+        """
+        Create visualizations of sensitivity indices
+        
+        Parameters:
+        -----------
+        sobol_indices : dict
+            Sobol indices from compute_sobol_indices
+        flow_grid : HorizontalGrid
+            Grid for spatial reference
+        output_dir : Path
+            Directory to save plots
+        """
+        param_names = sobol_indices['param_names']
+        S1 = sobol_indices['S1']
+        ST = sobol_indices['ST']
+        
+        # Create grid coordinates
+        X, Y = np.meshgrid(flow_grid.x, flow_grid.y)
+        
+        # Plot settings
+        cmap = plt.cm.viridis
+        param_labels = {
+            'wind_speed': 'Wind Speed',
+            'wind_direction': 'Wind Direction',
+            'turbulence_intensity': 'Turbulence Intensity',
+            'air_density': 'Air Density',
+            'wind_shear': 'Wind Shear'
+        }
+        
+        # Create plots for each parameter
+        for i, param in enumerate(param_names):
+            fig, axes = plt.subplots(1, 2, figsize=(14, 6), constrained_layout=True)
+            
+            # First-order indices
+            im1 = axes[0].pcolormesh(X, Y, S1[i], cmap=cmap, 
+                                    vmin=0, vmax=1, shading='auto')
+            axes[0].set_title(f'{param_labels[param]} - First-order Sobol Index')
+            axes[0].set_xlabel('x [m]')
+            axes[0].set_ylabel('y [m]')
+            axes[0].scatter(X, Y, s=0.1, alpha=0.1)  # Grid points
+            plt.colorbar(im1, ax=axes[0], label='Sobol Index')
+            
+            # Total-order indices
+            im2 = axes[1].pcolormesh(X, Y, ST[i], cmap=cmap, 
+                                    vmin=0, vmax=1, shading='auto')
+            axes[1].set_title(f'{param_labels[param]} - Total-order Sobol Index')
+            axes[1].set_xlabel('x [m]')
+            axes[1].set_ylabel('y [m]')
+            axes[1].scatter(X, Y, s=0.1, alpha=0.1)  # Grid points
+            plt.colorbar(im2, ax=axes[1], label='Sobol Index')
+            
+            # Add turbine positions
+            for ax in axes:
+                # Assuming turbine positions are stored somewhere accessible
+                # You'll need to add them here
+                pass
+            
+            # Save figure
+            filename = output_dir / f'sobol_{param}_{datetime.now():%Y%m%d_%H%M%S}.{self.config.PLOT_FORMAT}'
+            plt.savefig(filename, dpi=self.config.DPI, bbox_inches='tight')
+            plt.close()
+            print(f"  Saved: {filename}")
+        
+        # Create summary plot
+        self._create_summary_plot(sobol_indices, flow_grid, output_dir)
+    
+    def _create_summary_plot(self, sobol_indices, flow_grid, output_dir):
+        """Create a summary plot showing all parameters"""
+        param_names = sobol_indices['param_names']
+        S1 = sobol_indices['S1']
+        
+        X, Y = np.meshgrid(flow_grid.x, flow_grid.y)
+        
+        fig, axes = plt.subplots(2, 3, figsize=(15, 10), constrained_layout=True)
+        axes = axes.flatten()
+        
+        param_labels = {
+            'wind_speed': 'Wind Speed',
+            'wind_direction': 'Wind Direction',
+            'turbulence_intensity': 'TI',
+            'air_density': 'Density',
+            'wind_shear': 'Shear'
+        }
+        
+        for i, (ax, param) in enumerate(zip(axes[:len(param_names)], param_names)):
+            im = ax.pcolormesh(X, Y, S1[i], cmap=plt.cm.viridis, 
+                             vmin=0, vmax=1, shading='auto')
+            ax.set_title(f'{param_labels[param]}\nFirst-order Sobol Index')
+            ax.set_xlabel('x [m]')
+            ax.set_ylabel('y [m]')
+            plt.colorbar(im, ax=ax, label='Sensitivity')
+        
+        # Hide unused subplots
+        for ax in axes[len(param_names):]:
+            ax.axis('off')
+        
+        filename = output_dir / f'sobol_summary_{datetime.now():%Y%m%d_%H%M%S}.{self.config.PLOT_FORMAT}'
+        plt.savefig(filename, dpi=self.config.DPI, bbox_inches='tight')
+        plt.close()
+        print(f"  Saved summary: {filename}")
+
+# ============================================================================
+# MAIN EXECUTION
+# ============================================================================
+def main():
+    """Main execution function"""
+    
+    # Initialize configuration
+    config = Config()
+    
+    # Create output directory
+    output_dir = config.OUTPUT_DIR
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    print("=" * 70)
+    print("UNCERTAINTY PROPAGATION AND SENSITIVITY ANALYSIS")
+    print("=" * 70)
+    print(f"Output directory: {output_dir.absolute()}")
+    print(f"Number of samples: {config.N_SAMPLES}")
+    print(f"Number of parameters: {len(config.UNCERTAINTIES)}")
+    print(f"Wake model: {config.WAKE_MODEL}")
+    print()
+    
+    # Step 1: Setup uncertainty sampling
+    print("Step 1: Setting up uncertainty sampling...")
+    sampler = UncertaintySampler(config)
+    problem = sampler.define_problem()
+    
+    # Step 2: Generate parameter samples
+    print("\nStep 2: Generating parameter samples...")
+    param_samples_uniform = sampler.generate_samples(problem)
+    param_samples = sampler.transform_samples(param_samples_uniform)
+    
+    # Convert to dictionary for easier access
+    param_dicts = []
+    for sample in param_samples:
+        param_dict = {}
+        for i, name in enumerate(problem['names']):
+            param_dict[name] = sample[i]
+        param_dicts.append(param_dict)
+    
+    # Save parameter samples
+    if config.SAVE_INTERMEDIATE:
+        sample_file = output_dir / 'parameter_samples.npy'
+        np.save(sample_file, param_samples)
+        print(f"  Saved parameter samples to: {sample_file}")
+    
+    # Step 3: Initialize wind farm model
+    print("\nStep 3: Initializing wind farm model...")
+    wind_farm = WindFarmModel(config)
+    
+    # Step 4: Run simulations
+    print("\nStep 4: Running simulations...")
+    print(f"  This will run {len(param_dicts)} simulations")
+    print("  (This may take several minutes to hours depending on configuration)")
+    
+    # Initialize array for flow field results
+    grid_shape = (config.GRID_RESOLUTION, config.GRID_RESOLUTION)
+    flow_results = np.zeros((len(param_dicts), *grid_shape))
+    
+    start_time = time.time()
+    
+    for i, params in enumerate(param_dicts):
+        if i % 50 == 0:
+            elapsed = time.time() - start_time
+            print(f"  Completed {i}/{len(param_dicts)} simulations "
+                  f"({i/len(param_dicts)*100:.1f}%, elapsed: {elapsed:.1f}s)")
+        
+        try:
+            # Run simulation
+            flow_data = wind_farm.simulate(params)
+            
+            # Extract WS_eff (effective wind speed)
+            ws_eff = flow_data.WS_eff.values[0, :, :]  # First wind direction
+            
+            # Store result
+            flow_results[i, :, :] = ws_eff
+            
+        except Exception as e:
+            print(f"  Error in simulation {i}: {e}")
+            # Use nominal value if simulation fails
+            flow_results[i, :, :] = config.UNCERTAINTIES['wind_speed']['nominal']
+    
+    # Save simulation results
+    if config.SAVE_INTERMEDIATE:
+        results_file = output_dir / 'simulation_results.npy'
+        np.save(results_file, flow_results)
+        print(f"\n  Saved simulation results to: {results_file}")
+    
+    elapsed_total = time.time() - start_time
+    print(f"\n  Total simulation time: {elapsed_total:.1f} seconds")
+    print(f"  Average time per simulation: {elapsed_total/len(param_dicts):.2f} seconds")
+    
+    # Step 5: Compute Sobol sensitivities
+    print("\nStep 5: Computing Sobol sensitivity indices...")
+    analyzer = SensitivityAnalyzer(config)
+    sobol_indices = analyzer.compute_sobol_indices(problem, flow_results)
+    
+    # Save Sobol indices
+    sobol_file = output_dir / 'sobol_indices.pkl'
+    with open(sobol_file, 'wb') as f:
+        pickle.dump(sobol_indices, f)
+    print(f"  Saved Sobol indices to: {sobol_file}")
+    
+    # Step 6: Create visualizations
+    print("\nStep 6: Creating visualizations...")
+    analyzer.visualize_sensitivities(sobol_indices, wind_farm.grid, output_dir)
+    
+    # Step 7: Create sensitivity report
+    print("\nStep 7: Generating sensitivity report...")
+    _generate_report(sobol_indices, wind_farm, config, output_dir)
+    
+    print("\n" + "=" * 70)
+    print("ANALYSIS COMPLETE")
+    print("=" * 70)
+    print(f"Results saved in: {output_dir.absolute()}")
+    
+    # Display some key findings
+    _display_key_findings(sobol_indices)
+
+def _generate_report(sobol_indices, wind_farm, config, output_dir):
+    """Generate a text report of the analysis"""
+    report_file = output_dir / f'sensitivity_report_{datetime.now():%Y%m%d_%H%M%S}.txt'
+    
+    with open(report_file, 'w') as f:
+        f.write("=" * 70 + "\n")
+        f.write("SENSITIVITY ANALYSIS REPORT\n")
+        f.write("=" * 70 + "\n\n")
+        
+        f.write("ANALYSIS PARAMETERS\n")
+        f.write("-" * 40 + "\n")
+        f.write(f"Date: {datetime.now():%Y-%m-%d %H:%M:%S}\n")
+        f.write(f"Number of samples: {config.N_SAMPLES}\n")
+        f.write(f"Wake model: {config.WAKE_MODEL}\n")
+        f.write(f"Grid resolution: {config.GRID_RESOLUTION}x{config.GRID_RESOLUTION}\n")
+        f.write(f"Number of turbines: {config.N_TURBINES}\n\n")
+        
+        f.write("MEASUREMENT UNCERTAINTIES\n")
+        f.write("-" * 40 + "\n")
+        for name, unc in config.UNCERTAINTIES.items():
+            f.write(f"{name.replace('_', ' ').title()}: \n")
+            f.write(f"  Nominal: {unc['nominal']}\n")
+            f.write(f"  Std. Dev.: {unc['std_dev']}\n")
+            f.write(f"  Distribution: {unc['distribution']}\n")
+            f.write(f"  Bounds: {unc['bounds']}\n\n")
+        
+        f.write("SENSITIVITY RESULTS\n")
+        f.write("-" * 40 + "\n")
+        
+        S1_mean = sobol_indices['S1'].mean(axis=(1, 2))
+        ST_mean = sobol_indices['ST'].mean(axis=(1, 2))
+        
+        for i, name in enumerate(sobol_indices['param_names']):
+            f.write(f"\n{name.replace('_', ' ').title()}:\n")
+            f.write(f"  Mean First-order index: {S1_mean[i]:.4f}\n")
+            f.write(f"  Mean Total-order index: {ST_mean[i]:.4f}\n")
+    
+    print(f"  Generated report: {report_file}")
+
+def _display_key_findings(sobol_indices):
+    """Display key findings from the analysis"""
+    print("\nKEY FINDINGS")
+    print("-" * 40)
+    
+    S1_mean = sobol_indices['S1'].mean(axis=(1, 2))
+    ST_mean = sobol_indices['ST'].mean(axis=(1, 2))
+    
+    # Sort by total sensitivity
+    sorted_idx = np.argsort(ST_mean)[::-1]
+    
+    for i in sorted_idx:
+        name = sobol_indices['param_names'][i]
+        label = name.replace('_', ' ').title()
+        print(f"{label:25s} S1: {S1_mean[i]:.4f} | ST: {ST_mean[i]:.4f}")
+    
+    # Identify most influential parameter
+    most_influential_idx = np.argmax(ST_mean)
+    most_influential = sobol_indices['param_names'][most_influential_idx]
+    print(f"\nMost influential parameter: {most_influential.replace('_', ' ').title()}")
+    print(f"  Explains {ST_mean[most_influential_idx]*100:.1f}% of output variance")
+
+# ============================================================================
+# ADDITIONAL UTILITIES
+# ============================================================================
+def create_animation(output_dir, pattern='sob

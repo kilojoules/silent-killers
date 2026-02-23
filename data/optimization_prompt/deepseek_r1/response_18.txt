@@ -1,0 +1,195 @@
+Looking at your error, the issue is that one of the worker HDF5 files is corrupted or invalid (likely empty/incomplete). The error occurs during the file joining phase when the main process tries to read a worker file that doesn't have a valid HDF5 signature.
+
+## Diagnosis:
+1. **The problem:** One of the 3000 worker files is corrupted - likely due to:
+   - A worker process was killed/interrupted before it could finish writing
+   - Disk full or permission issues during write
+   - Race condition in file closing/writing
+
+2. **Timing:** The process ran for ~9.5 hours and completed 2999/3000 optimizations successfully, but failed during the final aggregation phase.
+
+3. **The repeating output lines** (`130 possible points, 50 wt...`) suggest workers may have printed but not properly closed their HDF5 files.
+
+## Modified Script Solution:
+
+Add robust validation and graceful error handling:
+
+```python
+import os
+import h5py
+import traceback
+from pathlib import Path
+
+def validate_h5_file(filepath, min_size=100):
+    """Validate HDF5 file is readable and not corrupted."""
+    filepath = Path(filepath)
+    
+    # Check file exists
+    if not filepath.exists():
+        return False, f"File does not exist: {filepath}"
+    
+    # Check file size
+    size = filepath.stat().st_size
+    if size < min_size:
+        return False, f"File too small ({size} bytes): {filepath}"
+    
+    # Try to open and read basic structure
+    try:
+        with h5py.File(filepath, 'r') as f:
+            # Try to access something to verify it's readable
+            _ = list(f.keys())
+            return True, f"Valid HDF5 file ({size} bytes)"
+    except Exception as e:
+        return False, f"Corrupted HDF5 file: {e}"
+
+def safe_h5_open(filepath, mode='r'):
+    """Safely open HDF5 file with validation."""
+    is_valid, msg = validate_h5_file(filepath)
+    if not is_valid and mode == 'r':
+        raise OSError(f"Cannot open corrupted file: {msg}")
+    return h5py.File(filepath, mode)
+
+def recover_corrupted_worker(worker_file, farm_id, farm_type, seed, retry_func):
+    """Attempt to recover from a corrupted worker file."""
+    print(f"\n⚠️  Attempting recovery for corrupted file: {worker_file}")
+    print(f"   Farm: {farm_id}, Type: {farm_type}, Seed: {seed}")
+    
+    # Remove corrupted file
+    try:
+        os.remove(worker_file)
+        print(f"   Removed corrupted file")
+    except:
+        pass
+    
+    # Retry the optimization
+    try:
+        print(f"   Retrying optimization...")
+        retry_func(farm_id, farm_type, seed)
+        return True
+    except Exception as e:
+        print(f"   Recovery failed: {e}")
+        return False
+
+def main():
+    # ... your existing setup code ...
+    
+    # MODIFIED: After parallel execution, validate all files before aggregation
+    worker_files = []  # Your list of worker file paths
+    
+    corrupted_files = []
+    for idx, worker_file in enumerate(worker_files):
+        is_valid, msg = validate_h5_file(worker_file)
+        if not is_valid:
+            corrupted_files.append((idx, worker_file, msg))
+            print(f"❌ Found corrupted file {idx}: {worker_file}")
+            print(f"   Reason: {msg}")
+    
+    if corrupted_files:
+        print(f"\n🚨 Found {len(corrupted_files)} corrupted worker files")
+        
+        # Option 1: Try automatic recovery (if you have the original parameters)
+        if ENABLE_AUTO_RECOVERY:  # Make this a config flag
+            print("Attempting automatic recovery...")
+            for idx, worker_file, _ in corrupted_files:
+                # You need to map worker file back to its parameters
+                params = get_params_from_filename(worker_file)  # Implement this
+                if params:
+                    success = recover_corrupted_worker(
+                        worker_file, 
+                        *params, 
+                        retry_func=your_optimization_function
+                    )
+                    if not success:
+                        print(f"Failed to recover {worker_file}")
+                        return 1  # Exit with error code
+        
+        # Option 2: Manual recovery with partial results
+        print("\n💡 Options:")
+        print("1. Run with --recover to attempt automatic recovery")
+        print("2. Continue with partial results using --skip-corrupted")
+        print("3. Check logs to identify which seeds failed and rerun manually")
+        
+        if not args.skip_corrupted:
+            raise RuntimeError(
+                f"Found {len(corrupted_files)} corrupted files. "
+                "Use --skip-corrupted to continue with partial results."
+            )
+        else:
+            print(f"⚠️  Skipping {len(corrupted_files)} corrupted files")
+            # Remove corrupted files from list
+            worker_files = [f for f in worker_files 
+                          if validate_h5_file(f)[0]]
+    
+    # MODIFIED: Use safe opening during aggregation
+    for worker_file in worker_files:
+        try:
+            with safe_h5_open(worker_file, 'r') as h5_in:
+                # Process file
+                pass
+        except Exception as e:
+            print(f"Fatal error reading {worker_file}: {e}")
+            if not args.skip_corrupted:
+                raise
+    
+    # ... rest of your code ...
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--skip-corrupted", action="store_true",
+                       help="Skip corrupted files and continue with partial results")
+    parser.add_argument("--recover", action="store_true",
+                       help="Attempt to recover corrupted files by rerunning")
+    parser.add_argument("--validate-only", action="store_true",
+                       help="Only validate existing files, don't run optimizations")
+    args = parser.parse_args()
+    
+    main()
+```
+
+## Alternative: Checkpoint-based Recovery
+Add checkpointing to avoid complete loss:
+
+```python
+def write_with_checkpoint(data, filename, tmp_suffix=".tmp"):
+    """Write HDF5 file with atomic rename to prevent corruption."""
+    tmp_file = filename + tmp_suffix
+    
+    # Write to temporary file
+    with h5py.File(tmp_file, 'w') as f:
+        # Write your data
+        for key, value in data.items():
+            f.create_dataset(key, data=value)
+    
+    # Atomically rename to final filename
+    os.rename(tmp_file, filename)
+    return filename
+```
+
+## Recovery Strategy for Your Current Situation:
+
+1. **Identify which file is corrupted:**
+```bash
+# Check all worker files
+find /path/to/worker/files -name "*.h5" -type f -exec python -c "
+import h5py, sys
+try:
+    with h5py.File(sys.argv[1], 'r'): pass
+    print(f'OK: {sys.argv[1]}')
+except:
+    print(f'CORRUPTED: {sys.argv[1]}')
+" {} \;
+```
+
+2. **Partial recovery option:** Modify your script to:
+   - Process only the valid 2999 files
+   - Log which seed/farm combination is missing
+   - Rerun just the missing optimization
+
+3. **Prevent future issues:**
+   - Add file validation after each worker completes
+   - Use atomic writes (write to temp, then rename)
+   - Implement periodic checkpointing
+   - Add timeout detection for stuck workers
+
+The key is to validate files immediately after creation and before aggregation, with options for graceful degradation or automatic recovery.

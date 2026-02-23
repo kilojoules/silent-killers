@@ -1,0 +1,270 @@
+Here's a script that propagates realistic measurement uncertainties through PyWake and computes Sobol sensitivity indices for WS_eff across a flow field:
+
+```python
+"""
+Script to propagate measurement uncertainties through PyWake and compute
+Sobol sensitivity indices of WS_eff across a flow field grid.
+"""
+
+import numpy as np
+import matplotlib.pyplot as plt
+from py_wake import BastankhahGaussian
+from py_wake.site import UniformSite
+from py_wake.wind_turbines import OneTypeWindTurbines
+from py_wake.examples.data import hornsrev1
+from SALib.sample import saltelli
+from SALib.analyze import sobol
+import xarray as xr
+from tqdm import tqdm
+import warnings
+warnings.filterwarnings('ignore')
+
+# ========================
+# 1. SETUP WIND FARM MODEL
+# ========================
+class MyWindTurbines(OneTypeWindTurbines):
+    def __init__(self):
+        OneTypeWindTurbines.__init__(
+            self,
+            name='MyTurbine',
+            diameter=80,
+            hub_height=70,
+            ct_func=lambda ws: np.interp(ws, [0, 100], [0.8, 0.8]),
+            power_func=lambda ws: np.interp(ws, [0, 100], [0, 1500]),
+            power_unit='kW'
+        )
+
+# Site setup
+site = UniformSite(p_wd=[1], ti=0.075)  # Single wind direction for demonstration
+wt = MyWindTurbines()
+wf_model = BastankhahGaussian(site, wt)
+
+# Wind farm layout (Horns Rev 1)
+x, y = hornsrev1.x, hornsrev1.y
+x = x[:10]  # Use first 10 turbines for faster computation
+y = y[:10]
+
+# ==============================
+# 2. DEFINE UNCERTAIN PARAMETERS
+# ==============================
+problem = {
+    'num_vars': 4,
+    'names': ['wind_speed', 'wind_dir', 'turbulence', 'shear'],
+    'bounds': [
+        [8.0, 12.0],      # Wind speed [m/s] ±20%
+        [-5.0, 5.0],      # Wind direction offset [deg]
+        [0.06, 0.10],     # Turbulence intensity
+        [0.10, 0.20]      # Wind shear exponent
+    ]
+}
+
+# ==============================
+# 3. SOBOL SAMPLING & SIMULATION
+# ==============================
+def run_simulation(params):
+    """Run single simulation with given parameters."""
+    ws, wd_offset, ti, shear = params
+    
+    # Adjust wind direction (wrap around 360°)
+    wd = (270 + wd_offset) % 360  # 270° is west wind
+    
+    # Create custom site with current parameters
+    site = UniformSite(p_wd=[1], ti=ti, shear=shear)
+    wf_model = BastankhahGaussian(site, wt)
+    
+    # Calculate flow field
+    sim_res = wf_model(x, y, ws=ws, wd=wd)
+    
+    # Extract WS_eff on a grid
+    grid_res = sim_res.flow_map(
+        x=np.linspace(-500, 1500, 100),
+        y=np.linspace(-500, 1500, 100)
+    )
+    
+    return grid_res.WS_eff.values
+
+# Generate samples
+n_samples = 512  # Total samples (2^N*(D+2) where N=4, D=512)
+param_values = saltelli.sample(problem, n_samples)
+
+print(f"Running {len(param_values)} simulations...")
+
+# Run simulations
+results = []
+for params in tqdm(param_values, desc="Simulations"):
+    results.append(run_simulation(params))
+
+results = np.array(results)  # Shape: (n_samples, grid_y, grid_x)
+
+# ==============================
+# 4. SOBOL SENSITIVITY ANALYSIS
+# ==============================
+print("Computing Sobol indices...")
+
+# Reshape for SALib (samples x outputs)
+output_flat = results.reshape(len(param_values), -1)
+
+# Calculate Sobol indices for each grid point
+Si_list = []
+for i in tqdm(range(output_flat.shape[1]), desc="Grid points"):
+    Si = sobol.analyze(
+        problem,
+        output_flat[:, i],
+        calc_second_order=False,
+        print_to_console=False
+    )
+    Si_list.append({
+        'S1': Si['S1'],
+        'ST': Si['ST']
+    })
+
+# Reshape back to grid
+S1_grid = np.zeros((100, 100, 4))
+ST_grid = np.zeros((100, 100, 4))
+
+for idx, Si in enumerate(Si_list):
+    y_idx = idx // 100
+    x_idx = idx % 100
+    S1_grid[y_idx, x_idx, :] = Si['S1']
+    ST_grid[y_idx, x_idx, :] = Si['ST']
+
+# ==============================
+# 5. VISUALIZATION
+# ==============================
+fig, axes = plt.subplots(2, 4, figsize=(20, 10))
+fig.suptitle('Sobol Sensitivity Indices for WS_eff', fontsize=16)
+
+param_names = problem['names']
+titles = ['Wind Speed', 'Wind Direction', 'Turbulence', 'Shear']
+
+for i in range(4):
+    # First-order indices
+    im1 = axes[0, i].imshow(
+        S1_grid[:, :, i],
+        extent=[-500, 1500, -500, 1500],
+        origin='lower',
+        cmap='viridis',
+        vmin=0,
+        vmax=1
+    )
+    axes[0, i].scatter(x, y, c='red', s=20, label='Turbines')
+    axes[0, i].set_title(f'S1: {titles[i]}')
+    axes[0, i].set_xlabel('x [m]')
+    axes[0, i].set_ylabel('y [m]')
+    axes[0, i].legend()
+    plt.colorbar(im1, ax=axes[0, i])
+    
+    # Total-order indices
+    im2 = axes[1, i].imshow(
+        ST_grid[:, :, i],
+        extent=[-500, 1500, -500, 1500],
+        origin='lower',
+        cmap='plasma',
+        vmin=0,
+        vmax=1
+    )
+    axes[1, i].scatter(x, y, c='red', s=20, label='Turbines')
+    axes[1, i].set_title(f'ST: {titles[i]}')
+    axes[1, i].set_xlabel('x [m]')
+    axes[1, i].set_ylabel('y [m]')
+    axes[1, i].legend()
+    plt.colorbar(im2, ax=axes[1, i])
+
+plt.tight_layout()
+plt.savefig('sobol_sensitivity_flow_field.png', dpi=150, bbox_inches='tight')
+plt.show()
+
+# ==============================
+# 6. SAVE RESULTS
+# ==============================
+# Create xarray dataset
+ds = xr.Dataset(
+    {
+        'S1': (['y', 'x', 'parameter'], S1_grid),
+        'ST': (['y', 'x', 'parameter'], ST_grid)
+    },
+    coords={
+        'x': np.linspace(-500, 1500, 100),
+        'y': np.linspace(-500, 1500, 100),
+        'parameter': param_names
+    }
+)
+
+# Add metadata
+ds.attrs['description'] = 'Sobol sensitivity indices for WS_eff'
+ds.attrs['wind_farm'] = 'Horns Rev 1 (10 turbines)'
+ds.attrs['model'] = 'BastankhahGaussian'
+ds.attrs['samples'] = n_samples
+
+# Save to NetCDF
+ds.to_netcdf('sobol_sensitivity_results.nc')
+print("Results saved to 'sobol_sensitivity_results.nc'")
+
+# ==============================
+# 7. SUMMARY STATISTICS
+# ==============================
+print("\n=== Sensitivity Summary ===")
+print("Average first-order indices across domain:")
+for i, name in enumerate(param_names):
+    avg_s1 = np.nanmean(S1_grid[:, :, i])
+    avg_st = np.nanmean(ST_grid[:, :, i])
+    print(f"{name:15s}: S1={avg_s1:.3f}, ST={avg_st:.3f}")
+
+# Find maximum sensitivity locations
+for i, name in enumerate(param_names):
+    max_s1_idx = np.unravel_index(np.nanargmax(S1_grid[:, :, i]), S1_grid[:, :, i].shape)
+    max_st_idx = np.unravel_index(np.nanargmax(ST_grid[:, :, i]), ST_grid[:, :, i].shape)
+    
+    x_coord = np.linspace(-500, 1500, 100)[max_s1_idx[1]]
+    y_coord = np.linspace(-500, 1500, 100)[max_s1_idx[0]]
+    
+    print(f"\n{name}:")
+    print(f"  Max S1 at (x={x_coord:.0f}, y={y_coord:.0f}) = {S1_grid[max_s1_idx]:.3f}")
+    
+    x_coord = np.linspace(-500, 1500, 100)[max_st_idx[1]]
+    y_coord = np.linspace(-500, 1500, 100)[max_st_idx[0]]
+    print(f"  Max ST at (x={x_coord:.0f}, y={y_coord:.0f}) = {ST_grid[max_st_idx]:.3f}")
+```
+
+## Key Features:
+
+1. **Uncertainty Propagation**: 
+   - Wind speed ±20% (8-12 m/s)
+   - Wind direction offset ±5°
+   - Turbulence intensity (0.06-0.10)
+   - Shear exponent (0.10-0.20)
+
+2. **Sobol Analysis**:
+   - Computes first-order (S1) and total-order (ST) indices
+   - Maps sensitivity across entire flow field
+   - Accounts for parameter interactions
+
+3. **Visualization**:
+   - 8-panel plot showing S1 and ST for each parameter
+   - Color-coded sensitivity maps
+   - Turbine positions overlaid
+
+4. **Output**:
+   - Saves sensitivity maps as PNG
+   - Exports results as NetCDF with metadata
+   - Prints summary statistics
+
+## Usage:
+
+```bash
+# Install requirements
+pip install py-wake SALib xarray matplotlib tqdm
+
+# Run the script
+python sobol_sensitivity.py
+```
+
+## Notes:
+
+- Reduce `n_samples` for faster runs (minimum 256 for Sobol)
+- Adjust grid resolution in `flow_map()` for detail/speed trade-off
+- The script uses 10 turbines from Horns Rev 1 for demonstration
+- First-order indices (S1) show direct effects, total-order (ST) includes interactions
+- High ST but low S1 indicates parameter interactions are important
+
+The output shows where in the flow field WS_eff is most sensitive to each uncertain parameter, helping identify critical measurement parameters and locations requiring higher precision.

@@ -1,0 +1,45 @@
+The error message
+
+  OSError: Unable to synchronously open file (file signature not found)
+
+indicates that one of the worker files isn’t a valid HDF5 file. In your pipeline you are joining many worker files in the final step, and one of them is either missing, incomplete, or corrupted so that h5py can’t read it. (It’s worth noting that even though most files process fine, if one file is bad the join operation fails.)
+
+To reliably detect an invalid worker file and stop the process cleanly, you should modify the code that reads the file to explicitly catch the error (or even perform a preliminary check) before proceeding. Here’s one way you can do it:
+
+1. Wrap the file-open in a try/except block.  
+2. Log an appropriate error message if the file is invalid.  
+3. Cleanly exit the process (or raise an exception that stops the join).
+
+For example, you might change this part of your main code:
+
+  with h5py.File(worker_file, 'r') as h5_in:
+    # process the file
+
+to something like:
+
+------------------------------------------------------------
+import sys
+import logging
+import h5py
+
+logger = logging.getLogger('mp_main')  # or whichever logger you are using
+
+def open_worker_file(worker_file):
+    try:
+        file_handle = h5py.File(worker_file, 'r')
+        return file_handle
+    except OSError as e:
+        logger.error(f"Error opening worker file {worker_file}: {e}")
+        # Optionally do any cleanup here...
+        sys.exit(1)  # Exits the whole process cleanly
+
+# Later in your code, when you process each worker file:
+with open_worker_file(worker_file) as h5_in:
+    # proceed with processing the file
+------------------------------------------------------------
+
+In this modified version, if h5py fails because the file signature is not found (or any other OSError occurs), an error is logged and the process stops by calling sys.exit(1).
+
+If you prefer to accumulate errors and then exit after processing all the files, you could instead collect the names of invalid files and, after checking, decide whether to proceed or exit. But if the requirement is to stop immediately when any file is found to be invalid, wrapping the file-open in a try/except and calling sys.exit() is an effective solution.
+
+This should help you “fail fast” if any worker file is corrupt, ensuring you don’t run all 50 seeds only to discover some data is missing later.

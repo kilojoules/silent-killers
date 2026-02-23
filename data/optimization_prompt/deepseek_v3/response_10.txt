@@ -1,0 +1,196 @@
+Looking at your error and output, I can diagnose the issue:
+
+## Problem Diagnosis
+
+1. **The script completed 2999/3000 optimizations successfully** - meaning one worker process failed
+2. **The error occurs during the file joining phase** when trying to read a corrupted/incomplete worker file
+3. **The "file signature not found" error** indicates the HDF5 file is either:
+   - Corrupted (incomplete write due to process crash)
+   - Empty (0 bytes)
+   - Not a valid HDF5 file format
+
+## Root Cause
+One of your worker processes likely crashed or was killed while writing its results file, leaving a corrupted/incomplete HDF5 file. When the main script tries to read all worker files to combine them, it fails on the corrupted file.
+
+## Solution: Modified Script with Robust Error Handling
+
+Here's how to modify your script to detect and handle this reliably:
+
+```python
+import os
+import h5py
+import logging
+import traceback
+from pathlib import Path
+
+def validate_h5_file(filepath):
+    """Validate that a file is a readable HDF5 file."""
+    try:
+        with h5py.File(filepath, 'r') as f:
+            # Try to access something to ensure it's readable
+            _ = f.keys()
+        return True
+    except Exception as e:
+        logging.error(f"Invalid HDF5 file {filepath}: {e}")
+        return False
+
+def safe_read_h5_file(filepath):
+    """Safely read an HDF5 file with error recovery."""
+    try:
+        with h5py.File(filepath, 'r') as f:
+            return f
+    except OSError as e:
+        logging.error(f"Failed to read {filepath}: {e}")
+        # Check if file exists and has content
+        if os.path.exists(filepath):
+            file_size = os.path.getsize(filepath)
+            if file_size == 0:
+                logging.error(f"File {filepath} is empty (0 bytes)")
+            else:
+                logging.error(f"File {filepath} has {file_size} bytes but is corrupted")
+        return None
+    except Exception as e:
+        logging.error(f"Unexpected error reading {filepath}: {e}")
+        return None
+
+def main():
+    # ... your existing setup code ...
+    
+    # MODIFIED: Validate all worker files before processing
+    valid_worker_files = []
+    corrupted_files = []
+    
+    for worker_file in worker_files:
+        if validate_h5_file(worker_file):
+            valid_worker_files.append(worker_file)
+        else:
+            corrupted_files.append(worker_file)
+            logging.warning(f"Skipping corrupted worker file: {worker_file}")
+    
+    if corrupted_files:
+        logging.error(f"Found {len(corrupted_files)} corrupted worker files:")
+        for cf in corrupted_files:
+            logging.error(f"  - {cf}")
+        
+        # Option 1: Stop immediately (recommended for data integrity)
+        raise RuntimeError(f"Found {len(corrupted_files)} corrupted worker files. "
+                          "Cannot proceed with incomplete data.")
+        
+        # Option 2: Continue with available data (if you want partial results)
+        # logging.warning(f"Proceeding with {len(valid_worker_files)} valid files "
+        #                f"out of {len(worker_files)} total")
+    
+    # Process only valid files
+    for worker_file in valid_worker_files:
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                # ... your processing code ...
+                pass
+        except Exception as e:
+            logging.error(f"Error processing {worker_file}: {e}")
+            raise  # Re-raise to stop the process
+
+def check_worker_files_before_start(worker_dir, expected_count):
+    """Check worker files before starting the join process."""
+    worker_files = sorted(Path(worker_dir).glob("worker_*.h5"))
+    
+    if len(worker_files) != expected_count:
+        logging.warning(f"Expected {expected_count} worker files, found {len(worker_files)}")
+    
+    # Check each file
+    for wf in worker_files:
+        if not wf.exists():
+            logging.error(f"Missing worker file: {wf}")
+            continue
+            
+        size = wf.stat().st_size
+        if size == 0:
+            logging.error(f"Empty worker file: {wf} (0 bytes)")
+        elif size < 1024:  # Adjust threshold as needed
+            logging.warning(f"Very small worker file: {wf} ({size} bytes)")
+        
+        # Try to open it
+        try:
+            with h5py.File(wf, 'r') as f:
+                # Check for expected datasets
+                if 'results' not in f:
+                    logging.error(f"Worker file {wf} missing 'results' dataset")
+        except Exception as e:
+            logging.error(f"Corrupted worker file {wf}: {e}")
+    
+    return worker_files
+
+# Add this to your worker process to ensure clean writes
+def safe_write_results(filename, results):
+    """Safely write results with atomic file replacement."""
+    import tempfile
+    
+    # Write to temporary file first
+    temp_filename = filename + ".tmp"
+    
+    try:
+        with h5py.File(temp_filename, 'w') as f:
+            # Write your data
+            f.create_dataset('results', data=results)
+            f.attrs['completed'] = True
+            f.attrs['timestamp'] = time.time()
+        
+        # Atomic rename (works on Unix/Linux)
+        os.rename(temp_filename, filename)
+        logging.info(f"Successfully wrote {filename}")
+        
+    except Exception as e:
+        logging.error(f"Failed to write {filename}: {e}")
+        # Clean up temporary file
+        if os.path.exists(temp_filename):
+            os.remove(temp_filename)
+        raise
+```
+
+## Recovery Strategy
+
+Since you have 2999 successful optimizations, you can recover:
+
+1. **Identify the corrupted file:**
+```bash
+# Check file sizes
+ls -lh worker_*.h5 | sort -k5
+
+# Check which files are readable
+python -c "import h5py; [print(f) for f in sorted(glob('worker_*.h5')) if os.path.getsize(f) > 0 and os.path.getsize(f) < 1024]"
+```
+
+2. **Re-run only the missing optimization:**
+   - Identify which seed/farm combination failed (look at your logs)
+   - Run just that specific case
+
+3. **Alternative: Skip the corrupted file and continue:**
+   - Modify the script to skip corrupted files
+   - Note that you'll have 2999/3000 results instead of 3000
+
+## Prevention for Future Runs
+
+Add this to your worker processes:
+```python
+import signal
+import atexit
+
+def cleanup_on_exit(signum=None, frame=None):
+    """Clean up temporary files on exit."""
+    if os.path.exists("temp_results.h5"):
+        os.remove("temp_results.h5")
+    if signum:
+        exit(1)
+
+# Register cleanup handlers
+atexit.register(cleanup_on_exit)
+signal.signal(signal.SIGTERM, cleanup_on_exit)
+signal.signal(signal.SIGINT, cleanup_on_exit)
+```
+
+This approach will:
+1. Detect corrupted files early
+2. Provide clear error messages
+3. Stop cleanly when data integrity is compromised
+4. Allow for recovery strategies
+5. Prevent future corruption with atomic writes

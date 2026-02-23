@@ -1,0 +1,37 @@
+It looks like one of your worker HDF5 files is corrupted or incomplete (the “file signature not found” error is a common symptom when the file isn’t really an HDF5 file), so when your join‐step goes to open it the process crashes. In other words, one of the files isn’t valid because it was either written incompletely (e.g. if the worker process was killed) or the joining procedure produced an invalid file.
+
+To fix this you need to:
+
+1. Detect invalid files before you proceed. You can do this by checking whether the file is a valid HDF5 file (using h5py.is_hdf5) or by wrapping the file‐opening code in a try/except block that catches the error.
+
+2. When you do find an invalid file, log an error message and stop the process cleanly (e.g. by exiting or raising an error that terminates the job in a controlled way).
+
+For example, you might rewrite the part of your script that processes each worker file like this:
+
+------------------------------------------------
+import sys
+import logging
+import h5py
+
+logger = logging.getLogger("worker_join")
+worker_files = ["worker1.h5", "worker2.h5", "worker3.h5"]  # for example
+
+for worker_file in worker_files:
+    # First check whether the file is an HDF5 file
+    if not h5py.is_hdf5(worker_file):
+        logger.error("Invalid HDF5 file detected: %s. Aborting join operation.", worker_file)
+        sys.exit(1)  # or raise an exception, or clean up as needed
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Process the file as needed...
+            pass
+    except OSError as e:
+        logger.error("Failed to open worker file %s: %s", worker_file, e)
+        sys.exit(1)
+------------------------------------------------
+
+By putting these checks and catching the OSError explicitly, you ensure that if any worker file is invalid, you will detect it reliably and stop further processing in a controlled fashion.
+
+If you’re processing a large number of seeds or files, you might even want to scan the entire set before beginning your join phase. That way, you can collect a list of all invalid files for later recovery or investigation rather than failing at the first error.
+
+Using these modifications, your script will detect invalid worker files (for example, if a joining operation produced a file signature error) before trying to read them, and stop cleanly rather than crashing unexpectedly.

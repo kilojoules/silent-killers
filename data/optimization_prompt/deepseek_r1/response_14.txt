@@ -1,0 +1,229 @@
+Based on the error and log output, I can diagnose several issues and provide solutions:
+
+## Diagnosis
+
+1. **Corrupted worker file**: The error `"file signature not found"` indicates one of the HDF5 worker files is corrupted/incomplete.
+2. **Process didn't stop cleanly**: The main process says "Completed 2999/3000 optimizations successfully" but then crashes during file merging.
+3. **Missing data**: You lost 1 out of 3000 optimizations (2999/3000).
+4. **Repetitive output**: The repeated lines about "130 possible points" suggest worker processes might have continued running after the main process started merging.
+
+## Root Cause
+The issue occurs during the file merging phase when the main process tries to read worker files. One file is either:
+- Incomplete (interrupted during writing)
+- Empty (0 bytes)
+- Corrupted file format
+
+## Script Modifications for Robust Error Handling
+
+### 1. **Validate worker files before merging**
+```python
+import h5py
+import os
+import sys
+
+def validate_h5_file(filepath):
+    """Validate HDF5 file before reading."""
+    try:
+        # Check if file exists and has content
+        if not os.path.exists(filepath):
+            return False, f"File does not exist: {filepath}"
+        
+        if os.path.getsize(filepath) == 0:
+            return False, f"File is empty (0 bytes): {filepath}"
+        
+        # Try to open file to validate HDF5 format
+        with h5py.File(filepath, 'r') as f:
+            # Optional: check for expected structure
+            if len(f.keys()) == 0:
+                return False, f"File has no datasets: {filepath}"
+        return True, "Valid"
+    except Exception as e:
+        return False, f"File validation failed: {e}"
+
+def merge_worker_files_safely(worker_files, output_file):
+    """Safely merge worker files with validation."""
+    valid_files = []
+    invalid_files = []
+    
+    for worker_file in worker_files:
+        is_valid, message = validate_h5_file(worker_file)
+        if is_valid:
+            valid_files.append(worker_file)
+        else:
+            invalid_files.append((worker_file, message))
+            print(f"WARNING: Invalid worker file: {worker_file} - {message}")
+    
+    if invalid_files:
+        print(f"\nERROR: Found {len(invalid_files)} invalid worker files!")
+        for filepath, reason in invalid_files:
+            print(f"  - {filepath}: {reason}")
+        
+        # Ask user what to do
+        response = input("\nContinue with valid files only? (y/n): ").lower()
+        if response != 'y':
+            print("Aborting merge process.")
+            sys.exit(1)
+    
+    # Continue with valid files only
+    print(f"\nMerging {len(valid_files)} valid files...")
+    
+    # Your existing merge code here, using valid_files instead of worker_files
+```
+
+### 2. **Add file locking/atomic writes in worker processes**
+```python
+import tempfile
+import shutil
+
+def atomic_write_h5(data, filename):
+    """Write HDF5 file atomically to prevent corruption."""
+    temp_file = None
+    try:
+        # Create temporary file in same directory
+        temp_fd, temp_file = tempfile.mkstemp(
+            suffix='.h5', 
+            dir=os.path.dirname(filename) if os.path.dirname(filename) else '.'
+        )
+        os.close(temp_fd)
+        
+        # Write to temp file
+        with h5py.File(temp_file, 'w') as f:
+            # Write your data here
+            # Example: f.create_dataset('results', data=data)
+            pass
+        
+        # Atomically move temp file to final location
+        shutil.move(temp_file, filename)
+        return True
+    except Exception as e:
+        print(f"Error writing {filename}: {e}")
+        # Clean up temp file if it exists
+        if temp_file and os.path.exists(temp_file):
+            os.unlink(temp_file)
+        return False
+```
+
+### 3. **Add pre-merge verification and recovery**
+```python
+def verify_completion(expected_files, worker_pattern):
+    """Verify all expected worker files exist and are valid."""
+    missing = []
+    corrupted = []
+    
+    for i in range(expected_files):
+        worker_file = worker_pattern.format(i)  # Adjust pattern as needed
+        
+        if not os.path.exists(worker_file):
+            missing.append(worker_file)
+        else:
+            try:
+                with h5py.File(worker_file, 'r'):
+                    pass  # File opens successfully
+            except Exception as e:
+                corrupted.append((worker_file, str(e)))
+    
+    return missing, corrupted
+
+def attempt_recovery(missing_indices, worker_pattern):
+    """Attempt to re-run specific missing/corrupted optimizations."""
+    # You'll need to implement this based on your parameter ranges
+    # Example: Re-run farm 9, type 5, seed 49
+    pass
+```
+
+### 4. **Main process with robust error handling**
+```python
+def main():
+    try:
+        # Your existing optimization code...
+        
+        # After optimizations complete, verify before merging
+        worker_files = glob.glob("worker_*.h5")  # Adjust pattern
+        
+        missing, corrupted = verify_completion(
+            expected_count=3000, 
+            worker_pattern="worker_{}.h5"
+        )
+        
+        if missing or corrupted:
+            logger.error(f"Found {len(missing)} missing and {len(corrupted)} corrupted files")
+            
+            # Save recovery information
+            with open("recovery_info.txt", "w") as f:
+                f.write("Missing files:\n")
+                for m in missing:
+                    f.write(f"{m}\n")
+                f.write("\nCorrupted files:\n")
+                    for c, err in corrupted:
+                    f.write(f"{c}: {err}\n")
+            
+            # Optional: Attempt automatic recovery
+            if args.auto_recover:
+                attempt_recovery(missing_indices, worker_pattern)
+            else:
+                logger.error("Cannot proceed with merge. Check recovery_info.txt")
+                sys.exit(1)
+        
+        # Safe merging
+        merge_worker_files_safely(worker_files, "final_results.h5")
+        
+    except KeyboardInterrupt:
+        logger.info("Process interrupted by user")
+        sys.exit(130)  # Standard exit code for SIGINT
+    except Exception as e:
+        logger.error(f"Fatal error: {e}", exc_info=True)
+        sys.exit(1)
+```
+
+### 5. **Command-line recovery option**
+Add a recovery mode to your script:
+```python
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--recover", action="store_true", 
+                       help="Recover missing/corrupted optimizations")
+    parser.add_argument("--check-only", action="store_true",
+                       help="Check file integrity without running optimizations")
+    args = parser.parse_args()
+    
+    if args.check_only:
+        # Just verify existing files
+        verify_and_report()
+    elif args.recover:
+        # Run recovery mode
+        run_recovery()
+    else:
+        # Normal execution
+        main()
+```
+
+## Recovery Strategy for Your Current Situation
+
+Since you have 2999/3000 successful optimizations:
+
+1. **Identify the missing file**:
+```bash
+# List all worker files
+ls -la worker_*.h5 | wc -l
+
+# Find which index is missing
+for i in {0..2999}; do
+    if [ ! -f "worker_${i}.h5" ]; then
+        echo "Missing: worker_${i}.h5"
+    fi
+done
+```
+
+2. **Create a recovery script** to run just the missing optimization based on your file naming convention.
+
+3. **Modify your main script** to accept a range of indices to optimize, so you can run only the missing ones.
+
+## Prevention Tips
+
+1. **Use `atexit` handler** for cleanup on unexpected exits
+2. **Implement heartbeats** for long-running worker processes
+3. **Add timeout mechanisms** to prevent hanging processes
+4. **Use database instead of files** (e.g., SQLite) for more atomic operations
+5. **Implement checkpointing** to resume from last good state
+
+These modifications will make your script much more robust and provide clear recovery paths when errors occur.

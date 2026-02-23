@@ -1,0 +1,45 @@
+The error message
+
+  OSError: Unable to synchronously open file (file signature not found)
+
+usually indicates that one of your HDF5 worker files is corrupt or incomplete—for example, it may be truncated or not written properly. In your case the file that is attempted to be joined isn’t a valid HDF5 file. This situation appears because the joining process doesn’t catch an invalid (or missing) worker file early enough, so when the main routine tries to open it with h5py.File(worker_file, 'r'), it crashes.
+
+To fix this and ensure that the process stops cleanly when there is an invalid worker file, you should modify the script to check the integrity of each worker file before processing. One common solution is to wrap the file-opening operation in a try/except block that catches the OSError (or a more specific exception if available), logs an error (or even cleans up resources), and then stops the process gracefully.
+
+For example, you can modify your worker file processing loop as follows:
+
+------------------------------------------------------------
+#!/usr/bin/env python3
+import sys
+import logging
+import h5py
+
+def process_worker_file(worker_file):
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Process the file contents…
+            pass
+    except OSError as e:
+        logging.error("Error opening worker file %s: %s", worker_file, e)
+        # Optionally: do any cleanup required here.
+        sys.exit(1)  # Stop the entire process cleanly.
+        
+def main():
+    worker_files = [...]  # List of worker file paths (e.g., for seeds, etc.)
+    for worker_file in worker_files:
+        process_worker_file(worker_file)
+    # Continue if needed…
+    
+if __name__ == '__main__':
+    main()
+------------------------------------------------------------
+
+Key points in this modification:
+
+1. The try/except block catches an OSError (or any file-related issues), logs an informative error message, and uses sys.exit(1) to stop the process cleanly.
+
+2. By wrapping each file-opening operation in isolated error handling, you ensure that the joining operation can detect any invalid file immediately rather than proceeding until the error occurs during file I/O.
+
+3. This pattern can also be extended. For a larger system, you might use a status flag or a custom exception to trigger termination if even one worker file is invalid.
+
+With this change, if any worker file turns out to be corrupt (or missing some expected file signature), the script will log the error and terminate immediately. This is useful especially when running numerous seeds (like your intended 50 seeds), because it prevents the process from quietly ignoring the issue and attempts to expose all corrupt files up front.

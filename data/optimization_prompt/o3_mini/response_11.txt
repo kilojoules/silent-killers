@@ -1,0 +1,69 @@
+The problem appears to be that one (or more) of the “worker” files isn’t a valid HDF5 file—when the script later tries to open it with h5py.File(..., 'r'), the file header isn’t found. This likely happens because a worker process either wrote an incomplete (or corrupted) file or didn’t write one at all before the joining operation began. In a multiprocess or distributed context, if one worker produces an invalid file and you only detect it when reading for a join, you might end up with a long run that fails near the end.
+
+To solve this, you want your main (or joining) script to verify the validity of each worker file before trying to open it. There are two main strategies:
+
+1. Do an early pre-check for HDF5 validity (using h5py.is_hdf5) on every worker file.
+2. Wrap the h5py.File() call in a try/except block so that if an I/O (or other) error occurs, you catch it and abort cleanly.
+
+Below is an example of how you might modify your script so that it detects an invalid worker file early and stops processing:
+
+--------------------------------------------------
+#!/usr/bin/env python3
+import sys
+import logging
+import h5py
+import os
+
+def validate_worker_file(worker_file):
+    # Check that the file exists
+    if not os.path.exists(worker_file):
+        logging.error("Worker file %s does not exist", worker_file)
+        return False
+    # Use h5py's testing utility to see if the file is a proper HDF5 file
+    if not h5py.is_hdf5(worker_file):
+        logging.error("Worker file %s is not a valid HDF5 file (file signature not found)", worker_file)
+        return False
+    return True
+
+def process_worker_file(worker_file):
+    try:
+        # Validate file first
+        if not validate_worker_file(worker_file):
+            # If not valid, we can immediately abort.
+            raise ValueError(f"Invalid file: {worker_file}")
+            
+        # Now open the file safely knowing that it should be an HDF5 file.
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Process your data here
+            logging.info("Processing worker file: %s", worker_file)
+            # ... your processing code ...
+    except Exception as e:
+        logging.error("Error processing worker file %s: %s", worker_file, e)
+        # Exit the entire process cleanly if one worker file is invalid.
+        sys.exit(1)
+
+def main():
+    # Imagine worker_files is a list of filepaths your worker processes produced.
+    worker_files = [
+        "worker_file_1.h5",
+        "worker_file_2.h5",
+        # ... etc ...
+    ]
+    
+    for worker_file in worker_files:
+        process_worker_file(worker_file)
+    
+    logging.info("All worker files processed successfully.")
+    
+if __name__ == '__main__':
+    main()
+--------------------------------------------------
+
+Key points in this modified code:
+• Use h5py.is_hdf5() to check whether the file contains a proper HDF5 signature.
+• If the file is missing or invalid, log an error and then raise an exception (or call sys.exit(1)) so that the process is immediately terminated rather than continuing.
+• Wrapping the file-opening logic in a try/except block ensures that unexpected errors (like permission issues) are caught quickly.
+
+By incorporating a validity check for each worker file before attempting to open them (or immediately handling exceptions), you ensure that any error is caught as soon as possible. This stops the joining operation cleanly, rather than letting the script run until it crashes deep in the pipeline.
+
+This approach makes the error detection more reliable and lets you (or an automated monitoring system) know immediately when one of the worker’s outputs is invalid, so you can take the appropriate recovery action.

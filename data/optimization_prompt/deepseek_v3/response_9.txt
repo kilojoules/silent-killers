@@ -1,0 +1,196 @@
+Looking at your error, I can see the issue clearly:
+
+## Diagnosis
+
+1. **The Problem**: Worker process #3000 (the last one) created a corrupted/incomplete HDF5 file. The main process successfully completed 2999/3000 optimizations, but when it tried to open worker file #3000 to merge results, it failed with "file signature not found" - meaning the HDF5 file is either:
+   - Empty (0 bytes)
+   - Partially written
+   - Corrupted during writing
+
+2. **Root Cause**: The worker process likely:
+   - Was interrupted (killed, crashed, or timed out)
+   - Didn't properly close the HDF5 file
+   - Ran out of disk space or memory during write
+   - The script was terminated before all workers finished
+
+3. **Current State**: You have 2999 successful optimizations, but the final merge failed because one worker file is invalid.
+
+## Solution: Modified Script with Robust Error Handling
+
+Here's how to modify your script to prevent this issue:
+
+```python
+import h5py
+import os
+import sys
+import traceback
+from pathlib import Path
+
+def safe_open_h5py(filepath, mode='r'):
+    """Safely open HDF5 file with validation"""
+    try:
+        # Check if file exists and has content
+        if not os.path.exists(filepath):
+            raise FileNotFoundError(f"File not found: {filepath}")
+        
+        if os.path.getsize(filepath) == 0:
+            raise ValueError(f"File is empty: {filepath}")
+        
+        # Try to open and validate
+        with h5py.File(filepath, 'r') as f:
+            # Quick validation - try to access something
+            if len(f.keys()) == 0:
+                raise ValueError(f"File has no datasets: {filepath}")
+            return f
+    except Exception as e:
+        raise RuntimeError(f"Failed to open/validate HDF5 file {filepath}: {str(e)}")
+
+def validate_worker_files(worker_files):
+    """Validate all worker files before processing"""
+    valid_files = []
+    corrupted_files = []
+    
+    for wf in worker_files:
+        try:
+            safe_open_h5py(wf)
+            valid_files.append(wf)
+            print(f"✓ Valid: {wf}")
+        except Exception as e:
+            corrupted_files.append((wf, str(e)))
+            print(f"✗ Corrupted: {wf} - {e}")
+    
+    return valid_files, corrupted_files
+
+def main():
+    # ... your existing code ...
+    
+    # MODIFIED SECTION: When merging worker files
+    worker_files = [f"worker_{i}.h5" for i in range(num_workers)]
+    
+    # Validate all files first
+    valid_files, corrupted_files = validate_worker_files(worker_files)
+    
+    if corrupted_files:
+        print(f"\n⚠️  WARNING: Found {len(corrupted_files)} corrupted files:")
+        for cf, error in corrupted_files:
+            print(f"  - {cf}: {error}")
+        
+        # Option 1: Stop immediately
+        # sys.exit(1)
+        
+        # Option 2: Continue with valid files and log missing ones
+        print(f"Continuing with {len(valid_files)} valid files...")
+        worker_files = valid_files
+    
+    # Now process only valid files
+    for worker_file in worker_files:
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                # ... your processing code ...
+                pass
+        except Exception as e:
+            print(f"ERROR: Failed to process {worker_file}: {e}")
+            traceback.print_exc()
+            sys.exit(1)  # Stop on any processing error
+    
+    # ... rest of your code ...
+
+# Add this to worker processes too
+def worker_function(worker_id):
+    """Worker function with proper cleanup"""
+    output_file = f"worker_{worker_id}.h5"
+    
+    try:
+        # Create a temporary file first
+        temp_file = f"worker_{worker_id}_temp.h5"
+        
+        with h5py.File(temp_file, 'w') as h5_out:
+            # ... do your work ...
+            pass
+        
+        # Atomic rename when complete
+        os.rename(temp_file, output_file)
+        print(f"Worker {worker_id}: Successfully wrote {output_file}")
+        
+    except Exception as e:
+        print(f"Worker {worker_id}: ERROR - {e}")
+        traceback.print_exc()
+        
+        # Clean up partial files
+        if os.path.exists(temp_file):
+            os.remove(temp_file)
+        if os.path.exists(output_file):
+            os.remove(output_file)  # Remove any corrupted output
+        raise  # Re-raise to propagate error
+    
+    finally:
+        # Ensure files are closed
+        pass
+```
+
+## Recovery Strategy for Your Current Situation
+
+Since you have 2999 successful files and 1 corrupted:
+
+```python
+def recover_existing_data():
+    """Recover data from existing worker files"""
+    import glob
+    
+    # Find all worker files
+    worker_files = sorted(glob.glob("worker_*.h5"))
+    
+    # Validate each one
+    valid_data = []
+    corrupted_files = []
+    
+    for wf in worker_files:
+        try:
+            with h5py.File(wf, 'r') as f:
+                # Extract your data
+                data = f['your_dataset'][:]  # Adjust based on your actual data structure
+                valid_data.append(data)
+                print(f"Recovered data from {wf}")
+        except Exception as e:
+            corrupted_files.append(wf)
+            print(f"Failed to recover {wf}: {e}")
+    
+    print(f"\nRecovery complete:")
+    print(f"  Successfully recovered: {len(valid_data)} files")
+    print(f"  Corrupted: {len(corrupted_files)} files")
+    
+    if corrupted_files:
+        print(f"  Corrupted files: {corrupted_files}")
+    
+    # Combine valid data
+    if valid_data:
+        combined_data = np.concatenate(valid_data, axis=0)  # Adjust based on your data
+        return combined_data
+    
+    return None
+
+# Run recovery
+recovered_data = recover_existing_data()
+if recovered_data is not None:
+    print(f"Recovered {len(recovered_data)} total entries")
+    # Save to final output file
+    with h5py.File("recovered_output.h5", 'w') as f:
+        f.create_dataset('layouts', data=recovered_data)
+```
+
+## Key Improvements in the Modified Script:
+
+1. **Pre-validation**: Check all worker files before processing
+2. **Atomic writes**: Workers write to temp files, then rename when complete
+3. **Error isolation**: Corrupted files don't crash the entire process
+4. **Clean shutdown**: Proper cleanup on worker failure
+5. **Progress tracking**: Log which files are valid/corrupted
+
+## To fix your current run:
+
+1. First run the recovery script to save your 2999 successful results
+2. Modify your main script with the error handling above
+3. Re-run only the missing/corrupted worker (#3000)
+4. Merge all results together
+
+This approach ensures that a single worker failure won't lose all your data and provides clear diagnostics about what went wrong.

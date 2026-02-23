@@ -1,0 +1,36 @@
+The problem appears when the script attempts to open one of the “worker” HDF5 files (via h5py) and finds that its file signature isn’t valid. In other words, one of the files is either corrupt, truncated, or not an HDF5 file at all. When you later “join” (or load) all these files together, one bad file causes an OSError and aborts the process. To ensure that such errors are reliably detected—and that the process is halted cleanly—you need to check or validate each worker file before proceeding. One common approach is to wrap the file-opening code in a try/except block so that if any file is invalid, you log the error and exit gracefully.
+
+For example, if your original code looks like this:
+
+------------------------------------------------------------
+   for worker_file in worker_files:
+       with h5py.File(worker_file, 'r') as h5_in:
+           # process file...
+------------------------------------------------------------
+
+You can modify it like so:
+
+------------------------------------------------------------
+   import sys, logging
+
+   for worker_file in worker_files:
+       try:
+           with h5py.File(worker_file, 'r') as h5_in:
+               # process file...
+       except OSError as e:
+           logging.error(f"Error opening worker file {worker_file}: {e}")
+           # Optionally clean up resources here if needed
+           sys.exit(1)
+------------------------------------------------------------
+
+Here’s what happens with this modification:
+1. The try/except block attempts to open each worker file.
+2. If h5py raises an OSError (for example, “file signature not found”), the exception is caught.
+3. A clear error message is logged to indicate which file failed.
+4. The script then calls sys.exit(1) (or otherwise does a clean shutdown) so that processing stops immediately.
+
+This approach ensures that if any worker file is invalid, you’ll detect it right away, log the problem, and cleanly stop the rest of the processing rather than partially completing the join operation.
+
+An alternative or complementary approach might be to validate files proactively before merging—for example, by checking for file existence, file size, or even looking at a few bytes of the file header—but wrapping the file-open in try/except is usually the simplest and most robust method.
+
+By catching and handling the error explicitly, you’ll be able to run your script for the desired number of seeds (e.g. 50) and have it abort in a controlled way if it encounters any problematic worker files.

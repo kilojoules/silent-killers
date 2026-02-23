@@ -1,0 +1,194 @@
+Looking at your error, the issue is that one of the worker output files (HDF5 files) is corrupted or incomplete. The script successfully completed 2999 out of 3000 optimizations, but when it tried to open a worker file to merge the results, it encountered a corrupted file with an invalid HDF5 signature.
+
+## Diagnosis
+
+The problem occurs during the merging phase when the main process tries to read worker files. One of the files (likely from the last worker or a worker that crashed) is either:
+1. Empty or partially written
+2. Corrupted during writing
+3. Has an invalid HDF5 structure
+
+## Solution
+
+Here's how to modify the script to handle this reliably:
+
+### 1. Add file validation before merging
+
+```python
+import os
+import h5py
+import logging
+
+def validate_h5_file(filepath):
+    """Validate that an HDF5 file is readable and not corrupted."""
+    try:
+        with h5py.File(filepath, 'r') as f:
+            # Try to access a key attribute or dataset to ensure it's valid
+            if len(f.keys()) == 0:
+                logging.warning(f"File {filepath} is empty")
+                return False
+            return True
+    except (OSError, IOError, ValueError) as e:
+        logging.error(f"Corrupted file detected: {filepath} - {str(e)}")
+        return False
+```
+
+### 2. Modify the merging section to validate files
+
+In your main function (around line 448), replace the problematic section with:
+
+```python
+def main():
+    # ... existing code ...
+    
+    # Merge worker files
+    valid_worker_files = []
+    corrupted_files = []
+    
+    for worker_file in worker_files:
+        if validate_h5_file(worker_file):
+            valid_worker_files.append(worker_file)
+        else:
+            corrupted_files.append(worker_file)
+            logging.error(f"Skipping corrupted file: {worker_file}")
+    
+    if corrupted_files:
+        logging.error(f"Found {len(corrupted_files)} corrupted files: {corrupted_files}")
+        
+        # Option 1: Stop the process
+        raise RuntimeError(f"Corrupted worker files detected. Process stopped.")
+        
+        # Option 2: Continue with valid files (if acceptable)
+        # logging.warning(f"Continuing with {len(valid_worker_files)} valid files")
+    
+    # Now process only valid files
+    for worker_file in valid_worker_files:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # ... existing merging code ...
+```
+
+### 3. Add atomic writing for worker files
+
+Modify your worker process to write to a temporary file first, then rename:
+
+```python
+def worker_function(args):
+    # ... existing worker code ...
+    
+    # Write results atomically
+    temp_file = f"{output_file}.tmp"
+    with h5py.File(temp_file, 'w') as h5_out:
+        # Write your data
+        h5_out.create_dataset('results', data=results)
+        h5_out.attrs['completed'] = True
+    
+    # Atomic rename (ensures file is either complete or doesn't exist)
+    os.rename(temp_file, output_file)
+    
+    return output_file
+```
+
+### 4. Add timeout and retry logic for file operations
+
+```python
+import time
+
+def safe_file_operation(operation, filepath, max_retries=3, delay=1):
+    """Perform file operations with retry logic."""
+    for attempt in range(max_retries):
+        try:
+            return operation(filepath)
+        except (OSError, IOError) as e:
+            if attempt == max_retries - 1:
+                raise
+            logging.warning(f"File operation failed (attempt {attempt+1}): {e}")
+            time.sleep(delay)
+```
+
+### 5. Recovery strategy for your current situation
+
+Since you have 2999 successful optimizations, you can recover most of the data:
+
+```python
+def recover_existing_data(worker_files_pattern):
+    """Recover data from valid worker files."""
+    import glob
+    
+    worker_files = glob.glob(worker_files_pattern)
+    all_results = []
+    
+    for wf in worker_files:
+        try:
+            with h5py.File(wf, 'r') as f:
+                if 'results' in f:
+                    results = f['results'][:]
+                    all_results.extend(results)
+                    print(f"Recovered {len(results)} results from {wf}")
+        except Exception as e:
+            print(f"Failed to read {wf}: {e}")
+    
+    print(f"Total recovered results: {len(all_results)}")
+    return all_results
+```
+
+### 6. Complete fix for your script
+
+Add this near the beginning of your main function:
+
+```python
+def main():
+    # Add this early in your main function
+    import atexit
+    import signal
+    
+    def cleanup_on_exit():
+        """Cleanup function to handle interruptions."""
+        logging.info("Cleaning up temporary files...")
+        # Remove any .tmp files
+        for f in glob.glob("*.tmp"):
+            try:
+                os.remove(f)
+            except:
+                pass
+    
+    atexit.register(cleanup_on_exit)
+    
+    # Handle signals
+    def signal_handler(signum, frame):
+        logging.info(f"Received signal {signum}, cleaning up...")
+        cleanup_on_exit()
+        sys.exit(1)
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    # ... rest of your code ...
+```
+
+## Immediate Recovery Steps
+
+1. **Check which file is corrupted:**
+```bash
+python -c "
+import h5py
+import glob
+files = glob.glob('worker_*.h5')
+for f in files:
+    try:
+        h5py.File(f, 'r')
+        print(f'{f}: OK')
+    except:
+        print(f'{f}: CORRUPTED')
+"
+```
+
+2. **Recover valid data from the 2999 successful runs**
+3. **Rerun only the missing/corrupted optimization**
+
+The key improvements are:
+- Atomic file writes to prevent partial files
+- File validation before merging
+- Proper cleanup on interruption
+- Retry logic for file operations
+- Early detection of corrupted files
+
+This will ensure your 50-seed run completes successfully even if individual workers fail.

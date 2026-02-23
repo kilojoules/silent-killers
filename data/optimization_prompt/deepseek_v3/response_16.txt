@@ -1,0 +1,231 @@
+Looking at this error, I can see several issues:
+
+## Diagnosis
+
+1. **The main problem**: Worker file corruption
+   - The script completed 2999/3000 optimizations successfully
+   - When trying to read worker file #3000 (or possibly a specific worker file), it failed with "file signature not found"
+   - This is a corrupted HDF5 file - either incomplete or damaged
+
+2. **The symptom**: Repeated output lines
+   - The repeated "130 possible points..." lines suggest multiple worker processes may have been trying to write to the same file or there was a race condition
+
+3. **Root cause likely**: 
+   - Multiple processes writing to the same file simultaneously
+   - Process interruption (SIGKILL, out of memory, disk full) during file writing
+   - Filesystem issues during parallel I/O
+
+## Solution: Modified Script with Better Error Handling
+
+Here's how to modify your script to prevent and handle this:
+
+```python
+import h5py
+import os
+import sys
+import traceback
+import signal
+import atexit
+from pathlib import Path
+
+# Add signal handlers for clean shutdown
+def signal_handler(signum, frame):
+    print(f"\nReceived signal {signum}, cleaning up...")
+    sys.exit(1)
+
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
+
+def safe_h5_open(filename, mode='r', verbose=True):
+    """Safely open HDF5 file with validation"""
+    try:
+        # Check if file exists and has content
+        if mode == 'r' and not os.path.exists(filename):
+            raise FileNotFoundError(f"File {filename} does not exist")
+        
+        if mode == 'r':
+            file_size = os.path.getsize(filename)
+            if file_size == 0:
+                raise ValueError(f"File {filename} is empty (0 bytes)")
+            
+            # Quick check for HDF5 signature
+            with open(filename, 'rb') as f:
+                header = f.read(8)
+                if header[:4] != b'\x89HDF' and header[:4] != b'\x0e\x03\x13\x01':
+                    raise ValueError(f"File {filename} has invalid HDF5 signature")
+        
+        # Open the file
+        return h5py.File(filename, mode)
+    
+    except Exception as e:
+        if verbose:
+            print(f"ERROR opening {filename}: {e}")
+            traceback.print_exc()
+        raise
+
+def validate_worker_file(filename):
+    """Validate that a worker file is complete and readable"""
+    try:
+        with safe_h5_open(filename, 'r', verbose=False) as h5f:
+            # Check for expected datasets
+            required_datasets = ['layouts', 'scores', 'metadata']
+            for ds in required_datasets:
+                if ds not in h5f:
+                    raise ValueError(f"Missing dataset '{ds}' in {filename}")
+            
+            # Check dataset shapes are consistent
+            layouts = h5f['layouts']
+            scores = h5f['scores']
+            
+            if len(layouts) != len(scores):
+                raise ValueError(f"Inconsistent data: {len(layouts)} layouts vs {len(scores)} scores")
+            
+            return True, len(layouts)
+    
+    except Exception as e:
+        return False, str(e)
+
+def main():
+    # ... your existing setup code ...
+    
+    # MODIFIED: Check all worker files before processing
+    worker_files = []  # Your list of worker files
+    
+    print("Validating worker files before merging...")
+    valid_files = []
+    corrupted_files = []
+    
+    for worker_file in worker_files:
+        if os.path.exists(worker_file):
+            is_valid, result = validate_worker_file(worker_file)
+            if is_valid:
+                valid_files.append((worker_file, result))
+                print(f"✓ {worker_file}: {result} entries")
+            else:
+                corrupted_files.append((worker_file, result))
+                print(f"✗ {worker_file}: {result}")
+        else:
+            print(f"✗ {worker_file}: File not found")
+            corrupted_files.append((worker_file, "File not found"))
+    
+    if corrupted_files:
+        print(f"\nERROR: Found {len(corrupted_files)} corrupted/missing files:")
+        for f, err in corrupted_files:
+            print(f"  - {f}: {err}")
+        
+        # Option 1: Stop immediately
+        print("\nStopping due to corrupted files.")
+        sys.exit(1)
+        
+        # Option 2: Continue with only valid files (if you want partial results)
+        # print(f"\nContinuing with {len(valid_files)} valid files...")
+        # worker_files = [f for f, _ in valid_files]
+    
+    # MODIFIED: Safe merging with progress tracking
+    total_processed = 0
+    for i, worker_file in enumerate(worker_files):
+        try:
+            print(f"Processing {i+1}/{len(worker_files)}: {worker_file}")
+            
+            with safe_h5_open(worker_file, 'r') as h5_in:
+                # Your processing code here...
+                data = h5_in['layouts'][:]
+                # ... process data ...
+                
+            total_processed += len(data)
+            print(f"  Successfully processed {len(data)} entries (total: {total_processed})")
+            
+        except Exception as e:
+            print(f"ERROR processing {worker_file}: {e}")
+            traceback.print_exc()
+            
+            # Save progress before exiting
+            print(f"\nProcessed {i}/{len(worker_files)} files successfully")
+            print(f"Total entries processed: {total_processed}")
+            sys.exit(1)
+    
+    print(f"\nSuccessfully processed all {len(worker_files)} files")
+    print(f"Total entries: {total_processed}")
+
+# Add cleanup function
+def cleanup():
+    print("\nCleaning up...")
+    # Add any cleanup code here
+
+atexit.register(cleanup)
+
+if __name__ == "__main__":
+    main()
+```
+
+## Recovery Strategy
+
+Since you have some files, here's how to recover:
+
+```python
+import h5py
+import os
+import numpy as np
+from pathlib import Path
+
+def recover_corrupted_worker(worker_dir, expected_seeds=50):
+    """Attempt to recover data from corrupted worker files"""
+    worker_files = sorted(Path(worker_dir).glob("worker_*.h5"))
+    
+    recovered_data = []
+    corrupted_files = []
+    
+    for wf in worker_files:
+        try:
+            # Try to open and validate
+            with h5py.File(wf, 'r') as f:
+                if 'layouts' in f and 'scores' in f:
+                    layouts = f['layouts'][:]
+                    scores = f['scores'][:]
+                    
+                    if len(layouts) == len(scores) and len(layouts) > 0:
+                        recovered_data.append({
+                            'file': wf.name,
+                            'layouts': layouts,
+                            'scores': scores,
+                            'count': len(layouts)
+                        })
+                        print(f"✓ Recovered {len(layouts)} entries from {wf.name}")
+                    else:
+                        corrupted_files.append(wf.name)
+                else:
+                    corrupted_files.append(wf.name)
+        except:
+            corrupted_files.append(wf.name)
+    
+    # Combine recovered data
+    if recovered_data:
+        all_layouts = np.vstack([d['layouts'] for d in recovered_data])
+        all_scores = np.concatenate([d['scores'] for d in recovered_data])
+        
+        print(f"\nRecovery complete:")
+        print(f"  - Recovered {len(recovered_data)}/{len(worker_files)} files")
+        print(f"  - Total entries: {len(all_layouts)}")
+        print(f"  - Corrupted files: {len(corrupted_files)}")
+        
+        if corrupted_files:
+            print(f"  - Corrupted: {corrupted_files}")
+        
+        return all_layouts, all_scores
+    else:
+        print("No data could be recovered")
+        return None, None
+
+# Run recovery
+layouts, scores = recover_corrupted_worker("/path/to/worker/files")
+```
+
+## Prevention for Future Runs
+
+1. **Use atomic writes**: Write to temporary file, then rename
+2. **Add checksums**: Store MD5 checksums of data
+3. **Implement checkpointing**: Save progress periodically
+4. **Use file locking**: Prevent multiple processes from writing simultaneously
+5. **Add timeout handling**: For hanging worker processes
+
+Would you like me to help you implement any of these specific solutions or modify your actual script?

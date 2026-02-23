@@ -1,0 +1,226 @@
+Based on the error and log output, I can diagnose the issue and provide a solution.
+
+## Diagnosis
+
+The problem is that one of the worker output files is corrupted or incomplete. The script successfully completed 2999 out of 3000 optimizations, but during the final "joining" phase (where results from parallel workers are combined), it failed to open a worker file because it's not a valid HDF5 file.
+
+Key evidence:
+1. The error occurs at line 448 where `h5py.File(worker_file, 'r')` is called
+2. Error message: `OSError: Unable to synchronously open file (file signature not found)`
+3. The script completed 2999/3000 optimizations successfully
+4. The repetition of "130 possible points..." lines suggests workers might have crashed or been interrupted
+
+The most likely causes:
+- A worker process was killed/interrupted while writing its file
+- The file system had an issue (disk full, I/O error)
+- The script was interrupted with Ctrl+C during the join phase
+
+## Solution: Modified Script with Robust Error Handling
+
+Here's how to modify the script to detect and handle this error reliably:
+
+```python
+import h5py
+import os
+import sys
+import traceback
+from pathlib import Path
+
+# ... existing code ...
+
+def validate_hdf5_file(filepath):
+    """Validate that a file is a valid HDF5 file."""
+    if not os.path.exists(filepath):
+        raise FileNotFoundError(f"File does not exist: {filepath}")
+    
+    if os.path.getsize(filepath) == 0:
+        raise ValueError(f"File is empty: {filepath}")
+    
+    try:
+        # Try to open the file to validate it's a proper HDF5 file
+        with h5py.File(filepath, 'r') as f:
+            # Check if we can read basic attributes
+            if hasattr(f, 'attrs'):
+                _ = f.attrs  # Try to access attributes
+        return True
+    except Exception as e:
+        raise ValueError(f"Invalid HDF5 file {filepath}: {str(e)}")
+
+def safe_open_hdf5(filepath, mode='r'):
+    """Safely open an HDF5 file with validation."""
+    try:
+        validate_hdf5_file(filepath)
+        return h5py.File(filepath, mode)
+    except Exception as e:
+        logging.error(f"Failed to open HDF5 file {filepath}: {e}")
+        raise
+
+# Modify the main function to validate all worker files before processing
+def main():
+    # ... existing code ...
+    
+    # Assuming worker files are in a directory or have a pattern
+    worker_files = []  # Populate this with your actual worker file paths
+    
+    # Validate all worker files before starting to process
+    valid_files = []
+    corrupted_files = []
+    
+    for worker_file in worker_files:
+        try:
+            validate_hdf5_file(worker_file)
+            valid_files.append(worker_file)
+            logging.info(f"✓ Valid worker file: {worker_file}")
+        except Exception as e:
+            corrupted_files.append((worker_file, str(e)))
+            logging.error(f"✗ Corrupted worker file: {worker_file} - {e}")
+    
+    # If there are corrupted files, handle them appropriately
+    if corrupted_files:
+        logging.error(f"Found {len(corrupted_files)} corrupted worker files:")
+        for file_path, error_msg in corrupted_files:
+            logging.error(f"  - {file_path}: {error_msg}")
+        
+        # Option 1: Ask user what to do
+        response = input(f"\nFound {len(corrupted_files)} corrupted files. Options:\n"
+                         "  1. Delete corrupted files and continue with valid ones\n"
+                         "  2. Stop the process and investigate\n"
+                         "  3. Try to regenerate missing data\n"
+                         "Choose [1/2/3]: ").strip()
+        
+        if response == '1':
+            # Delete corrupted files and continue
+            for file_path, _ in corrupted_files:
+                try:
+                    os.remove(file_path)
+                    logging.warning(f"Deleted corrupted file: {file_path}")
+                except Exception as e:
+                    logging.error(f"Failed to delete {file_path}: {e}")
+            
+            # Continue with only valid files
+            worker_files = valid_files
+            logging.info(f"Continuing with {len(worker_files)} valid files")
+            
+        elif response == '3':
+            # Try to regenerate missing data
+            # You'll need to implement logic to identify which seeds/farms are missing
+            # and regenerate only those
+            logging.info("Attempting to regenerate missing data...")
+            # Implementation depends on your specific regeneration logic
+            pass
+            
+        else:
+            # Default: Stop cleanly
+            logging.error("Stopping process due to corrupted worker files")
+            sys.exit(1)
+    
+    # Now process only the valid files
+    for worker_file in valid_files:
+        try:
+            with safe_open_hdf5(worker_file, 'r') as h5_in:
+                # Process the file
+                # ... existing processing code ...
+                pass
+        except Exception as e:
+            logging.error(f"Unexpected error processing {worker_file}: {e}")
+            # Optionally skip or stop based on severity
+            if should_stop_on_error:  # Define your own condition
+                raise
+    
+    # ... rest of the main function ...
+
+# Alternative: Add checkpointing to resume from failures
+def create_checkpoint(state_file, completed_files):
+    """Save progress checkpoint."""
+    import pickle
+    with open(state_file, 'wb') as f:
+        pickle.dump({
+            'completed_files': completed_files,
+            'timestamp': datetime.now()
+        }, f)
+
+def load_checkpoint(state_file):
+    """Load progress checkpoint if exists."""
+    import pickle
+    if os.path.exists(state_file):
+        with open(state_file, 'rb') as f:
+            return pickle.load(f)
+    return None
+
+# ... existing code ...
+```
+
+## Recovery Strategy
+
+Since you have some files that might help recover, here's a recovery script:
+
+```python
+def recover_missing_data(valid_files, expected_total=3000):
+    """Analyze valid files to determine what's missing."""
+    import re
+    
+    # Extract seed and farm info from filenames (adjust pattern as needed)
+    pattern = r'farm_(\d+)_seed_(\d+)'
+    found_pairs = []
+    
+    for file_path in valid_files:
+        match = re.search(pattern, str(file_path))
+        if match:
+            farm = int(match.group(1))
+            seed = int(match.group(2))
+            found_pairs.append((farm, seed))
+    
+    # Determine what's missing
+    # This depends on your specific naming convention
+    # You'll need to adjust this based on your actual file naming
+    
+    # For example, if you know you were running farms 1-10 with seeds 1-50
+    all_expected = []
+    for farm in range(1, 11):  # Adjust range
+        for seed in range(1, 51):  # Adjust range
+            all_expected.append((farm, seed))
+    
+    missing = [pair for pair in all_expected if pair not in found_pairs]
+    
+    return missing, found_pairs
+
+# Usage:
+# missing_pairs, found_pairs = recover_missing_data(valid_files)
+# print(f"Found {len(found_pairs)} results, missing {len(missing_pairs)}")
+```
+
+## Preventive Measures for Future Runs
+
+1. **Add atomic file writing**:
+```python
+import tempfile
+import shutil
+
+def atomic_write_hdf5(data, output_path):
+    """Write HDF5 file atomically to prevent corruption."""
+    temp_dir = os.path.dirname(output_path)
+    with tempfile.NamedTemporaryFile(dir=temp_dir, delete=False, suffix='.h5') as tmp:
+        tmp_path = tmp.name
+    
+    try:
+        # Write to temp file
+        with h5py.File(tmp_path, 'w') as f:
+            # Write your data here
+            pass
+        
+        # Move temp file to final location (atomic on Unix-like systems)
+        shutil.move(tmp_path, output_path)
+    except Exception as e:
+        # Clean up temp file on error
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+        raise e
+```
+
+2. **Add progress checkpoints** to resume from where you left off if interrupted.
+
+3. **Monitor disk space** before and during the run.
+
+4. **Use try-except in worker processes** to ensure they handle errors gracefully and write partial results if possible.
+
+Would you like me to help you implement any specific part of this solution or adapt it to your exact script structure?

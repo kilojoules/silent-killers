@@ -1,0 +1,4 @@
+prompt_difficulty,seeds,seeds_with_try,mean_bad_rate_all,mean_bad_rate_non0,total_excepts,bad_excepts,mean_loc
+Easy,118,21,0.25,1.0,42.0,42.0,180.07
+Hard,115,90,0.72,0.88,310.0,259.0,79.95
+Medium,126,45,0.33,1.0,45.0,45.0,250.55

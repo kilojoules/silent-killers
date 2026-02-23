@@ -1,0 +1,431 @@
+Below is one example of a “refactored‐and‐modularized” version of your code. In this rewrite the instinct is to split out three main steps:
+
+1. Data/setup and helper functions (including instantiating simulation objects)  
+2. An evaluation function (called by the optimizer) that “builds” the wake farm model (wfm) using the current parameters and then runs the simulation on the target grid  
+3. A plotting/animation section to monitor convergence and compare the optimized versus default parameter settings.
+
+Below you will find one complete Python script that preserves your deficit settings, MODEL and UPSTREAM (DOWNWIND) logic, while “factoring” out the wake farm model creation into its own function. (Feel free to further adjust naming or break things further into classes if desired.) 
+
+-------------------------------------------------------------
+#!/usr/bin/env python
+"""
+Modularized wake model simulation and parameter optimization example.
+"""
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+import xarray as xr
+
+# Import PyWake and related objects
+from py_wake.rotor_avg_models.gaussian_overlap_model import GaussianOverlapAvgModel
+from py_wake.deficit_models.gaussian import TurboGaussianDeficit, BlondelSuperGaussianDeficit2020
+from py_wake.deficit_models import SelfSimilarityDeficit2020
+from py_wake.examples.data.dtu10mw._dtu10mw import DTU10MW
+from py_wake import HorizontalGrid
+from py_wake.deflection_models import JimenezWakeDeflection
+from py_wake.turbulence_models import CrespoHernandez
+from py_wake.rotor_avg_models import RotorCenter
+from py_wake.wind_farm_models import PropagateDownwind, All2AllIterative
+from py_wake.superposition_models import LinearSum
+from py_wake.ground_models import Mirror
+from py_wake.examples.data.hornsrev1 import Hornsrev1Site
+from py_wake.deficit_models.utils import ct2a_mom1d
+
+from bayes_opt import BayesianOptimization
+
+# =============================================================================
+# DATA AND SETUP FUNCTIONS
+# =============================================================================
+
+def load_simulation_data(nc_file='./DTU10MW.nc'):
+    """
+    Load data from netcdf (scaled with turbine diameter) and specify ROI and target grid.
+    """
+    dat = xr.load_dataset(nc_file)
+    turbine = DTU10MW()
+    D = turbine.diameter()
+    dat = dat.assign_coords(x=dat.x * D, y=dat.y * D)
+
+    # Choose upstream direction (downwind flag)
+    DOWNWIND = True  
+    if DOWNWIND:
+        X_LB, X_UB = 2, 10
+    else:
+        X_LB, X_UB = -2, -1
+
+    roi_x = slice(X_LB * D, X_UB * D)
+    roi_y = slice(-2 * D, 2 * D)
+
+    flow_roi = dat.sel(x=roi_x, y=roi_y)
+    target_x = flow_roi.x
+    target_y = flow_roi.y
+
+    # Create a grid of wind speeds and turbulence intensities
+    TIs = np.arange(0.05, 0.45, 0.05)
+    WSs = np.arange(4, 11)
+    full_ti = np.array([TIs for _ in range(WSs.size)]).flatten()
+    full_ws = np.array([[WSs[ii]] * TIs.size for ii in range(WSs.size)]).flatten()
+    assert full_ws.size == full_ti.size
+
+    return turbine, D, flow_roi, target_x, target_y, full_ws, full_ti, DOWNWIND, X_LB, X_UB
+
+# =============================================================================
+# MODEL CONSTRUCTION FUNCTIONS
+# =============================================================================
+
+def create_wake_deficit_model(params, DOWNWIND, MODEL):
+    """
+    Create a wake deficit model and additional parameter arguments
+    (for turbulence and blockage) based on the current optimization parameters,
+    the downwind flag and the chosen MODEL.
+    Returns:
+       wake_deficitModel : instance of the chosen deficit model
+       turb_args         : dict with additional turbulence arguments 
+       blockage_args     : dict with blockage arguments (if any)
+    """
+    turb_args = {}
+    blockage_args = {}
+    if DOWNWIND:
+        if MODEL == 1:
+            def_args = {k: params[k] for k in ['a_s', 'b_s', 'c_s', 'b_f', 'c_f']}
+            turb_args = {'c': np.array([params['ch1'], params['ch2'], params['ch3'], params['ch4']])}
+            wake_deficitModel = BlondelSuperGaussianDeficit2020(**def_args)
+        else:  # MODEL == 2 for downwind
+            turb_args = {'c': np.array([params['ch1'], params['ch2'], params['ch3'], params['ch4']])}
+            wake_deficitModel = TurboGaussianDeficit(A=params['A'], 
+                                                     cTI=[params['cti1'], params['cti2']],
+                                                     ctlim=params['ctlim'],
+                                                     ceps=params['ceps'],
+                                                     ct2a=ct2a_mom1d,
+                                                     groundModel=Mirror(),
+                                                     rotorAvgModel=GaussianOverlapAvgModel())
+            # Set custom key as in your original code
+            wake_deficitModel.WS_key = 'WS_jlk'
+        # In your original code the blockage_args for DOWNWIND ends up empty.
+        blockage_args = {}
+    else:
+        # Not DOWNWIND: use BlondelSuperGaussianDeficit2020 with no extra deficit args, 
+        # and set up blockage-specific parameters.
+        def_args = {}
+        wake_deficitModel = BlondelSuperGaussianDeficit2020(**def_args)
+        turb_args = {}
+        blockage_args = {'ss_alpha': params['ss_alpha'], 
+                         'ss_beta': params['ss_beta'], 
+                         'r12p': np.array([params['rp1'], params['rp2']]),
+                         'ngp': np.array([params['ng1'], params['ng2'], params['ng3'], params['ng4']])}
+        if MODEL == 2:
+            blockage_args['groundModel'] = Mirror()
+    return wake_deficitModel, turb_args, blockage_args
+
+
+def instantiate_wfm(site, turbine, wake_deficitModel, turb_args, blockage_args):
+    """
+    Instantiate the All2AllIterative wake farm model with the given deficit model,
+    turbulence, and blockage parameters.
+    """
+    # In this example we use self-similarity for blockage deficit.
+    wfm = All2AllIterative(site, turbine,
+                           wake_deficitModel=wake_deficitModel,
+                           superpositionModel=LinearSum(),
+                           deflectionModel=None,
+                           turbulenceModel=CrespoHernandez(**turb_args),
+                           blockage_deficitModel=SelfSimilarityDeficit2020(**blockage_args))
+    return wfm
+
+# =============================================================================
+# SIMULATION AND ERROR EVALUATION
+# =============================================================================
+
+def run_simulation(wfm, full_ws, full_ti, target_x, target_y):
+    """
+    Runs the simulation and collects the flow maps.
+    Returns:
+       sim_res  : full simulation result (xarray Dataset)
+       flow_map : full wake effect map on the target grid,
+                  concatenated along `time`.
+    """
+    # time=True forces the simulation to output an extra "time" dimension.
+    sim_res = wfm([0], [0],
+                  ws=full_ws,
+                  TI=full_ti,
+                  wd=[270] * full_ws.size,
+                  time=True)
+    # Build the flow map from the simulation for each time slice
+    grid = HorizontalGrid(x=target_x, y=target_y)
+    flow_map = None
+    for tt in range(full_ws.size):
+        fm = sim_res.flow_map(grid, time=[tt])['WS_eff']
+        if flow_map is None:
+            flow_map = fm
+        else:
+            flow_map = xr.concat([flow_map, fm], dim='time')
+    return sim_res, flow_map
+
+def get_observed_deficit(flow_roi, CT, TI):
+    """
+    Interpolate observed deficit data on flow_roi based on CT and TI.
+    """
+    # The interpolation is performed along z=0.
+    return flow_roi.deficits.interp(ct=CT, ti=TI, z=0)
+
+
+def evaluate_rmse(**params):
+    """
+    This function is called by the Bayesian optimizer.
+    It builds a wake model using create_wake_deficit_model and runs the simulation.
+    RMSE is computed as the relative difference of the effective wind speed.
+    """
+    # Global variables imported from main
+    global site, turbine, full_ws, full_ti, target_x, target_y, flow_roi, DOWNWIND, MODEL
+
+    wake_deficitModel, turb_args, blockage_args = create_wake_deficit_model(params, DOWNWIND, MODEL)
+    wfm = instantiate_wfm(site, turbine, wake_deficitModel, turb_args, blockage_args)
+
+    sim_res, flow_map = run_simulation(wfm, full_ws, full_ti, target_x, target_y)
+
+    # Compute the deficit (as relative error) for each time slice. Note that you use CT and TI
+    rmse_list = []
+    for tt in range(full_ws.size):
+        this_pred = sim_res.isel(time=tt, wt=0)
+        observed_deficit = get_observed_deficit(flow_roi, this_pred.CT, this_pred.TI).isel(wt=0)
+        # Compute the relative prediction error; for example:
+        pred = (sim_res.WS - flow_map.isel(time=tt, h=0)) / sim_res.WS
+        error = observed_deficit.T - pred
+        rmse = np.sqrt(((error)**2).mean(['x', 'y']))
+        rmse_list.append(rmse)
+    # Average over time
+    overall_rmse = float(np.mean(rmse_list))
+    # Loss to be minimized (return negative of RMSE for Bayesian optimization maximization)
+    if np.isnan(overall_rmse):
+        return -0.5
+    return -overall_rmse
+
+# =============================================================================
+# PLOTTING FUNCTIONS
+# =============================================================================
+
+def update_plot(frame, optimizer, defaults, ax1, ax2):
+    """
+    Update the convergence and parameter bar chart plots for animation.
+    Reports at each iteration the best seen rmse so far.
+    """
+    ax1.clear()
+    ax2.clear()
+
+    best_so_far_rmse = float('inf')
+    best_so_far_params = {}
+    best_so_far_rmses = []
+    # Loop through optimization history up to the current frame.
+    for i in range(frame + 1):
+        current_rmse = -optimizer.space.target[i]  # since we stored negative RMSE.
+        if current_rmse <= best_so_far_rmse:
+            best_so_far_rmse = current_rmse
+            best_so_far_params = optimizer.res[i]['params']
+        best_so_far_rmses.append(best_so_far_rmse)
+
+    ax1.plot(-np.array(optimizer.space.target), color='gray', alpha=0.5)
+    ax1.plot(np.array(best_so_far_rmses), color='black')
+    ax1.set_title('Optimization Convergence')
+    ax1.set_xlabel('Iteration')
+    ax1.set_ylabel('RMSE')
+    ax1.grid(True)
+
+    # Bar plot for the best parameters so far vs default parameters.
+    keys = list(best_so_far_params.keys())
+    best_vals = [best_so_far_params[k] for k in keys]
+    default_vals = [defaults[k] for k in keys]
+
+    ax2.bar(keys, best_vals, label='Optimized')
+    ax2.bar(keys, default_vals, edgecolor='black', linewidth=2,
+            color='none', capsize=4, label='Default')
+    ax2.set_title(f'Best RMSE so far: {best_so_far_rmse:.4f}')
+    ax2.tick_params(axis='x', rotation=45)
+    ax2.legend()
+
+    plt.tight_layout()
+    return ax1, ax2
+
+# =============================================================================
+# MAIN EXECUTION
+# =============================================================================
+
+def main():
+    # Global settings: MODEL and DOWNWIND flag etc.
+    global site, turbine, full_ws, full_ti, target_x, target_y, flow_roi, DOWNWIND, MODEL
+
+    # --- 1. Load data and define grid ---
+    turbine, D, flow_roi, target_x, target_y, full_ws, full_ti, DOWNWIND, X_LB, X_UB = load_simulation_data()
+
+    # --- 2. Instantiate the site ---
+    site = Hornsrev1Site()
+
+    # --- 3. Define MODEL type (1 or 2) ---
+    MODEL = 2  # Change to 1 (or 2) based on what you want. Raise exception if invalid.
+    if MODEL not in {1, 2}:
+        raise Exception("Bad Model Number")
+
+    # --- 4. Set up optimization parameter bounds and defaults ---
+    if MODEL == 1:
+        if DOWNWIND:
+            pbounds = {
+                'a_s': (0.001, 0.5),
+                'b_s': (0.001, 0.01),
+                'c_s': (0.001, 0.5),
+                'b_f': (-2, 1),
+                'c_f': (0.1, 5),
+                'ch1': (-1, 2),
+                'ch2': (-1, 2),
+                'ch3': (-1, 2),
+                'ch4': (-1, 2),
+            }
+            defaults = {'a_s': 0.17, 'b_s': 0.005, 'c_s': 0.2, 'b_f': -0.68, 'c_f': 2.41,
+                        'ch1': 0.73, 'ch2': 0.8325, 'ch3': -0.0325, 'ch4': -0.32}
+        else:
+            pbounds = {
+                'ss_alpha': (0.05, 3),
+                'ss_beta': (0.05, 3),
+                'rp1': (-2, 2),
+                'rp2': (-2, 2),
+                'ng1': (-3, 3),
+                'ng2': (-3, 3),
+                'ng3': (-3, 3),
+                'ng4': (-3, 3),
+                'fg1': (-2, 2),
+                'fg2': (-2, 2),
+                'fg3': (-2, 2),
+                'fg4': (-2, 2)
+            }
+            defaults = {
+                'ss_alpha': 0.8888888888888888,
+                'ss_beta': 1.4142135623730951,
+                'rp1': -0.672,
+                'rp2': 0.4897,
+                'ng1': -1.381,
+                'ng2': 2.627,
+                'ng3': -1.524,
+                'ng4': 1.336,
+                'fg1': -0.06489,
+                'fg2': 0.4911,
+                'fg3': 1.116,
+                'fg4': -0.1577
+            }
+    else:  # MODEL == 2
+        defaults = {
+            'A': 0.04,
+            'cti1': 1.5,
+            'cti2': 0.8,
+            'ceps': 0.25,
+            'ctlim': 0.999,
+            'ch1': 0.73,
+            'ch2': 0.8325,
+            'ch3': -0.0325,
+            'ch4': -0.3
+        }
+        pbounds = {
+            'A': (0.001, .5),
+            'cti1': (0.01, 5),
+            'cti2': (0.01, 5),
+            'ceps': (0.01, 3),
+            'ctlim': (0.01, 1),
+            'ch1': (-1, 2),
+            'ch2': (-1, 2),
+            'ch3': (-1, 2),
+            'ch4': (-1, 2),
+        }
+
+    # --- 5. Optimization using BayesianOptimization ---
+    optimizer = BayesianOptimization(f=evaluate_rmse, pbounds=pbounds, random_state=1)
+    optimizer.probe(params=defaults, lazy=True)
+    optimizer.maximize(init_points=50, n_iter=200)
+
+    best_params = optimizer.max['params']
+    best_rmse = -optimizer.max['target']
+
+    print("Best parameters: ", best_params)
+    print("Best RMSE: ", best_rmse)
+
+    # --- 6. Optimize convergence plot animation ---
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+    ani = animation.FuncAnimation(fig,
+                                  lambda f: update_plot(f, optimizer, defaults, ax1, ax2),
+                                  frames=len(optimizer.space.target),
+                                  repeat=False)
+    writer = animation.FFMpegWriter(fps=15)
+    ani_filename = f'optimization_animation_{X_LB}_{X_UB}.mp4'
+    ani.save(ani_filename, writer=writer)
+    plt.close('all')
+
+    # --- 7. Evaluate final simulation using the best parameters ---
+    wake_deficitModel, turb_args, blockage_args = create_wake_deficit_model(best_params, DOWNWIND, MODEL)
+    # For downwind case with MODEL 2 we override some defaults as in the original script.
+    if DOWNWIND:
+        if MODEL == 2:
+            wake_deficitModel.WS_key = 'WS_jlk'
+            # turb_args is set already.
+        # else (MODEL 1) nothing additional.
+    else:
+        # No extra changes needed.
+        pass
+
+    # Instantiate final wake farm model.
+    wfm = instantiate_wfm(site, turbine, wake_deficitModel, turb_args, blockage_args)
+    sim_res, flow_map = run_simulation(wfm, full_ws, full_ti, target_x, target_y)
+
+    rmse_values = []
+    # For each time step produce new plots of the observed deficit, prediction and their difference.
+    for tt in range(flow_map.time.size):
+        this_pred_sim = sim_res.isel(time=tt)
+        observed_deficit = get_observed_deficit(flow_roi, this_pred_sim.CT, this_pred_sim.TI).isel(wt=0)
+        pred = (this_pred_sim.WS - flow_map.WS_eff.isel(time=tt, h=0)) / this_pred_sim.WS
+        diff = observed_deficit.T - pred
+        rmse = np.sqrt((diff**2).mean())
+        rmse_values.append(rmse)
+
+        fig, ax = plt.subplots(3, 1, figsize=(5, 15))
+        co = ax[0].contourf(target_x, target_y, observed_deficit.T)
+        cp = ax[1].contourf(target_x, target_y, pred)
+        cd = ax[2].contourf(target_x, target_y, diff)
+        for jj, contour in enumerate([co, cp, cd]):
+            fig.colorbar(contour, ax=ax[jj])
+        ax[0].set_ylabel('Observed Deficit')
+        ax[1].set_ylabel('Predicted Deficit')
+        ax[2].set_ylabel('Difference')
+        plt.tight_layout()
+        plt.savefig(f'figs/downsream_err_{tt}.png')
+        plt.clf()
+    overall_rmse = np.mean(rmse_values)
+    print("RMSE values per time step:", rmse_values)
+    print("Overall RMSE:", overall_rmse)
+
+    # --- 8. Plot final comparison between best optimized and default parameters ---
+    keys = list(best_params.keys())
+    best_vals = [best_params[k] for k in keys]
+    default_vals = [defaults[k] for k in keys]
+
+    plt.figure(figsize=(10, 6))
+    plt.bar(keys, best_vals, label='Optimized')
+    plt.bar(keys, default_vals,
+            edgecolor='black', linewidth=2,
+            color='none', capsize=4, label='Default')
+    plt.title(f'Optimal RMSE: {best_rmse:.4f}')
+    plt.tight_layout()
+    plt.savefig(f'bar_LB_{X_LB}_UP_{X_UB}.png')
+    plt.clf()
+
+if __name__ == '__main__':
+    main()
+
+-------------------------------------------------------------
+
+Notes on the refactoring:
+
+• The wake model instantiation is now in create_wake_deficit_model() and instantiate_wfm() so that the evaluation function is much cleaner.
+• The simulation-run logic is in run_simulation(), which returns both the simulation result (sim_res) and the concatenated flow map.
+• The plotting/animation functions have been separated out to better encapsulate functionality.
+• Global variables (site, turbine, etc.) are set in main() and declared as global inside evaluate_rmse for convenience (you might consider using a class or passing a context dictionary instead).
+
+This modular design should make it easier to change the flow field plotting (for example, to report both the average error and the 90th percentile of the errors) without modifying the core simulation/optimization logic. 
+
+Feel free to further tweak and extend the code per your requirements.

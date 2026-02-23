@@ -1,0 +1,492 @@
+I'll create a comprehensive script that propagates measurement uncertainties through PyWake and analyzes the Sobol sensitivity of effective wind speed across the flow field. This script will generate a series of sensitivity maps showing how different inflow uncertainties affect the wind farm flow patterns.
+
+```python
+"""
+Uncertainty Propagation and Sobol Sensitivity Analysis for PyWake Flow Fields
+
+This script propagates measurement uncertainties through PyWake simulations
+and computes Sobol sensitivity indices for effective wind speed (WS_eff)
+across the flow field.
+
+Requirements:
+- py_wake
+- numpy
+- matplotlib
+- SALib
+- scipy
+"""
+
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib import cm
+from py_wake import NOJ
+from py_wake.site import UniformSite
+from py_wake.wind_turbines import WindTurbine
+from py_wake.wind_turbines.power_ct_functions import PowerCtFunction
+from SALib.sample import saltelli
+from SALib.analyze import sobol
+import pandas as pd
+from scipy.interpolate import griddata
+import time
+import os
+
+# Create output directory
+os.makedirs('sensitivity_analysis_output', exist_ok=True)
+
+# ============================================================================
+# 1. DEFINE WIND TURBINE AND FARM
+# ============================================================================
+
+# Define a simple wind turbine
+class SimpleWindTurbine(WindTurbine):
+    def __init__(self, name='SimpleTurbine'):
+        power_ct_function = PowerCtFunction(
+            power=lambda ws: np.interp(ws, [0, 3, 10, 12, 25], [0, 0, 1500, 1500, 0]),  # kW
+            power_unit='kW',
+            ct=lambda ws: np.interp(ws, [0, 3, 10, 12, 25], [0, 0.8, 0.8, 0.3, 0])  # thrust coefficient
+        )
+        super().__init__(name=name, diameter=80, hub_height=70,
+                        powerCtFunction=power_ct_function)
+
+# Create turbine instance
+turbine = SimpleWindTurbine()
+
+# Define wind farm layout (grid of turbines)
+x_coordinates = np.array([0, 400, 800, 1200, 1600])
+y_coordinates = np.array([0, 400, 800])
+x_grid, y_grid = np.meshgrid(x_coordinates, y_coordinates)
+x = x_grid.flatten()
+y = y_grid.flatten()
+
+# Define site with uniform wind conditions
+site = UniformSite(p_wd=[1], ti=0.1, ws=10)  # Single wind direction for demonstration
+
+# Initialize wake model (NOJ model for demonstration)
+wake_model = NOJ(site, turbine)
+
+# ============================================================================
+# 2. DEFINE UNCERTAINTY PARAMETERS AND THEIR DISTRIBUTIONS
+# ============================================================================
+
+# Define the problem for sensitivity analysis
+# Parameters: wind speed, wind direction, turbulence intensity, shear exponent
+problem = {
+    'num_vars': 4,
+    'names': ['ws', 'wd', 'ti', 'alpha'],
+    'bounds': [
+        [8.0, 12.0],      # Wind speed [m/s] ±20% uncertainty
+        [260.0, 280.0],   # Wind direction [deg] ±10° uncertainty
+        [0.08, 0.12],     # Turbulence intensity ±20% uncertainty
+        [0.08, 0.20]      # Shear exponent (range from offshore to onshore)
+    ]
+}
+
+# Number of samples for Sobol analysis
+N = 512  # Base samples (total will be N*(2D+2) = 512*(2*4+2) = 5120)
+
+# Generate parameter samples using Saltelli's method
+print(f"Generating {N*(2*problem['num_vars']+2)} samples...")
+param_values = saltelli.sample(problem, N, calc_second_order=True)
+
+# ============================================================================
+# 3. DEFINE FLOW FIELD GRID FOR VISUALIZATION
+# ============================================================================
+
+# Create a fine grid for flow field visualization
+x_min, x_max = -500, 2100
+y_min, y_max = -500, 1300
+grid_resolution = 50
+
+x_grid = np.arange(x_min, x_max, grid_resolution)
+y_grid = np.arange(y_min, y_max, grid_resolution)
+X, Y = np.meshgrid(x_grid, y_grid)
+grid_points = np.column_stack([X.ravel(), Y.ravel()])
+
+# ============================================================================
+# 4. MODEL FUNCTION FOR SOBOL ANALYSIS
+# ============================================================================
+
+def model_function(params):
+    """
+    Run PyWake simulation for given parameters and return WS_eff on grid
+    
+    Parameters:
+    -----------
+    params : array-like
+        Array of input parameters [ws, wd, ti, alpha]
+    
+    Returns:
+    --------
+    ws_grid : ndarray
+        Effective wind speed interpolated on the visualization grid
+    """
+    # Unpack parameters
+    ws, wd, ti, alpha = params
+    
+    # Create site with current parameters
+    site = UniformSite(p_wd=[1.0], ti=ti, ws=ws, shear=alpha)
+    
+    # Initialize wake model
+    wake_model = NOJ(site, turbine)
+    
+    # Run simulation
+    simulation_result = wake_model(x, y, ws=ws, wd=wd, TI=ti)
+    
+    # Get effective wind speed at turbine locations
+    ws_eff_turbines = simulation_result.WS_eff.values
+    
+    # Interpolate to visualization grid
+    # First, we need flow field data - let's simulate on a denser grid
+    x_sim = np.linspace(x_min, x_max, 50)
+    y_sim = np.linspace(y_min, y_max, 50)
+    X_sim, Y_sim = np.meshgrid(x_sim, y_sim)
+    
+    # Get flow field from PyWake
+    flow_map = simulation_result.flow_map(
+        x=x_sim, 
+        y=y_sim, 
+        wd=wd, 
+        ws=ws
+    )
+    
+    ws_grid = flow_map.WS_eff.values
+    
+    return ws_grid.flatten()
+
+# ============================================================================
+# 5. RUN SOBOL SENSITIVITY ANALYSIS
+# ============================================================================
+
+print("Running Sobol sensitivity analysis...")
+print(f"This will run {len(param_values)} simulations...")
+
+# Run simulations (this will take some time)
+start_time = time.time()
+outputs = []
+for i, params in enumerate(param_values):
+    if i % 100 == 0:
+        print(f"  Progress: {i}/{len(param_values)} simulations")
+    outputs.append(model_function(params))
+    
+outputs = np.array(outputs)
+elapsed_time = time.time() - start_time
+print(f"Simulations completed in {elapsed_time:.2f} seconds")
+
+# Reshape outputs for grid-based analysis
+num_grid_points = outputs.shape[1]
+outputs_grid = outputs.reshape(len(param_values), X.shape[0], X.shape[1])
+
+# ============================================================================
+# 6. COMPUTE SOBOL INDICES FOR EACH GRID POINT
+# ============================================================================
+
+print("Computing Sobol indices for each grid point...")
+
+# Initialize arrays for sensitivity indices
+S1 = np.zeros((X.shape[0], X.shape[1], problem['num_vars']))  # First order indices
+ST = np.zeros((X.shape[0], X.shape[1], problem['num_vars']))  # Total order indices
+
+# Compute Sobol indices for each grid point
+for i in range(X.shape[0]):
+    for j in range(X.shape[1]):
+        # Extract time series for this grid point
+        Y_grid = outputs[:, i, j]
+        
+        # Compute Sobol indices
+        try:
+            Si = sobol.analyze(problem, Y_grid, calc_second_order=False)
+            S1[i, j, :] = Si['S1']
+            ST[i, j, :] = Si['ST']
+        except:
+            # Handle any numerical issues
+            S1[i, j, :] = np.nan
+            ST[i, j, :] = np.nan
+
+# ============================================================================
+# 7. VISUALIZE RESULTS
+# ============================================================================
+
+def plot_sensitivity_maps(S_indices, title, parameter_names, cmap='viridis'):
+    """Plot sensitivity maps for all parameters"""
+    n_params = S_indices.shape[2]
+    
+    fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+    axes = axes.flatten()
+    
+    vmin = np.nanmin(S_indices)
+    vmax = np.nanmax(S_indices)
+    
+    for idx, ax in enumerate(axes[:n_params]):
+        im = ax.pcolormesh(X, Y, S_indices[:, :, idx], 
+                          cmap=cmap, vmin=vmin, vmax=vmax, shading='auto')
+        
+        # Plot turbine locations
+        ax.scatter(x, y, color='red', s=50, marker='^', edgecolor='black', label='Turbines')
+        
+        ax.set_xlabel('X [m]')
+        ax.set_ylabel('Y [m]')
+        ax.set_title(f'{title} - {parameter_names[idx]}')
+        ax.legend(loc='upper right')
+        ax.set_aspect('equal')
+        
+        # Add colorbar
+        plt.colorbar(im, ax=ax, label='Sensitivity Index')
+    
+    plt.tight_layout()
+    return fig
+
+# Plot first order sensitivity indices
+fig_S1 = plot_sensitivity_maps(
+    S1, 
+    'First Order Sobol Indices for WS_eff',
+    problem['names'],
+    cmap='plasma'
+)
+fig_S1.savefig('sensitivity_analysis_output/first_order_sensitivity.png', dpi=300, bbox_inches='tight')
+
+# Plot total order sensitivity indices
+fig_ST = plot_sensitivity_maps(
+    ST, 
+    'Total Order Sobol Indices for WS_eff',
+    problem['names'],
+    cmap='inferno'
+)
+fig_ST.savefig('sensitivity_analysis_output/total_order_sensitivity.png', dpi=300, bbox_inches='tight')
+
+# ============================================================================
+# 8. CREATE ANIMATION/SERIES OF FLOW FIELD SENSITIVITY
+# ============================================================================
+
+print("Creating sensitivity time series...")
+
+# Create a series of plots showing sensitivity evolution
+# (For demonstration, we'll show sensitivity at different "times" represented by different parameter sets)
+
+num_time_steps = 6
+time_indices = np.linspace(0, len(param_values) - 1, num_time_steps, dtype=int)
+
+fig, axes = plt.subplots(3, 2, figsize=(16, 18))
+axes = axes.flatten()
+
+for idx, (time_idx, ax) in enumerate(zip(time_indices, axes)):
+    # Get parameters for this "time step"
+    params = param_values[time_idx]
+    
+    # Run simulation
+    ws_grid = model_function(params).reshape(X.shape[0], X.shape[1])
+    
+    # Plot flow field
+    im = ax.pcolormesh(X, Y, ws_grid, cmap='YlGnBu', shading='auto')
+    
+    # Plot turbine locations
+    ax.scatter(x, y, color='red', s=50, marker='^', edgecolor='black')
+    
+    # Add wind direction arrow
+    wd = params[1]
+    wind_dx = 200 * np.sin(np.radians(wd))
+    wind_dy = 200 * np.cos(np.radians(wd))
+    ax.arrow(100, 100, wind_dx, wind_dy, 
+             head_width=30, head_length=40, fc='black', ec='black')
+    
+    ax.set_xlabel('X [m]')
+    ax.set_ylabel('Y [m]')
+    ax.set_title(f'Time step {idx+1}\n'
+                 f'ws={params[0]:.1f}m/s, wd={params[1]:.1f}°, '
+                 f'ti={params[2]:.2f}, α={params[3]:.2f}')
+    ax.set_aspect('equal')
+    
+    plt.colorbar(im, ax=ax, label='WS_eff [m/s]')
+
+plt.tight_layout()
+plt.savefig('sensitivity_analysis_output/flow_field_series.png', dpi=300, bbox_inches='tight')
+
+# ============================================================================
+# 9. CREATE COMPOSITE SENSITIVITY MAP
+# ============================================================================
+
+print("Creating composite sensitivity analysis...")
+
+# Create a composite figure showing overall sensitivity
+fig = plt.figure(figsize=(18, 10))
+
+# Subplot 1: Most sensitive parameter at each location
+ax1 = plt.subplot(2, 3, 1)
+most_sensitive = np.argmax(ST, axis=2)
+cmap_discrete = plt.cm.get_cmap('tab10', problem['num_vars'])
+im1 = ax1.pcolormesh(X, Y, most_sensitive, cmap=cmap_discrete, shading='auto')
+ax1.scatter(x, y, color='white', s=50, marker='^', edgecolor='black')
+ax1.set_title('Most Influential Parameter')
+ax1.set_xlabel('X [m]')
+ax1.set_ylabel('Y [m]')
+ax1.set_aspect('equal')
+cbar1 = plt.colorbar(im1, ax=ax1, ticks=range(problem['num_vars']))
+cbar1.set_ticklabels(problem['names'])
+
+# Subplot 2: Total sensitivity magnitude
+ax2 = plt.subplot(2, 3, 2)
+total_sensitivity = np.sum(ST, axis=2)
+im2 = ax2.pcolormesh(X, Y, total_sensitivity, cmap='hot', shading='auto')
+ax2.scatter(x, y, color='white', s=50, marker='^', edgecolor='black')
+ax2.set_title('Total Sensitivity Magnitude')
+ax2.set_xlabel('X [m]')
+ax2.set_ylabel('Y [m]')
+ax2.set_aspect('equal')
+plt.colorbar(im2, ax=ax2, label='Sum of ST indices')
+
+# Subplot 3: Wind speed sensitivity
+ax3 = plt.subplot(2, 3, 3)
+im3 = ax3.pcolormesh(X, Y, ST[:, :, 0], cmap='viridis', shading='auto')
+ax3.scatter(x, y, color='white', s=50, marker='^', edgecolor='black')
+ax3.set_title('Wind Speed Sensitivity (ST)')
+ax3.set_xlabel('X [m]')
+ax3.set_ylabel('Y [m]')
+ax3.set_aspect('equal')
+plt.colorbar(im3, ax=ax3, label='ST for wind speed')
+
+# Subplot 4: Wind direction sensitivity
+ax4 = plt.subplot(2, 3, 4)
+im4 = ax4.pcolormesh(X, Y, ST[:, :, 1], cmap='viridis', shading='auto')
+ax4.scatter(x, y, color='white', s=50, marker='^', edgecolor='black')
+ax4.set_title('Wind Direction Sensitivity (ST)')
+ax4.set_xlabel('X [m]')
+ax4.set_ylabel('Y [m]')
+ax4.set_aspect('equal')
+plt.colorbar(im4, ax=ax4, label='ST for wind direction')
+
+# Subplot 5: Turbulence intensity sensitivity
+ax5 = plt.subplot(2, 3, 5)
+im5 = ax5.pcolormesh(X, Y, ST[:, :, 2], cmap='viridis', shading='auto')
+ax5.scatter(x, y, color='white', s=50, marker='^', edgecolor='black')
+ax5.set_title('TI Sensitivity (ST)')
+ax5.set_xlabel('X [m]')
+ax5.set_ylabel('Y [m]')
+ax5.set_aspect('equal')
+plt.colorbar(im5, ax=ax5, label='ST for turbulence intensity')
+
+# Subplot 6: Shear exponent sensitivity
+ax6 = plt.subplot(2, 3, 6)
+im6 = ax6.pcolormesh(X, Y, ST[:, :, 3], cmap='viridis', shading='auto')
+ax6.scatter(x, y, color='white', s=50, marker='^', edgecolor='black')
+ax6.set_title('Shear Exponent Sensitivity (ST)')
+ax6.set_xlabel('X [m]')
+ax6.set_ylabel('Y [m]')
+ax6.set_aspect('equal')
+plt.colorbar(im6, ax=ax6, label='ST for shear exponent')
+
+plt.tight_layout()
+plt.savefig('sensitivity_analysis_output/composite_sensitivity.png', dpi=300, bbox_inches='tight')
+
+# ============================================================================
+# 10. SAVE RESULTS TO FILE
+# ============================================================================
+
+print("Saving results to files...")
+
+# Save sensitivity indices as numpy arrays
+np.save('sensitivity_analysis_output/first_order_indices.npy', S1)
+np.save('sensitivity_analysis_output/total_order_indices.npy', ST)
+
+# Save grid coordinates
+np.save('sensitivity_analysis_output/grid_X.npy', X)
+np.save('sensitivity_analysis_output/grid_Y.npy', Y)
+
+# Save turbine coordinates
+turbine_data = pd.DataFrame({'x': x, 'y': y})
+turbine_data.to_csv('sensitivity_analysis_output/turbine_locations.csv', index=False)
+
+# Create a summary report
+with open('sensitivity_analysis_output/summary_report.txt', 'w') as f:
+    f.write("SOBOL SENSITIVITY ANALYSIS SUMMARY\n")
+    f.write("=" * 50 + "\n\n")
+    f.write(f"Analysis completed: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+    f.write(f"Total simulations: {len(param_values)}\n")
+    f.write(f"Grid resolution: {grid_resolution} m\n")
+    f.write(f"Grid dimensions: {X.shape[0]} x {X.shape[1]}\n")
+    f.write(f"Number of turbines: {len(x)}\n\n")
+    
+    f.write("PARAMETER RANGES:\n")
+    for i, name in enumerate(problem['names']):
+        f.write(f"  {name}: {problem['bounds'][i][0]} to {problem['bounds'][i][1]}\n")
+    
+    f.write("\nGLOBAL SENSITIVITY INDICES (averaged over grid):\n")
+    for i, name in enumerate(problem['names']):
+        f.write(f"  {name}:\n")
+        f.write(f"    First order (S1): {np.nanmean(S1[:,:,i]):.4f}\n")
+        f.write(f"    Total order (ST): {np.nanmean(ST[:,:,i]):.4f}\n")
+
+print("\n" + "="*60)
+print("ANALYSIS COMPLETE!")
+print("="*60)
+print(f"\nResults saved in 'sensitivity_analysis_output/' directory:")
+print("  - first_order_sensitivity.png: First order Sobol indices")
+print("  - total_order_sensitivity.png: Total order Sobol indices")
+print("  - flow_field_series.png: Flow field at different parameter sets")
+print("  - composite_sensitivity.png: Composite analysis")
+print("  - summary_report.txt: Analysis summary")
+print("  - *.npy files: Raw sensitivity data for further analysis")
+print("\nKey findings:")
+print("  - Sobol indices show which parameters most affect WS_eff at each location")
+print("  - First order indices (S1): Direct effect of each parameter")
+print("  - Total order indices (ST): Total effect (including interactions)")
+print("  - Values close to 1 indicate high sensitivity")
+print("  - Values close to 0 indicate low sensitivity")
+
+# Show all plots
+plt.show()
+```
+
+This comprehensive script performs the following:
+
+## **Key Features:**
+
+1. **Uncertainty Propagation**: Propagates measurement uncertainties through PyWake simulations
+2. **Sobol Sensitivity Analysis**: Computes first-order and total-order Sobol indices for WS_eff
+3. **Flow Field Visualization**: Creates a series of images showing sensitivity across the wind farm
+
+## **Uncertainty Parameters Considered:**
+- Wind speed (ws): ±20% uncertainty
+- Wind direction (wd): ±10° uncertainty
+- Turbulence intensity (ti): ±20% uncertainty
+- Shear exponent (alpha): Range from offshore to onshore conditions
+
+## **Output Files Generated:**
+
+### **Main Visualizations:**
+- `first_order_sensitivity.png`: First-order Sobol indices for each parameter
+- `total_order_sensitivity.png`: Total-order Sobol indices (including interactions)
+- `flow_field_series.png`: Flow fields at different parameter combinations
+- `composite_sensitivity.png`: Comprehensive sensitivity analysis
+
+### **Data Files:**
+- Raw sensitivity indices (numpy arrays)
+- Grid coordinates
+- Turbine locations
+- Summary report with global sensitivity indices
+
+## **Interpretation Guide:**
+
+1. **Sobol Indices**:
+   - **S1 (First-order)**: Direct effect of each parameter
+   - **ST (Total-order)**: Total effect (direct + interactions)
+   - Values range from 0 (no effect) to 1 (dominant effect)
+
+2. **Visual Patterns**:
+   - Wake regions typically show higher sensitivity to turbulence and shear
+   - Upstream regions are more sensitive to wind speed and direction
+   - Total order indices are always ≥ first order indices
+
+## **Customization Options:**
+
+You can modify:
+- `problem['bounds']`: Adjust uncertainty ranges
+- `N`: Change number of samples (higher = more accurate but slower)
+- `grid_resolution`: Change flow field resolution
+- Wind farm layout and turbine specifications
+
+## **Usage:**
+```python
+# Run the script
+python sensitivity_analysis.py
+```
+
+The script will automatically create the output directory and generate all visualizations. The summary report provides quantitative insights into which measurement uncertainties most significantly affect wind farm performance at different locations.

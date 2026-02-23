@@ -1,0 +1,48 @@
+The error message
+
+  OSError: Unable to synchronously open file (file signature not found)
+
+indicates that h5py has tried to open a file which either is corrupted or is not a valid HDF5 file. It appears that during the join (merging of the worker outputs), one of your expected 3000 files is either missing or partially written so that it fails the HDF5 signature check. In other words, while 2999 files were usable, the final worker file is invalid, and the script crashes while trying to open it.
+
+To modify the script so that it reliably detects these problems and shuts down cleanly instead of crashing mid-run, you can take the following approaches:
+
+1. Verify Files Before Processing
+ • Use h5py’s helper function (or similar logic) to check if a file is a valid HDF5 file before you attempt to open it. For example, h5py provides an is_hdf5() function:
+  
+  import h5py
+  import sys
+  import os
+  
+  worker_files = [...]  # your list of file paths
+  for worker_file in worker_files:
+   if not os.path.exists(worker_file):
+    print(f"ERROR: File not found: {worker_file}. Aborting.")
+    sys.exit(1)
+   if not h5py.is_hdf5(worker_file):
+    print(f"ERROR: File is not a valid HDF5: {worker_file}. Aborting.")
+    sys.exit(1)
+
+2. Use a try/except Block Around h5py.File
+ • Even with pre-checks, sometimes a file might get corrupted between the check and opening. You can wrap your file-opening code in a try/except block to catch any OSError and then cleanly exit:
+  
+  import h5py
+  import sys
+  
+  def process_file(worker_file):
+   try:
+    with h5py.File(worker_file, 'r') as h5_in:
+     # Perform your operations.
+     pass
+   except OSError as e:
+    print(f"ERROR: Failed to open {worker_file}: {e}")
+    # Optionally, perform any cleanup here before exiting.
+    sys.exit(1)
+  
+  # Then iterate over all worker files:
+  for worker_file in worker_files:
+   process_file(worker_file)
+
+3. Stop the Process Cleanly
+ • By using sys.exit(1) (or raising an exception that is caught in a higher-level block), you ensure that if any file is invalid, the process stops immediately with an error message. This is often preferable to waiting until most of the processing is complete.
+
+In summary, the modified script should first verify that each worker file exists and has a valid HDF5 signature before trying to process it. Additionally, wrapping the file open operation in a try/except block lets you catch any file-related errors that might occur at runtime. This approach ensures that the error is caught reliably, while providing a clean and informative stop to the process if a worker file is invalid.
