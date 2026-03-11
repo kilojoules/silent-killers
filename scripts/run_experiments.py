@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 # Import your new API module
 from silent_killers.llm_api import (
     OpenAIProvider, AnthropicProvider, GoogleProvider, DeepSeekProvider,
+    HuggingFaceProvider,
 )
 
 # Load environment variables from a .env file for API keys
@@ -21,6 +22,7 @@ PROVIDER_MAP = {
     "anthropic": AnthropicProvider,
     "google": GoogleProvider,
     "deepseek": DeepSeekProvider,
+    "huggingface": HuggingFaceProvider,
 }
 
 def run_single_experiment(prompt: str, model_config: dict, seeds: int, output_dir: Path):
@@ -35,6 +37,8 @@ def run_single_experiment(prompt: str, model_config: dict, seeds: int, output_di
     provider_kwargs = {"model_name": model_config["name"]}
     if "supports_temperature" in model_config:
         provider_kwargs["supports_temperature"] = model_config["supports_temperature"]
+    if "load_in_4bit" in model_config:
+        provider_kwargs["load_in_4bit"] = model_config["load_in_4bit"]
     llm = provider_class(**provider_kwargs)
     
     model_output_dir = output_dir / model_config["alias"]
