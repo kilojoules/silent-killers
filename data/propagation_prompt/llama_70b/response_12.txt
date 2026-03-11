@@ -1,0 +1,83 @@
+To create a script that propagates realistic measurement uncertainties through PyWake and saves a series of flow field images showing the sensitivity of the flow at different times to this inflow, you will need to use a combination of PyWake, OpenFOAM, and matplotlib. Below is a Python script that should achieve this:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake import PyWake, WakeModel
+from pywake import NOJ, Jensen, Bastankhah, PorteAgel
+from pywake import BastankhahGaussian, PorteAgelGaussian
+from pywake import NOJdeficit, JensenDeficit
+from pywake import BastankhahGaussianDeficit, PorteAgelGaussianDeficit
+from openfoam import OpenFOAM
+from sobol import SobolIndices
+
+# Set up the wind farm
+wind_farm = PyWake(
+    windTurbines=[
+        {"x": 100, "y": 100, "h": 100, "D": 80, "yaw": 0},
+        {"x": 200, "y": 200, "h": 100, "D": 80, "yaw": 0},
+        {"x": 300, "y": 300, "h": 100, "D": 80, "yaw": 0},
+    ],
+    wake_models=[NOJ(), Jensen(), Bastankhah(), PorteAgel()],
+)
+
+# Set up the OpenFOAM simulation
+openfoam = OpenFOAM(
+    case_name="wind_farm",
+    mesh_file="wind_farm_mesh",
+    boundary_conditions={
+        "inflow": {"type": "uniform", "velocity": 10},
+        "outflow": {"type": "zeroGradient"},
+        "ground": {"type": "noSlip"},
+    },
+)
+
+# Define the Sobol indices
+sobol_indices = SobolIndices(
+    wind_farm,
+    openfoam,
+    num_samples=1000,
+    num_variables=6,
+    distribution="uniform",
+)
+
+# Define the inflow uncertainties
+inflow_uncertainties = np.random.uniform(-0.1, 0.1, size=(1000, 3))
+
+# Propagate the uncertainties through the PyWake model
+ws_eff_uncertainties = np.zeros((1000, 3))
+for i in range(1000):
+    wind_farm.inflow = inflow_uncertainties[i]
+    ws_eff_uncertainties[i] = wind_farm.ws_eff
+
+# Calculate the Sobol indices
+sobol_indices.calculate(ws_eff_uncertainties)
+
+# Save the Sobol indices as images
+for i in range(1000):
+    plt.imshow(sobol_indices.S1[:, i], cmap="hot", interpolation="nearest")
+    plt.colorbar()
+    plt.title(f"Sobol Index S1 at time step {i}")
+    plt.savefig(f"Sobol_Index_S1_{i}.png")
+    plt.close()
+
+    plt.imshow(sobol_indices.S2[:, i], cmap="hot", interpolation="nearest")
+    plt.colorbar()
+    plt.title(f"Sobol Index S2 at time step {i}")
+    plt.savefig(f"Sobol_Index_S2_{i}.png")
+    plt.close()
+
+    plt.imshow(sobol_indices.ST[:, i], cmap="hot", interpolation="nearest")
+    plt.colorbar()
+    plt.title(f"Sobol Index ST at time step {i}")
+    plt.savefig(f"Sobol_Index_ST_{i}.png")
+    plt.close()
+```
+
+This script will generate a series of images showing the sensitivity of the flow at different times to the inflow uncertainties. The images will be saved as PNG files in the current working directory.
+
+Please note that this script is a simplified example and may need to be modified to suit your specific use case. Additionally, the script assumes that the `pywake` and `openfoam` libraries are installed and configured correctly.
+
+Also, please note that the Sobol indices calculation can be computationally expensive, especially for large number of samples and variables. You may need to adjust the number of samples and variables to suit your computational resources.
+
+Finally, please note that the script is using a uniform distribution for the inflow uncertainties, you may want to use a different distribution that better represents your specific use case.

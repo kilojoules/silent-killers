@@ -1,0 +1,68 @@
+To generate a script that propagates realistic measurement uncertainties through PyWake and saves a series of flow field images showing the sensitivity of the flow at different times to this inflow, we'll need to use the following steps:
+
+1.  Define the uncertainty in the inflow wind speed and direction.
+2.  Use the `sobol` module to calculate the Sobol sensitivity indices for the effective wind speed (`WS_eff`) as a function of x and y.
+3.  Use the `pywake` module to simulate the flow field at different times.
+4.  Save the flow field images at each time step.
+
+Here's a script that accomplishes these steps:
+
+```python
+import numpy as np
+from pywake import PyWake
+from sobol import sobol
+import matplotlib.pyplot as plt
+
+# Define the uncertainty in the inflow wind speed and direction
+ws_mean = 10  # mean wind speed
+ws_std = 0.5  # standard deviation of wind speed
+wd_mean = 270  # mean wind direction
+wd_std = 5  # standard deviation of wind direction
+
+# Define the PyWake simulation parameters
+x = np.linspace(-1000, 1000, 100)  # x-coordinates of the grid
+y = np.linspace(-1000, 1000, 100)  # y-coordinates of the grid
+z = 100  # height of the grid
+nt = 100  # number of time steps
+dt = 1  # time step size
+
+# Create a PyWake instance
+wake = PyWake(x, y, z, nt, dt)
+
+# Define the Sobol sensitivity indices
+n_samples = 1000  # number of samples for Sobol sensitivity analysis
+sobol_indices = sobol.sobol_sensitivity(n_samples, ws_mean, ws_std, wd_mean, wd_std)
+
+# Simulate the flow field at different times
+for i in range(nt):
+    # Get the current time step
+    t = i * dt
+    
+    # Simulate the flow field at the current time step
+    u, v, w = wake.simulate(ws_mean, wd_mean, t)
+    
+    # Calculate the effective wind speed (WS_eff)
+    ws_eff = np.sqrt(u**2 + v**2 + w**2)
+    
+    # Calculate the Sobol sensitivity indices for WS_eff
+    sobol_ws_eff = sobol.sobol_sensitivity(ws_eff, sobol_indices)
+    
+    # Save the flow field image at the current time step
+    plt.figure(figsize=(10, 10))
+    plt.imshow(ws_eff, cmap='jet', extent=[x.min(), x.max(), y.min(), y.max()])
+    plt.title(f'Flow Field at t = {t} s')
+    plt.xlabel('x (m)')
+    plt.ylabel('y (m)')
+    plt.colorbar(label='WS_eff (m/s)')
+    plt.savefig(f'flow_field_{i}.png')
+    plt.close()
+
+# Save the Sobol sensitivity indices for WS_eff as a function of x and y
+np.save('sobol_ws_eff.npy', sobol_ws_eff)
+```
+
+This script simulates the flow field at different times using PyWake and calculates the Sobol sensitivity indices for the effective wind speed (`WS_eff`) as a function of x and y. The flow field images are saved at each time step, and the Sobol sensitivity indices are saved as a NumPy array.
+
+Note that this script assumes that the PyWake simulation parameters (e.g., grid size, time step size, etc.) are defined in the `PyWake` class. You may need to modify the script to match your specific use case.
+
+Also, keep in mind that this script uses a simple Sobol sensitivity analysis, which may not capture all the complexities of the flow field. You may want to consider using more advanced sensitivity analysis techniques, such as global sensitivity analysis or Bayesian sensitivity analysis, to better capture the uncertainties in the flow field.

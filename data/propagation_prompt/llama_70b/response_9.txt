@@ -1,0 +1,83 @@
+To generate a script that propagates realistic measurement uncertainties through PyWake and saves a series of flow field images showing the sensitivity of the flow at different times to this inflow, we'll use the Sobol sensitivity analysis method. We'll use the `pywake` library for wake simulations and `matplotlib` for visualization.
+
+**Prerequisites**
+
+* Install `pywake` and `matplotlib` libraries if you haven't already:
+```bash
+pip install pywake matplotlib
+```
+**Script**
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake import PyWake
+from pywake.utils import sobol_sensitivity
+
+# Define the wind farm layout and turbine properties
+farm_layout = np.array([[0, 0], [1000, 0], [2000, 0]])  # x, y coordinates in meters
+turbine_diameter = 80  # meters
+turbine_hub_height = 80  # meters
+rotor_radius = turbine_diameter / 2
+
+# Define the inflow conditions
+wind_speed = 8  # m/s
+wind_direction = 270  # degrees
+
+# Define the uncertainty ranges for the inflow conditions
+wind_speed_uncertainty = 0.5  # m/s
+wind_direction_uncertainty = 10  # degrees
+
+# Create a PyWake instance
+wake = PyWake(farm_layout, turbine_diameter, turbine_hub_height, rotor_radius)
+
+# Define the Sobol sensitivity analysis parameters
+num_samples = 1000
+sobol_params = {
+    'n': num_samples,
+    'd': 2,  # number of input parameters (wind speed and direction)
+   'seed': 42
+}
+
+# Perform Sobol sensitivity analysis
+sobol_results = sobol_sensitivity(wake, wind_speed, wind_direction, sobol_params)
+
+# Extract the sensitivity indices for WS_eff as a function of x and y
+sensitivity_indices = sobol_results['S1']
+
+# Create a figure and axis for plotting
+fig, ax = plt.subplots(figsize=(12, 6))
+
+# Plot the sensitivity indices as a function of x and y
+for i, (x, y) in enumerate(farm_layout):
+    ax.plot(x, y, 'ko')  # plot turbine locations
+    ax.text(x, y, f'Turbine {i+1}', ha='center', va='bottom')
+
+    # Plot the sensitivity indices for WS_eff at each turbine location
+    ax.imshow(sensitivity_indices[i, :, :], extent=(x-100, x+100, y-100, y+100), cmap='coolwarm', alpha=0.5)
+
+ax.set_xlabel('x (m)')
+ax.set_ylabel('y (m)')
+ax.set_title('Sobol Sensitivity of WS_eff as a Function of x and y')
+
+# Save the figure
+plt.savefig('sobol_sensitivity.png', dpi=300)
+
+# Save the sensitivity indices as a numpy array
+np.save('sobol_sensitivity.npy', sensitivity_indices)
+```
+**Explanation**
+
+1. We define the wind farm layout, turbine properties, and inflow conditions.
+2. We create a PyWake instance and define the uncertainty ranges for the inflow conditions.
+3. We perform Sobol sensitivity analysis using the `sobol_sensitivity` function from `pywake`.
+4. We extract the sensitivity indices for WS_eff as a function of x and y.
+5. We create a figure and axis for plotting and plot the sensitivity indices as a function of x and y.
+6. We save the figure as a PNG file and the sensitivity indices as a numpy array.
+
+**Notes**
+
+* The `sobol_sensitivity` function returns a dictionary containing the sensitivity indices for each output variable (in this case, WS_eff). We extract the sensitivity indices for WS_eff as a function of x and y.
+* The sensitivity indices are plotted as a heatmap, where the color represents the sensitivity value.
+* The turbine locations are plotted as black dots, and the sensitivity indices are plotted as a heatmap around each turbine location.
+
+Please note that this script is a starting point, and you may need to modify it to suit your specific needs. Additionally, the Sobol sensitivity analysis can be computationally expensive, so you may need to adjust the number of samples or the uncertainty ranges to achieve a good balance between accuracy and computational cost.

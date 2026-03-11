@@ -1,0 +1,69 @@
+I'll provide a Python script that uses PyWake and the SALib library to perform a Sobol sensitivity analysis on the effective wind speed (WS_eff) as a function of x and y. This script will also generate a series of flow field images showing the sensitivity of the flow at different times to the inflow.
+
+Please note that this script assumes you have PyWake and SALib installed, and that you have a working knowledge of Python and PyWake.
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from PyWake import NOJ, NOJLocal, NOJGlobal
+from PyWake.flow_map import FlowMap
+from SALib.sample import sobol_sequence
+from SALib.analyze import sobol_analyze
+from SALib.plot import plot_sobol
+
+# Define the wind farm layout
+x = np.array([0, 100, 200, 300, 400, 500])
+y = np.array([0, 100, 200, 300, 400, 500])
+h = np.array([100, 100, 100, 100, 100, 100])
+
+# Define the wind turbine properties
+D = 80
+hub_height = 100
+cut_in_speed = 3
+cut_out_speed = 25
+rated_power = 2e6
+generator_efficiency = 0.9
+
+# Define the flow model
+wm = NOJLocal(n_wt=6, wake_model=NOJLocal())
+
+# Define the uncertainty bounds for the inflow
+inflow_bounds = {'u': [5, 15], 'ti': [0.05, 0.15]}
+
+# Generate the Sobol sequence
+n_samples = 1000
+inflow_samples = sobol_sequence.sample(len(inflow_bounds), n_samples, bounds=inflow_bounds)
+
+# Define the function to evaluate the effective wind speed
+def evaluate_ws_eff(params):
+    u, ti = params
+    flow_map = FlowMap(wm, x, y, h, u, ti)
+    ws_eff = flow_map.ws_eff()
+    return ws_eff
+
+# Evaluate the effective wind speed for each sample
+ws_eff_samples = np.array([evaluate_ws_eff(sample) for sample in inflow_samples])
+
+# Perform the Sobol sensitivity analysis
+sobol_indices = sobol_analyze(evaluate_ws_eff, inflow_bounds, num_samples=n_samples, num_resamples=100)
+
+# Plot the Sobol sensitivity indices
+plot_sobol(sobol_indices, labels=inflow_bounds.keys())
+
+# Generate flow field images for different times
+for i in range(n_samples):
+    u, ti = inflow_samples[i]
+    flow_map = FlowMap(wm, x, y, h, u, ti)
+    plt.imshow(flow_map.ws_eff(), extent=[0, 600, 0, 600])
+    plt.title(f"Flow Field at Time {i}")
+    plt.xlabel("x (m)")
+    plt.ylabel("y (m)")
+    plt.savefig(f"flow_field_{i}.png")
+    plt.close()
+```
+
+This script first defines the wind farm layout, wind turbine properties, and flow model. It then generates a Sobol sequence of inflow samples and evaluates the effective wind speed for each sample. The Sobol sensitivity indices are then calculated and plotted. Finally, the script generates flow field images for different times by plotting the effective wind speed for each sample.
+
+Please note that this script assumes a simple wind farm layout and wind turbine properties, and that the inflow uncertainty bounds are relatively small. You may need to modify the script to suit your specific use case.
+
+Also, the script generates a large number of flow field images, which may take a significant amount of time to generate and store. You may want to consider reducing the number of samples or using a more efficient method to generate the images.

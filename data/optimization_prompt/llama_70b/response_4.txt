@@ -1,0 +1,50 @@
+The issue you're experiencing is due to a failed attempt to open an HDF5 file in synchronous mode. This is likely caused by a corrupted or incomplete HDF5 file.
+
+The error message "file signature not found" suggests that the file is either corrupted or not a valid HDF5 file. This can occur when a worker process crashes or is terminated abnormally, leaving behind an incomplete or corrupted file.
+
+To detect this issue reliably and stop the process cleanly, you can modify your script to handle the `OSError` exception raised when attempting to open the HDF5 file. You can also add additional checks to verify the integrity of the file before attempting to open it.
+
+Here's an example of how you can modify your script to handle this issue:
+```python
+import h5py
+import os
+
+def open_h5_file(file_path):
+    try:
+        with h5py.File(file_path, 'r') as h5_in:
+            return h5_in
+    except OSError as e:
+        print(f"Error opening file {file_path}: {e}")
+        return None
+
+def check_file_integrity(file_path):
+    # Check if the file exists and is a valid HDF5 file
+    if not os.path.exists(file_path) or not os.path.isfile(file_path):
+        return False
+    try:
+        with h5py.File(file_path, 'r') as h5_in:
+            # Check if the file has a valid HDF5 structure
+            if not h5_in.attrs.get('file_version'):
+                return False
+    except OSError:
+        return False
+    return True
+
+#...
+
+with h5py.File(worker_file, 'r') as h5_in:
+    #...
+```
+In this example, the `open_h5_file` function attempts to open the HDF5 file and catches any `OSError` exceptions that are raised. If an error occurs, it prints an error message and returns `None`.
+
+The `check_file_integrity` function checks if the file exists, is a valid HDF5 file, and has a valid HDF5 structure. If any of these checks fail, it returns `False`.
+
+You can use these functions to check the integrity of the HDF5 files before attempting to open them. If a file is found to be corrupted or invalid, you can skip it and continue with the next file.
+
+Additionally, you can consider using the `h5py.File` object's `mode` parameter to specify the mode in which the file should be opened. For example, you can use the `'r+'` mode to open the file in read-only mode, which may help prevent corruption.
+
+```python
+with h5py.File(worker_file, 'r+') as h5_in:
+    #...
+```
+By handling the `OSError` exception and checking the integrity of the HDF5 files, you can improve the reliability of your script and prevent it from crashing due to corrupted or invalid files.

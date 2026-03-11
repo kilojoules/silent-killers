@@ -1,0 +1,72 @@
+To generate a script that propagates realistic measurement uncertainties through PyWake and saves a series of flow field images showing the sensitivity of the flow at different times to this inflow, you will need to use the Sobol sensitivity analysis method. Here is a script that should accomplish this:
+```
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake import PyWake, Wake
+from pywake.flow_field import FlowField
+from pywake.inflow import Inflow
+from pywake.turbine import Turbine
+from pywake.wind_farm import WindFarm
+from scipy.stats import norm
+from SALib.sample import saltelli
+from SALib.analyze import sobol
+
+# Define the wind farm layout
+x = np.array([0, 100, 200, 300, 400, 500])
+y = np.array([0, 100, 200, 300, 400, 500])
+z = np.array([100, 100, 100, 100, 100, 100])
+turbine_type ='Vestas_V90'
+
+# Define the inflow conditions
+inflow_speed = 8  # m/s
+inflow_direction = 270  # degrees
+inflow_turbulence = 0.1  # -
+
+# Define the uncertainty ranges for the inflow conditions
+inflow_speed_range = (7, 9)  # m/s
+inflow_direction_range = (265, 275)  # degrees
+inflow_turbulence_range = (0.05, 0.15)  # -
+
+# Define the number of samples for the Sobol sensitivity analysis
+num_samples = 1000
+
+# Define the problem dictionary
+problem = {
+    'num_vars': 3,
+    'names': ['inflow_speed', 'inflow_direction', 'inflow_turbulence'],
+    'bounds': [[inflow_speed_range[0], inflow_speed_range[1]],
+                [inflow_direction_range[0], inflow_direction_range[1]],
+                [inflow_turbulence_range[0], inflow_turbulence_range[1]]]
+}
+
+# Generate the samples using SALib
+samples = saltelli.sample(problem, num_samples, calc_second_order=False)
+
+# Initialize the PyWake simulation
+wake = PyWake(WindFarm(x, y, z, turbine_type), Inflow(inflow_speed, inflow_direction, inflow_turbulence))
+
+# Run the PyWake simulation for each sample
+results = np.zeros((num_samples, len(x), len(y)))
+for i, sample in enumerate(samples):
+    inflow_speed, inflow_direction, inflow_turbulence = sample
+    wake.inflow.speed = inflow_speed
+    wake.inflow.direction = inflow_direction
+    wake.inflow.turbulence = inflow_turbulence
+    results[i] = wake.flow_field.calculate_flow_field(x, y)
+
+# Calculate the Sobol sensitivity indices
+Si = sobol.analyze(problem, results, calc_second_order=False)
+
+# Plot the Sobol sensitivity indices as a function of x and y
+for i, (x_i, y_i) in enumerate(zip(x, y)):
+    plt.figure()
+    plt.imshow(Si['S1'][i], extent=[x.min(), x.max(), y.min(), y.max()], origin='lower')
+    plt.colorbar()
+    plt.title(f'Sobol Sensitivity Index for WS_eff at ({x_i}, {y_i})')
+    plt.xlabel('x [m]')
+    plt.ylabel('y [m]')
+    plt.savefig(f'Sobol_Sensitivity_{x_i}_{y_i}.png')
+```
+This script uses the SALib library to generate samples from the uncertainty ranges of the inflow conditions, and then runs the PyWake simulation for each sample. The results are then analyzed using the Sobol sensitivity analysis method to calculate the sensitivity indices for the WS_eff variable as a function of x and y. The results are then plotted as a series of images showing the sensitivity of the flow at different times to the inflow conditions.
+
+Please note that this script is just a starting point, and you may need to modify it to suit your specific needs. Additionally, the script assumes that the PyWake simulation is run for a single time step, and the results are analyzed for a single variable (WS_eff). You may need to modify the script to accommodate multiple time steps and/or multiple variables.

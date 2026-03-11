@@ -1,0 +1,89 @@
+To generate a script that propagates realistic measurement uncertainties through PyWake and saves a series of flow field images showing the sensitivity of the flow at different times to this inflow, you will need to use a combination of Python libraries including PyWake, numpy, matplotlib, and SALib. Below is a sample script that should achieve this:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from PyWake import NOJ, AEP
+from PyWake.wind_farm_models import WindFarm
+from PyWake.flow_map import FlowMap
+from SALib.sample import sobol_sequence
+from SALib.analyze import sobol_analyze
+from SALib.plot import plot_sobol
+
+# Define the wind farm layout
+x = np.array([0, 100, 200, 300, 400])
+y = np.array([0, 50, 100, 150, 200])
+wind_turbines = [(x[i], y[i], 100) for i in range(len(x))]
+
+# Define the wind farm
+wf = WindFarm(wind_turbines)
+
+# Define the flow model
+fm = NOJ(wf)
+
+# Define the flow map
+fm_map = FlowMap(fm, x=np.linspace(0, 500, 100), y=np.linspace(0, 500, 100))
+
+# Define the parameters for the Sobol analysis
+problem = {
+    'num_vars': 2,
+    'names': ['ws_eff', 'ti'],
+    'bounds': [[4, 12], [0.1, 0.3]]
+}
+
+# Generate the Sobol sequence
+sample = sobol_sequence.sample(len(x), problem['num_vars'], problem['bounds'], 1000)
+
+# Define the function to evaluate the Sobol analysis
+def evaluate(ws_eff, ti):
+    # Update the wind speed and turbulence intensity
+    fm.wf.windTurbines[0].hub_height = ws_eff
+    fm.wf.windTurbines[0].ct_func(ti)
+    
+    # Evaluate the flow map
+    flow_map = fm_map.flow_map()
+    
+    # Calculate the AEP
+    aep = AEP(flow_map)
+    
+    return aep
+
+# Evaluate the Sobol analysis
+results = []
+for i in range(len(sample)):
+    ws_eff, ti = sample[i]
+    results.append(evaluate(ws_eff, ti))
+
+# Analyze the Sobol analysis
+sobol_results = sobol_analyze(problem, results)
+
+# Plot the Sobol sensitivity
+plt.figure(figsize=(10, 6))
+plot_sobol(sobol_results, 'WS_eff', 'x')
+plt.xlabel('x')
+plt.ylabel('Sobol Sensitivity')
+plt.title('Sobol Sensitivity of WS_eff with respect to x')
+plt.show()
+
+plt.figure(figsize=(10, 6))
+plot_sobol(sobol_results, 'WS_eff', 'y')
+plt.xlabel('y')
+plt.ylabel('Sobol Sensitivity')
+plt.title('Sobol Sensitivity of WS_eff with respect to y')
+plt.show()
+
+# Save the flow field images
+for i in range(len(sample)):
+    ws_eff, ti = sample[i]
+    evaluate(ws_eff, ti)
+    plt.figure(figsize=(10, 6))
+    plt.imshow(fm_map.flow_map(), cmap='viridis')
+    plt.xlabel('x')
+    plt.ylabel('y')
+    plt.title('Flow Field at time step {}'.format(i))
+    plt.savefig('flow_field_{}.png'.format(i))
+```
+
+This script will generate a series of flow field images showing the sensitivity of the flow at different times to the inflow. The Sobol sensitivity of WS_eff with respect to x and y is also plotted. The script uses the SALib library to perform the Sobol analysis and the PyWake library to model the wind farm and evaluate the flow map.
+
+Please note that this script is just an example and may need to be modified to suit your specific needs. Additionally, the script assumes that the wind farm layout and the flow model are already defined, and that the Sobol analysis is performed using the SALib library.

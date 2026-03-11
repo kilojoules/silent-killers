@@ -1,0 +1,82 @@
+The error message indicates that the script is trying to open an HDF5 file, but it's unable to do so because the file signature is not found. This suggests that the file is either corrupted or not a valid HDF5 file.
+
+The issue is likely caused by a worker process that failed or was terminated prematurely, leaving behind an incomplete or corrupted HDF5 file.
+
+To detect this error reliably and stop the process cleanly, you can modify the script to:
+
+1.  Check the integrity of the HDF5 file before trying to open it:
+
+    ```python
+import h5py
+
+def is_valid_hdf5_file(file_path):
+    try:
+        with h5py.File(file_path, 'r') as h5_in:
+            pass  # If we can open the file, it's likely valid
+        return True
+    except OSError:
+        return False
+
+worker_file = 'path/to/worker/file.h5'
+if not is_valid_hdf5_file(worker_file):
+    print(f"Error: {worker_file} is not a valid HDF5 file.")
+    # Clean up and exit the process
+    sys.exit(1)
+```
+
+2.  Use a try-except block to catch the `OSError` exception when trying to open the HDF5 file:
+
+    ```python
+try:
+    with h5py.File(worker_file, 'r') as h5_in:
+        # Process the file
+except OSError as e:
+    print(f"Error: Unable to open {worker_file} - {e}")
+    # Clean up and exit the process
+    sys.exit(1)
+```
+
+3.  Consider implementing a retry mechanism to handle temporary issues that may cause the file to be inaccessible:
+
+    ```python
+import time
+
+max_retries = 3
+retry_delay = 1  # seconds
+
+for attempt in range(max_retries):
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Process the file
+        break
+    except OSError as e:
+        print(f"Error (attempt {attempt+1}/{max_retries}): Unable to open {worker_file} - {e}")
+        if attempt < max_retries - 1:
+            print(f"Retrying in {retry_delay} seconds...")
+            time.sleep(retry_delay)
+        else:
+            # Clean up and exit the process
+            sys.exit(1)
+```
+
+4.  To prevent the joining operation from killing the process, you can use a timeout when joining threads or processes:
+
+    ```python
+import threading
+
+# Create a thread or process
+thread = threading.Thread(target=your_function)
+
+# Start the thread
+thread.start()
+
+# Join the thread with a timeout
+thread.join(timeout=60)  # 1 minute timeout
+
+if thread.is_alive():
+    print("Thread is still running. Terminating...")
+    # Clean up and exit the process
+    sys.exit(1)
+```
+
+By implementing these modifications, you can make your script more robust and resilient to errors, and ensure that it can recover from issues with HDF5 files.

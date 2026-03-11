@@ -1,0 +1,59 @@
+The error you're experiencing is due to an `OSError` exception being raised when trying to open an HDF5 file. The error message "file signature not found" suggests that the file is either corrupted or not a valid HDF5 file.
+
+To ensure that this error is detected reliably and stops the process cleanly if any worker file is invalid, you can add a try-except block around the code that opens the HDF5 file. Here's an example of how you can modify your code:
+
+```python
+try:
+    with h5py.File(worker_file, 'r') as h5_in:
+        # Your code here...
+except OSError as e:
+    print(f"Error opening file {worker_file}: {e}")
+    # You can choose to either skip this file and continue with the next one,
+    # or stop the entire process.
+    # If you want to stop the process, you can use the following line:
+    raise
+```
+
+Alternatively, you can also use a more specific exception, `h5py.H5Error`, if you're using a recent version of h5py:
+
+```python
+try:
+    with h5py.File(worker_file, 'r') as h5_in:
+        # Your code here...
+except h5py.H5Error as e:
+    print(f"Error opening file {worker_file}: {e}")
+    #...
+```
+
+To prevent the program from hanging indefinitely if a worker file is invalid, you can also add a timeout when opening the file. However, this is not directly supported by h5py, and you would need to use a separate library like `timeout_decorator` or implement a custom solution using threads or multiprocessing.
+
+Regarding the joining operation, it's possible that the error is occurring during the joining operation because the process is trying to access a file that is already closed or corrupted. To avoid this, you can make sure that the file is closed properly before trying to join the process.
+
+Here's an example of how you can modify your code to ensure that the file is closed properly:
+
+```python
+try:
+    with h5py.File(worker_file, 'r') as h5_in:
+        # Your code here...
+except OSError as e:
+    print(f"Error opening file {worker_file}: {e}")
+    # Close the file if it's open
+    if 'h5_in' in locals() and h5_in:
+        h5_in.close()
+    #...
+```
+
+If you're using a recent version of h5py, you can also use the `h5py.File` object's `close` method to ensure that the file is closed properly:
+
+```python
+try:
+    with h5py.File(worker_file, 'r') as h5_in:
+        # Your code here...
+except OSError as e:
+    print(f"Error opening file {worker_file}: {e}")
+    # Close the file if it's open
+    h5_in.close()
+    #...
+```
+
+Note that in the above examples, the file is closed in the exception handling block. This is to ensure that the file is closed even if an exception occurs. However, if you're using a `with` statement, the file will be closed automatically when the block is exited, regardless of whether an exception occurs or not.

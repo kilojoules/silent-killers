@@ -1,0 +1,65 @@
+To generate a script that propagates realistic measurement uncertainties through PyWake and saves a series of flow field images showing the sensitivity of the flow at different times to this inflow, we will use the Sobol sensitivity method. Here's a script that accomplishes this:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from PyWake import NOJ, BastankhahGaussian
+from PyWake.superposition_models import SuperPositionModel
+from PyWake.flow_map import HorizontalGrid
+from PyWake.wind_farm_models import All2AllIterative
+from PyWake.deficit_models import MyGaussianDeficit
+from py_sensitivity import Sobol
+from uncertainties import unumpy
+
+# Define the uncertainty ranges for the inflow parameters
+ws_uncertainty = 0.1  # uncertainty in wind speed (m/s)
+wd_uncertainty = 10  # uncertainty in wind direction (degrees)
+
+# Define the wind farm layout and turbine characteristics
+x = np.array([0, 100, 200, 300, 400])
+y = np.array([0, 50, 100, 150, 200])
+D = 80  # turbine diameter (m)
+zH = 100  # hub height (m)
+
+# Define the PyWake model
+model = All2AllIterative(NOJ(), BastankhahGaussian(), MyGaussianDeficit())
+fm = HorizontalGrid(x, y, h=50, dx=10, dy=10)
+
+# Define the Sobol sensitivity analysis
+sobol = Sobol(model, fm, x, y, D, zH, ws_uncertainty, wd_uncertainty)
+
+# Perform the Sobol sensitivity analysis
+sobol_results = sobol.analyze()
+
+# Plot the Sobol sensitivity indices for each turbine
+for i, turbine in enumerate(sobol_results):
+    plt.figure()
+    plt.imshow(turbine['S1'], extent=(x.min(), x.max(), y.min(), y.max()))
+    plt.xlabel('x (m)')
+    plt.ylabel('y (m)')
+    plt.title(f'Sobol Sensitivity Index for Turbine {i+1}')
+    plt.colorbar()
+    plt.savefig(f'sobol_sensitivity_turbine_{i+1}.png')
+
+# Save the flow field images for each time step
+for t in range(len(sobol_results[0]['S1'])):
+    plt.figure()
+    plt.imshow(sobol_results[0]['S1'][t], extent=(x.min(), x.max(), y.min(), y.max()))
+    plt.xlabel('x (m)')
+    plt.ylabel('y (m)')
+    plt.title(f'Flow Field at Time Step {t}')
+    plt.colorbar()
+    plt.savefig(f'flow_field_timestep_{t}.png')
+```
+
+This script defines the uncertainty ranges for the inflow parameters, the wind farm layout, and the turbine characteristics. It then defines the PyWake model and performs a Sobol sensitivity analysis using the `py_sensitivity` library. The results are then plotted as images showing the sensitivity of the flow at different times to the inflow.
+
+Note that this script assumes that the `py_sensitivity` library is installed and configured properly. Additionally, the `py_sensitivity` library requires the `uncertainties` library to be installed.
+
+Also, please note that this is a simplified example, in real-world scenarios you would need to consider more variables and their uncertainties, and also the interaction between them.
+
+You can also use other sensitivity analysis methods like Morris, FAST, or DELSA, depending on the complexity of your problem and the computational resources available.
+
+You can also use other visualization tools like `matplotlib` or `seaborn` to create more informative and visually appealing plots.
+
+Please let me know if you have any questions or need further clarification.

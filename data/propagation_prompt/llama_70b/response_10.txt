@@ -1,0 +1,69 @@
+To generate a script that propagates realistic measurement uncertainties through PyWake and saves a series of flow field images showing the sensitivity of the flow at different times to this inflow, we'll need to follow these steps:
+
+1. Define the uncertainty in the inflow wind speed and direction.
+2. Create a PyWake simulation with the uncertain inflow.
+3. Run the simulation and extract the flow field at different times.
+4. Calculate the Sobol sensitivity of the effective wind speed (WS_eff) with respect to the inflow wind speed and direction.
+5. Visualize the sensitivity of the flow field at different times using the Sobol sensitivity indices.
+
+Here's a script that accomplishes this:
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake import PyWake, FlowField
+from pywake.utils import sobol_sensitivity
+
+# Define the uncertainty in the inflow wind speed and direction
+np.random.seed(0)
+n_samples = 1000
+inflow_ws_mean = 10  # m/s
+inflow_ws_std = 0.5  # m/s
+inflow_wd_mean = 270  # degrees
+inflow_wd_std = 10  # degrees
+inflow_ws_samples = np.random.normal(inflow_ws_mean, inflow_ws_std, n_samples)
+inflow_wd_samples = np.random.normal(inflow_wd_mean, inflow_wd_std, n_samples)
+
+# Create a PyWake simulation with the uncertain inflow
+farm = PyWake(
+    n_wind_directions=1,
+    n_wind_speeds=1,
+    wind_directions=[inflow_wd_samples],
+    wind_speeds=[inflow_ws_samples],
+    turbine_type="DTU_10MW",
+    turbine_distance=500,  # meters
+)
+
+# Run the simulation and extract the flow field at different times
+times = np.arange(0, 3600, 60)  # seconds
+flow_fields = []
+for time in times:
+    farm.set_time(time)
+    flow_field = farm.get_flow_field()
+    flow_fields.append(flow_field)
+
+# Calculate the Sobol sensitivity of the effective wind speed (WS_eff) with respect to the inflow wind speed and direction
+ws_eff_sensitivity = []
+for flow_field in flow_fields:
+    ws_eff = flow_field.ws_eff
+    sobol_indices = sobol_sensitivity(ws_eff, inflow_ws_samples, inflow_wd_samples)
+    ws_eff_sensitivity.append(sobol_indices)
+
+# Visualize the sensitivity of the flow field at different times using the Sobol sensitivity indices
+fig, axes = plt.subplots(len(times), 2, figsize=(12, 6 * len(times)))
+for i, (time, sensitivity) in enumerate(zip(times, ws_eff_sensitivity)):
+    ax = axes[i, 0]
+    ax.imshow(sensitivity[:, :, 0], cmap="coolwarm", origin="lower")
+    ax.set_title(f"Sobol Sensitivity of WS_eff at t={time} s")
+    ax.set_xlabel("X [m]")
+    ax.set_ylabel("Y [m]")
+    ax = axes[i, 1]
+    ax.imshow(sensitivity[:, :, 1], cmap="coolwarm", origin="lower")
+    ax.set_title(f"Sobol Sensitivity of WS_eff at t={time} s")
+    ax.set_xlabel("X [m]")
+    ax.set_ylabel("Y [m]")
+plt.tight_layout()
+plt.show()
+```
+This script uses PyWake to simulate the flow field at different times with uncertain inflow wind speed and direction. It then calculates the Sobol sensitivity of the effective wind speed (WS_eff) with respect to the inflow wind speed and direction using the `sobol_sensitivity` function from PyWake. Finally, it visualizes the sensitivity of the flow field at different times using the Sobol sensitivity indices.
+
+Note that this script assumes that the inflow wind speed and direction are the only uncertain variables, and that the turbine layout and other parameters are fixed. In a real-world scenario, you may need to consider additional sources of uncertainty.

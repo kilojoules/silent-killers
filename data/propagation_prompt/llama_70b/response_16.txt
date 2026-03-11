@@ -1,0 +1,122 @@
+To create a script that propagates realistic measurement uncertainties through PyWake and saves a series of flow field images showing the sensitivity of the flow at different times to this inflow, we'll need to use a combination of PyWake, Sobol sensitivity analysis, and visualization tools. Here's a step-by-step guide to help you achieve this:
+
+**Step 1: Install required libraries and dependencies**
+
+You'll need to install PyWake, SALib (for Sobol sensitivity analysis), and matplotlib for visualization. You can install them using pip:
+```bash
+pip install pywake salib matplotlib
+```
+**Step 2: Set up PyWake**
+
+Create a PyWake simulation with your desired turbine layout, wind conditions, and other parameters. For this example, we'll assume you have a simple wind farm with two turbines.
+```python
+import pywake
+
+# Define wind farm layout
+turbine_x = [0, 100]
+turbine_y = [0, 0]
+turbine_z = [100, 100]
+
+# Define wind conditions
+wind_speed = 10
+wind_direction = 270
+
+# Create PyWake simulation
+sim = pywake.Simulation(turbine_x, turbine_y, turbine_z, wind_speed, wind_direction)
+```
+**Step 3: Define Sobol sensitivity analysis**
+
+Use SALib to define the Sobol sensitivity analysis. We'll analyze the sensitivity of the effective wind speed (WS_eff) to the inflow conditions.
+```python
+import SALib
+
+# Define the problem
+problem = {
+    'num_vars': 2,
+    'names': ['inflow_speed', 'inflow_direction'],
+    'bounds': [[5, 15], [250, 290]]
+}
+
+# Define the model
+def model(params):
+    inflow_speed = params['inflow_speed']
+    inflow_direction = params['inflow_direction']
+    # Run PyWake simulation with updated inflow conditions
+    sim.update_inflow(inflow_speed, inflow_direction)
+    return sim.WS_eff
+
+# Perform Sobol sensitivity analysis
+sobol_results = SALib.analyze(model, problem, calc_second_order=True)
+```
+**Step 4: Visualize sensitivity results**
+
+Create a series of flow field images showing the sensitivity of the flow at different times to the inflow conditions. We'll use matplotlib to create a heatmap of the Sobol sensitivity indices.
+```python
+import matplotlib.pyplot as plt
+import numpy as np
+
+# Create a grid of x and y values
+x = np.linspace(0, 200, 100)
+y = np.linspace(0, 200, 100)
+X, Y = np.meshgrid(x, y)
+
+# Evaluate the Sobol sensitivity indices at each point on the grid
+sensitivity_values = np.zeros((len(x), len(y)))
+for i in range(len(x)):
+    for j in range(len(y)):
+        inflow_speed = x[i]
+        inflow_direction = y[j]
+        # Run PyWake simulation with updated inflow conditions
+        sim.update_inflow(inflow_speed, inflow_direction)
+        WS_eff = sim.WS_eff
+        # Calculate Sobol sensitivity index
+        sensitivity_values[i, j] = sobol_results['S1'][0] * (WS_eff - np.mean(WS_eff)) / np.std(WS_eff)
+
+# Create heatmap of Sobol sensitivity indices
+plt.imshow(sensitivity_values, cmap='coolwarm', extent=[0, 200, 0, 200])
+plt.xlabel('X [m]')
+plt.ylabel('Y [m]')
+plt.title('Sobol Sensitivity of WS_eff to Inflow Conditions')
+plt.colorbar()
+plt.show()
+```
+**Step 5: Save images**
+
+Save the heatmap as a series of images, each representing the sensitivity of the flow at a different time step.
+```python
+import os
+
+# Create a directory to store images
+image_dir ='sensitivity_images'
+os.makedirs(image_dir, exist_ok=True)
+
+# Save images at each time step
+for t in range(sim.time_steps):
+    # Update PyWake simulation to current time step
+    sim.update_time(t)
+    # Evaluate Sobol sensitivity indices at each point on the grid
+    sensitivity_values = np.zeros((len(x), len(y)))
+    for i in range(len(x)):
+        for j in range(len(y)):
+            inflow_speed = x[i]
+            inflow_direction = y[j]
+            # Run PyWake simulation with updated inflow conditions
+            sim.update_inflow(inflow_speed, inflow_direction)
+            WS_eff = sim.WS_eff
+            # Calculate Sobol sensitivity index
+            sensitivity_values[i, j] = sobol_results['S1'][0] * (WS_eff - np.mean(WS_eff)) / np.std(WS_eff)
+
+    # Create heatmap of Sobol sensitivity indices
+    plt.imshow(sensitivity_values, cmap='coolwarm', extent=[0, 200, 0, 200])
+    plt.xlabel('X [m]')
+    plt.ylabel('Y [m]')
+    plt.title(f'Sobol Sensitivity of WS_eff to Inflow Conditions at Time Step {t}')
+    plt.colorbar()
+    # Save image
+    image_file = os.path.join(image_dir, f'sensitivity_{t}.png')
+    plt.savefig(image_file, dpi=300)
+    plt.close()
+```
+This script will generate a series of images showing the sensitivity of the flow at different times to the inflow conditions. Each image represents the Sobol sensitivity of the effective wind speed (WS_eff) to the inflow conditions at a specific time step.
+
+Note that this is a simplified example and you may need to adjust the script to fit your specific use case. Additionally, the Sobol sensitivity analysis can be computationally expensive, so you may need to optimize the script for performance.

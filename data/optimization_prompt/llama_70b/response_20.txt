@@ -1,0 +1,47 @@
+The issue here is that the script is trying to open an HDF5 file (`worker_file`) in read mode, but the file signature is not found, indicating that the file is either corrupted or not a valid HDF5 file.
+
+To detect this error reliably and stop the process cleanly, you can add a try-except block around the file opening operation. Here's an example:
+
+```python
+try:
+    with h5py.File(worker_file, 'r') as h5_in:
+        #... rest of the code...
+except OSError as e:
+    print(f"Error opening file {worker_file}: {e}")
+    # You can also log the error and exit the process cleanly
+    logging.error(f"Error opening file {worker_file}: {e}")
+    sys.exit(1)
+```
+
+This will catch the `OSError` exception raised when the file cannot be opened and print an error message indicating the problem.
+
+To recover the missing data, you can try to identify which file is causing the issue and re-run the script with the remaining seeds. You can also try to repair or recreate the corrupted file if possible.
+
+Regarding the joining operation, it's possible that the issue is related to the way the files are being joined or merged. You can try to add some error handling around the joining operation to see if that's where the issue is occurring.
+
+Additionally, you can try to run the script with a smaller number of seeds to see if the issue is related to the number of files being processed.
+
+Here's an example of how you can modify the script to handle the error and recover the missing data:
+
+```python
+def process_worker_file(worker_file):
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            #... rest of the code...
+    except OSError as e:
+        print(f"Error opening file {worker_file}: {e}")
+        logging.error(f"Error opening file {worker_file}: {e}")
+        return False
+    return True
+
+def main():
+    #... rest of the code...
+    for seed in range(50):
+        worker_file = f"worker_file_{seed}.h5"
+        if not process_worker_file(worker_file):
+            print(f"Skipping seed {seed} due to error")
+            continue
+        #... rest of the code...
+```
+
+This will skip the seeds that cause an error and continue processing the remaining seeds.

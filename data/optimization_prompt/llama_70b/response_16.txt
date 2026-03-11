@@ -1,0 +1,63 @@
+The error you're encountering is due to an issue with one of the worker files, specifically when trying to open it with `h5py.File()`. The error message indicates that the file signature was not found, which typically means that the file is corrupted or incomplete.
+
+To detect this error reliably and stop the process cleanly, you can add a try-except block around the code that opens the HDF5 file. Here's an example:
+
+```python
+import h5py
+
+try:
+    with h5py.File(worker_file, 'r') as h5_in:
+        # your code here
+except OSError as e:
+    print(f"Error opening file {worker_file}: {e}")
+    # you can also log the error or raise a custom exception here
+    raise
+```
+
+To recover the missing data, you can try to identify which worker file is causing the issue. You can do this by adding some debug logging before opening each file, like this:
+
+```python
+for worker_file in worker_files:
+    print(f"Trying to open file {worker_file}...")
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # your code here
+    except OSError as e:
+        print(f"Error opening file {worker_file}: {e}")
+        # you can also log the error or raise a custom exception here
+        raise
+```
+
+This will print out the name of the file that's causing the issue, which should help you identify which one is corrupted or incomplete.
+
+As for the joining operation, it's possible that it's not the cause of the issue, but rather a symptom of the underlying problem. If the joining operation is failing because of a corrupted file, it's likely that the error will propagate up the call stack and be caught by the try-except block.
+
+To make your code more robust, you could consider adding some additional error handling and logging to help diagnose issues like this in the future. For example, you could log the names of the files that are being processed, and the progress of the joining operation, to help identify where things are going wrong.
+
+Here's an example of how you could modify your code to add some additional logging and error handling:
+
+```python
+import logging
+
+# set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def main():
+    # your code here
+    for worker_file in worker_files:
+        logger.info(f"Processing file {worker_file}...")
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                # your code here
+        except OSError as e:
+            logger.error(f"Error opening file {worker_file}: {e}")
+            # you can also log the error or raise a custom exception here
+            raise
+    logger.info("Joining operation complete.")
+
+if __name__ == "__main__":
+    main()
+```
+
+This will log out information messages as each file is processed, and error messages if any issues occur. You can adjust the logging level to suit your needs, and add additional logging statements as required.

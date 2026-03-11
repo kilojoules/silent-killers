@@ -1,0 +1,84 @@
+To generate a script that propagates realistic measurement uncertainties through PyWake and saves a series of flow field images showing the sensitivity of the flow at different times to this inflow, we will use the following steps:
+
+1. Define the uncertainty in the inflow wind speed and direction
+2. Create a PyWake simulation with the uncertain inflow
+3. Run the simulation and calculate the Sobol sensitivity of the effective wind speed (WS_eff) with respect to the inflow wind speed and direction
+4. Save the flow field images at different times showing the sensitivity of the flow to the inflow
+
+Here is a Python script that performs these steps:
+```python
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from pywake import Simulation, Turbine, TurbineMap
+from pywake.flow_field import FlowFieldPlotter
+from pywake.wind_farm import WindFarm
+from scipy.stats import norm
+from SALib.sample import saltelli
+from SALib.analyze import sobol
+
+# Define the uncertainty in the inflow wind speed and direction
+inflow_wind_speed_mean = 10  # m/s
+inflow_wind_speed_std = 0.5  # m/s
+inflow_wind_direction_mean = 270  # degrees
+inflow_wind_direction_std = 5  # degrees
+
+# Create a PyWake simulation with the uncertain inflow
+sim = Simulation(
+    turbine=Turbine(
+        name="Turbine",
+        hub_height=100,  # m
+        rotor_diameter=100,  # m
+        power_curve=[(0, 0), (10, 1000), (20, 2000)],  # (wind speed, power)
+    ),
+    wind_farm=WindFarm(
+        layout=[(0, 0), (500, 0), (1000, 0)],  # (x, y) coordinates of turbines
+        turbine_map=TurbineMap(
+            [sim.turbine] * 3,  # 3 turbines with the same characteristics
+        ),
+    ),
+    wake_model="Jensen",
+    inflow=sim.wind_farm.layout,
+)
+
+# Define the Sobol sensitivity analysis parameters
+problem = {
+    'num_vars': 2,
+    'names': ['inflow_wind_speed', 'inflow_wind_direction'],
+    'bounds': [[inflow_wind_speed_mean - 3 * inflow_wind_speed_std, inflow_wind_speed_mean + 3 * inflow_wind_speed_std],
+                [inflow_wind_direction_mean - 3 * inflow_wind_direction_std, inflow_wind_direction_mean + 3 * inflow_wind_direction_std]],
+    'dists': ['norm', 'norm']
+}
+
+# Run the Sobol sensitivity analysis
+param_values = saltelli.sample(problem, 1000, calc_second_order=True)
+results = np.zeros((len(param_values), 2))
+for i, params in enumerate(param_values):
+    sim.inflow.wind_speed = params[0]
+    sim.inflow.wind_direction = params[1]
+    sim.run()
+    results[i, :] = [sim.turbine.ws_eff, sim.turbine.ws_eff_std]
+
+# Calculate the Sobol sensitivity indices
+Si = sobol.analyze(problem, results, calc_second_order=True)
+
+# Save the flow field images at different times showing the sensitivity of the flow to the inflow
+for t in np.arange(0, 10, 0.5):
+    fig, ax = plt.subplots(figsize=(10, 10))
+    flow_field = sim.flow_field(t)
+    im = ax.imshow(flow_field.ws_eff, cmap='coolwarm', extent=[-1000, 1000, -1000, 1000])
+    ax.set_title(f"Flow field at time {t:.2f} s")
+    ax.set_xlabel("x [m]")
+    ax.set_ylabel("y [m]")
+    cbar = fig.colorbar(im, ax=ax)
+    cbar.set_label("Effective wind speed [m/s]")
+    fig.savefig(f"flow_field_{t:.2f}.png", dpi=300)
+
+# Save the Sobol sensitivity indices
+np.save("sobol_sensitivity.npy", Si)
+```
+This script first defines the uncertainty in the inflow wind speed and direction using normal distributions. It then creates a PyWake simulation with the uncertain inflow and runs the simulation to calculate the effective wind speed (WS_eff) at each turbine. The Sobol sensitivity analysis is performed using the SALib library, and the sensitivity indices are calculated with respect to the inflow wind speed and direction. Finally, the script saves the flow field images at different times showing the sensitivity of the flow to the inflow, as well as the Sobol sensitivity indices.
+
+Note that this script assumes that the inflow wind speed and direction are the only uncertain variables in the simulation. If there are other uncertain variables, such as the turbine characteristics or the wind farm layout, they would need to be included in the Sobol sensitivity analysis.
+
+Also, the script uses a relatively small number of samples (1000) for the Sobol sensitivity analysis, which may not be sufficient to accurately capture the sensitivity of the flow to the inflow. Increasing the number of samples would improve the accuracy of the results, but would also increase the computational cost of the simulation.

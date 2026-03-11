@@ -1,0 +1,71 @@
+To create a script that propagates realistic measurement uncertainties through PyWake and saves a series of flow field images showing the sensitivity of the flow at different times to this inflow, we'll need to use the Sobol sensitivity analysis method.
+
+Here's a script that should accomplish this:
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake import PyWake, FlowField
+from SALib.sample import latin
+from SALib.analyze import sobol
+
+# Define the model and parameters
+def model(x):
+    # Define the PyWake model
+    wake_model = PyWake(x['ws_eff'], x['ti'], x['yaw'])
+    wake_model.setup_flow_field(x['x'], x['y'], x['z'])
+    
+    # Compute the flow field
+    flow_field = wake_model.flow_field()
+    
+    # Return the flow field
+    return flow_field
+
+# Define the parameters and their ranges
+param_ranges = {
+    'ws_eff': [5, 15],  # Effective wind speed (m/s)
+    'ti': [0.05, 0.15],  # Turbulence intensity (%)
+    'yaw': [-30, 30],  # Yaw angle (degrees)
+    'x': np.linspace(0, 1000, 100),  # x-coordinate (m)
+    'y': np.linspace(-500, 500, 100),  # y-coordinate (m)
+    'z': 100  # z-coordinate (m)
+}
+
+# Generate the sample points using Latin Hypercube Sampling
+n_samples = 1000
+samples = latin.sample(param_ranges, n_samples, seed=42)
+
+# Evaluate the model at each sample point
+flow_fields = np.array([model(sample) for sample in samples])
+
+# Perform Sobol sensitivity analysis
+sobol_results = sobol.analyze(model, param_ranges, flow_fields, num_resamples=100)
+
+# Create a figure to plot the results
+fig, axes = plt.subplots(nrows=3, ncols=3, figsize=(12, 12))
+
+# Plot the Sobol sensitivity indices for each parameter
+for i, (param, range) in enumerate(param_ranges.items()):
+    ax = axes[i // 3, i % 3]
+    ax.imshow(sobol_results['S1'][param], extent=range, cmap='coolwarm', origin='lower')
+    ax.set_title(f'Sobol Sensitivity Index for {param}')
+    ax.set_xlabel('x (m)')
+    ax.set_ylabel('y (m)')
+
+# Save the figure
+plt.savefig('sobol_sensitivity.png')
+
+# Create a series of flow field images showing the sensitivity of the flow at different times
+for t in np.linspace(0, 10, 10):
+    flow_field_t = flow_fields[:, t, :, :]
+    fig, ax = plt.subplots(figsize=(8, 8))
+    im = ax.imshow(flow_field_t, extent=[-500, 500, 0, 1000], cmap='coolwarm', origin='lower')
+    ax.set_title(f'Flow Field at t = {t:.2f} s')
+    ax.set_xlabel('x (m)')
+    ax.set_ylabel('y (m)')
+    plt.savefig(f'flow_field_{t:.2f}.png')
+```
+This script first defines the PyWake model and its parameters, then generates a set of sample points using Latin Hypercube Sampling. It evaluates the model at each sample point, then performs Sobol sensitivity analysis to compute the sensitivity indices for each parameter. Finally, it creates a series of flow field images showing the sensitivity of the flow at different times.
+
+Please note that this script assumes that the `pywake` and `SALib` libraries are installed and imported correctly. Also, the script uses a simple example model, you may need to modify it to fit your specific use case.
+
+Also, the script saves the results as images, if you want to save the results in a different format, you can modify the script accordingly.

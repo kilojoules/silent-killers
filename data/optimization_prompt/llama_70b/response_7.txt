@@ -1,0 +1,96 @@
+The error you're encountering is due to an `OSError` exception raised when trying to open an HDF5 file with an invalid signature. This typically indicates that the file is corrupted or incomplete.
+
+To diagnose this issue, you can add some error handling to your code to catch the `OSError` exception and provide more information about the file that failed to open. Here's an example of how you can modify your code:
+
+```python
+import h5py
+import logging
+
+def main():
+    #... (rest of your code remains the same)
+
+    for worker_file in worker_files:
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                #... (rest of your code remains the same)
+        except OSError as e:
+            logging.error(f"Failed to open file {worker_file}: {e}")
+            raise  # Re-raise the exception to stop the process
+
+if __name__ == "__main__":
+    main()
+```
+
+To make the error detection more reliable, you can also add a check to ensure that the file is a valid HDF5 file before trying to open it. You can use the `h5py.is_hdf5` function to check if a file is a valid HDF5 file:
+
+```python
+import h5py
+import logging
+
+def main():
+    #... (rest of your code remains the same)
+
+    for worker_file in worker_files:
+        if not h5py.is_hdf5(worker_file):
+            logging.error(f"{worker_file} is not a valid HDF5 file")
+            raise ValueError(f"{worker_file} is not a valid HDF5 file")
+
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                #... (rest of your code remains the same)
+        except OSError as e:
+            logging.error(f"Failed to open file {worker_file}: {e}")
+            raise  # Re-raise the exception to stop the process
+
+if __name__ == "__main__":
+    main()
+```
+
+If the joining operation is indeed the cause of the issue, you may want to consider using a more robust method for joining the results from multiple worker files. One approach is to use a temporary directory to store the results from each worker, and then use a separate process to merge the results into a single file.
+
+For example:
+
+```python
+import h5py
+import logging
+import os
+import shutil
+
+def main():
+    #... (rest of your code remains the same)
+
+    temp_dir = "temp_results"
+    os.makedirs(temp_dir, exist_ok=True)
+
+    for worker_file in worker_files:
+        if not h5py.is_hdf5(worker_file):
+            logging.error(f"{worker_file} is not a valid HDF5 file")
+            raise ValueError(f"{worker_file} is not a valid HDF5 file")
+
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                #... (rest of your code remains the same)
+
+                # Write the results to a temporary file
+                temp_file = os.path.join(temp_dir, f"{worker_file}.h5")
+                with h5py.File(temp_file, 'w') as h5_out:
+                    #... (write the results to the temporary file)
+        except OSError as e:
+            logging.error(f"Failed to open file {worker_file}: {e}")
+            raise  # Re-raise the exception to stop the process
+
+    # Merge the temporary files into a single file
+    merged_file = "merged_results.h5"
+    with h5py.File(merged_file, 'w') as h5_out:
+        for temp_file in os.listdir(temp_dir):
+            with h5py.File(os.path.join(temp_dir, temp_file), 'r') as h5_in:
+                #... (merge the results from the temporary file into the merged file)
+
+    # Clean up the temporary directory
+    shutil.rmtree(temp_dir)
+
+if __name__ == "__main__":
+    main()
+```
+
+This approach can help to prevent the joining operation from causing issues with file corruption or incomplete files.

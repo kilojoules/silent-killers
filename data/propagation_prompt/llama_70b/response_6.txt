@@ -1,0 +1,114 @@
+To generate a script that propagates realistic measurement uncertainties through PyWake and saves a series of flow field images showing the sensitivity of the flow at different times to this inflow, we will use the Sobol sensitivity analysis method. Here's a Python script that should accomplish this task:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake import PyWake
+from pywake import NOJ
+from pywake import Bastankhah
+from pywake import VortexCirculationPoint
+from SALib.sample import latin
+from SALib.analyze import sobol
+
+# Define the problem parameters
+n_wind_turbines = 2
+n_samples = 1000
+n_times = 100
+wake_model = NOJ()
+turbine_model = VortexCirculationPoint()
+wake_deflectionModel = Bastankhah()
+
+# Define the turbine layout
+turbine_x = np.array([0, 500])
+turbine_y = np.array([0, 0])
+
+# Define the uncertainty bounds for the inflow
+inflow_speed_bounds = [5, 15]
+inflow_direction_bounds = [270, 290]
+
+# Define the parameter bounds for the Sobol sensitivity analysis
+param_bounds = {'inflow_speed': inflow_speed_bounds,
+                  'inflow_direction': inflow_direction_bounds}
+
+# Generate the sample points for the Sobol sensitivity analysis
+sample_points = latin.sample(n_samples, param_bounds, seed=42)
+
+# Initialize the arrays to store the results
+ws_eff_array = np.zeros((n_samples, n_wind_turbines, n_times))
+
+# Run the PyWake simulations for each sample point
+for i, sample in enumerate(sample_points):
+    # Set the inflow conditions
+    inflow_speed = sample['inflow_speed']
+    inflow_direction = sample['inflow_direction']
+    
+    # Create the PyWake simulation
+    sim = PyWake(wake_model, turbine_model, wake_deflectionModel,
+                 turbine_x, turbine_y, inflow_speed, inflow_direction)
+    
+    # Run the simulation
+    sim.run()
+    
+    # Get the wake efficiency for each turbine
+    ws_eff = sim.wake_efficiency()
+    
+    # Store the results
+    ws_eff_array[i, :, :] = ws_eff
+
+# Perform the Sobol sensitivity analysis
+Si = sobol.analyze(param_bounds, ws_eff_array, calc_second_order=True)
+
+# Create a figure to store the sensitivity plots
+fig, axs = plt.subplots(n_wind_turbines, n_times, figsize=(12, 6))
+
+# Plot the sensitivity of the flow at different times
+for i in range(n_wind_turbines):
+    for j in range(n_times):
+        # Get the Sobol sensitivity indices for the current turbine and time
+        S1 = Si['S1'][i, j, :]
+        S1_conf = Si['S1_conf'][i, j, :]
+        
+        # Plot the sensitivity
+        axs[i, j].bar(['inflow_speed', 'inflow_direction'], S1)
+        axs[i, j].set_title(f'Turbine {i+1}, Time {j+1}')
+        axs[i, j].set_xlabel('Parameter')
+        axs[i, j].set_ylabel('Sobol Sensitivity Index')
+
+# Save the figure
+plt.tight_layout()
+plt.savefig('sobol_sensitivity.png')
+
+# Create a video to show the sensitivity of the flow at different times
+import matplotlib.animation as animation
+
+# Create a figure to store the animation
+fig, ax = plt.subplots(figsize=(12, 6))
+
+# Initialize the animation
+def animate(j):
+    # Clear the previous frame
+    ax.clear()
+    
+    # Get the Sobol sensitivity indices for the current time
+    S1 = Si['S1'][:, j, :]
+    S1_conf = Si['S1_conf'][:, j, :]
+    
+    # Plot the sensitivity
+    for i in range(n_wind_turbines):
+        ax.bar(['inflow_speed', 'inflow_direction'], S1[i, :], label=f'Turbine {i+1}')
+    
+    ax.set_title(f'Time {j+1}')
+    ax.set_xlabel('Parameter')
+    ax.set_ylabel('Sobol Sensitivity Index')
+    ax.legend()
+
+# Create the animation
+ani = animation.FuncAnimation(fig, animate, frames=n_times, interval=100)
+
+# Save the animation
+ani.save('sobol_sensitivity.mp4')
+```
+
+This script will generate a series of flow field images showing the sensitivity of the flow at different times to the inflow, as well as a video showing the sensitivity of the flow at different times. The Sobol sensitivity indices are calculated for each turbine and time, and the results are stored in the `Si` variable.
+
+Please note that this script assumes that you have the PyWake library installed and configured properly. Additionally, the script uses the NOJ wake model, the VortexCirculationPoint turbine model, and the Bastankhah wake deflection model, but you can modify these to use different models if needed.

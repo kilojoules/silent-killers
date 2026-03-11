@@ -1,0 +1,51 @@
+The issue you're experiencing is due to an `OSError` caused by an invalid or corrupted HDF5 file, which is preventing the program from opening it.
+
+The error message "file signature not found" typically indicates that the file is not a valid HDF5 file or has been corrupted.
+
+To detect this error reliably and stop the process cleanly, you can modify the script to catch the `OSError` exception when opening the HDF5 file. Here's an example of how you can do this:
+
+```python
+import h5py
+
+try:
+    with h5py.File(worker_file, 'r') as h5_in:
+        # rest of your code here
+except OSError as e:
+    print(f"Error opening file {worker_file}: {e}")
+    # You can also add additional error handling here, such as logging the error or sending an alert
+    raise  # Re-raise the exception to stop the process
+```
+
+This will catch any `OSError` exceptions that occur when opening the HDF5 file and print an error message indicating the file that caused the error. You can also add additional error handling, such as logging the error or sending an alert.
+
+If you want to stop the process cleanly, you can use the `sys.exit()` function to exit the program with a non-zero exit code:
+
+```python
+import sys
+import h5py
+
+try:
+    with h5py.File(worker_file, 'r') as h5_in:
+        # rest of your code here
+except OSError as e:
+    print(f"Error opening file {worker_file}: {e}")
+    sys.exit(1)  # Exit the program with a non-zero exit code
+```
+
+This will exit the program with an exit code of 1, indicating that an error occurred.
+
+Regarding the joining operation, it's possible that the error occurred during the joining process, but without more information, it's difficult to say for sure. However, you can try to isolate the issue by running the program with a single seed or a smaller number of seeds to see if the error still occurs.
+
+You can also try to validate the HDF5 files using the `h5ls` command-line tool or the `h5py` library's `validate` function to check if the files are valid HDF5 files.
+
+```python
+import h5py
+
+# Validate the HDF5 file
+try:
+    h5py.File(worker_file, 'r').validate()
+except OSError as e:
+    print(f"Error validating file {worker_file}: {e}")
+```
+
+This can help you identify if the issue is with the HDF5 file itself or with the program's handling of the file.

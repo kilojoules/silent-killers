@@ -1,0 +1,89 @@
+To generate a script that propagates realistic measurement uncertainties through PyWake and saves a series of flow field images showing the sensitivity of the flow at different times to this inflow, we will use the following steps:
+
+1.  Install the necessary libraries: PyWake, numpy, matplotlib, and scipy.
+
+2.  Define the wind farm layout, wind turbine properties, and inflow conditions.
+
+3.  Create a PyWake wind farm simulation object.
+
+4.  Define the measurement uncertainties for the inflow conditions.
+
+5.  Use the `sobol` library to calculate the Sobol sensitivity of the effective wind speed (`WS_eff`) with respect to the inflow conditions.
+
+6.  Create a series of flow field images showing the sensitivity of the flow at different times to the inflow conditions.
+
+Here is a sample script that demonstrates these steps:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from py_wake import Fuga, NOJ, Bastankhah
+from py_wake.ground import GroundModel
+from py_wake.deficit import MyDeficit
+from py_wake.wind_farm_models import All2AllIterative
+from scipy.stats import norm
+from sobol import sobol
+from matplotlib import cm
+
+# Define wind farm layout and turbine properties
+x = np.array([0, 100, 200, 300, 400])
+y = np.array([0, 0, 0, 0, 0])
+h = 100
+D = 80
+yaw = np.array([0, 0, 0, 0, 0])
+ct = np.array([0.1, 0.1, 0.1, 0.1, 0.1])
+
+# Define inflow conditions
+ws = 10
+wd = 270
+ti = 0.1
+
+# Create PyWake wind farm simulation object
+wf = All2AllIterative(
+    Fuga(deficitModel=MyDeficit(), groundModel=GroundModel()),
+    turbines=x_y_h_d_d_c_t_to_turbine(x, y, h, D, yaw, ct),
+    wake_deficitModel=Bastankhah(),
+)
+
+# Define measurement uncertainties for inflow conditions
+ws_uncertainty = 0.1
+wd_uncertainty = 1
+ti_uncertainty = 0.01
+
+# Define Sobol sensitivity analysis
+n_samples = 1000
+ws_samples = norm.rvs(ws, ws_uncertainty, size=n_samples)
+wd_samples = norm.rvs(wd, wd_uncertainty, size=n_samples)
+ti_samples = norm.rvs(ti, ti_uncertainty, size=n_samples)
+
+# Calculate Sobol sensitivity of WS_eff
+ws_eff_sensitivity = np.zeros((n_samples, len(x), len(y)))
+for i in range(n_samples):
+    ws_eff = wf(x, y, h, D, yaw, ct, ws_samples[i], wd_samples[i], ti_samples[i])
+    ws_eff_sensitivity[i] = ws_eff
+
+# Calculate Sobol sensitivity indices
+sobol_indices = sobol.sobol_indices(ws_eff_sensitivity, ws_samples, wd_samples, ti_samples)
+
+# Create flow field images showing sensitivity of flow at different times
+for i in range(len(x)):
+    for j in range(len(y)):
+        plt.figure(figsize=(10, 8))
+        plt.imshow(ws_eff_sensitivity[:, i, j].reshape((n_samples, 1)), cmap=cm.viridis, origin='lower')
+        plt.colorbar(label='WS_eff')
+        plt.title(f'Sensitivity of WS_eff at x={x[i]}, y={y[j]}')
+        plt.savefig(f'ws_eff_sensitivity_{i}_{j}.png')
+
+# Plot Sobol sensitivity indices
+plt.figure(figsize=(10, 8))
+plt.plot(sobol_indices[:, 0], label='WS')
+plt.plot(sobol_indices[:, 1], label='WD')
+plt.plot(sobol_indices[:, 2], label='TI')
+plt.legend()
+plt.xlabel('Sobol Index')
+plt.ylabel('Variable')
+plt.title('Sobol Sensitivity Indices')
+plt.savefig('sobol_indices.png')
+```
+
+This script will generate a series of flow field images showing the sensitivity of the flow at different times to the inflow conditions, as well as a plot of the Sobol sensitivity indices for each variable.

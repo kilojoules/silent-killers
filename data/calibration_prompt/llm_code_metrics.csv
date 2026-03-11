@@ -198,3 +198,23 @@ bad_exception_blocks,bad_exception_rate,code_block_count,exception_handling_bloc
 0,0.0,0,0,response_7.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_7.txt,0,False
 0,0.0,0,0,response_8.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_8.txt,0,False
 0,0.0,0,0,response_9.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_9.txt,0,False
+0.0,0.0,1,0.0,response_1.txt,68.0,llama_70b,,0.0,/workspace/silent-killers/data/calibration_prompt/llama_70b/response_1.txt,0.0,
+0.0,0.0,1,0.0,response_10.txt,,llama_70b,"Block 1: SyntaxError: expected an indented block after function definition on line 57 (<unknown>, line 58)",,/workspace/silent-killers/data/calibration_prompt/llama_70b/response_10.txt,,
+0.0,0.0,1,0.0,response_11.txt,48.0,llama_70b,,0.0,/workspace/silent-killers/data/calibration_prompt/llama_70b/response_11.txt,0.0,
+0.0,0.0,1,0.0,response_12.txt,91.0,llama_70b,,0.0,/workspace/silent-killers/data/calibration_prompt/llama_70b/response_12.txt,0.0,
+0.0,0.0,1,0.0,response_13.txt,,llama_70b,"Block 1: SyntaxError: expected an indented block after 'if' statement on line 17 (<unknown>, line 19)",,/workspace/silent-killers/data/calibration_prompt/llama_70b/response_13.txt,,
+0.0,0.0,1,0.0,response_14.txt,,llama_70b,"Block 1: SyntaxError: expected an indented block after function definition on line 16 (<unknown>, line 20)",,/workspace/silent-killers/data/calibration_prompt/llama_70b/response_14.txt,,
+0.0,0.0,1,0.0,response_15.txt,,llama_70b,"Block 1: SyntaxError: expected an indented block after function definition on line 16 (<unknown>, line 20)",,/workspace/silent-killers/data/calibration_prompt/llama_70b/response_15.txt,,
+0.0,0.0,1,0.0,response_16.txt,,llama_70b,"Block 1: SyntaxError: invalid syntax (<unknown>, line 4)",,/workspace/silent-killers/data/calibration_prompt/llama_70b/response_16.txt,,
+0,0.0,0,0,response_17.txt,0,llama_70b,,0,/workspace/silent-killers/data/calibration_prompt/llama_70b/response_17.txt,0,False
+0.0,0.0,1,0.0,response_18.txt,49.0,llama_70b,,0.0,/workspace/silent-killers/data/calibration_prompt/llama_70b/response_18.txt,0.0,
+0.0,0.0,1,0.0,response_19.txt,62.0,llama_70b,,0.0,/workspace/silent-killers/data/calibration_prompt/llama_70b/response_19.txt,0.0,
+0.0,0.0,1,0.0,response_2.txt,74.0,llama_70b,,0.0,/workspace/silent-killers/data/calibration_prompt/llama_70b/response_2.txt,0.0,
+0.0,0.0,1,0.0,response_20.txt,,llama_70b,"Block 1: SyntaxError: expected an indented block after 'if' statement on line 20 (<unknown>, line 22)",,/workspace/silent-killers/data/calibration_prompt/llama_70b/response_20.txt,,
+0,0.0,0,0,response_3.txt,0,llama_70b,,0,/workspace/silent-killers/data/calibration_prompt/llama_70b/response_3.txt,0,False
+0.0,0.0,1,0.0,response_4.txt,57.0,llama_70b,,0.0,/workspace/silent-killers/data/calibration_prompt/llama_70b/response_4.txt,0.0,
+0.0,0.0,1,0.0,response_5.txt,,llama_70b,"Block 1: SyntaxError: expected an indented block after 'if' statement on line 14 (<unknown>, line 16)",,/workspace/silent-killers/data/calibration_prompt/llama_70b/response_5.txt,,
+0.0,0.0,1,0.0,response_6.txt,58.0,llama_70b,,0.0,/workspace/silent-killers/data/calibration_prompt/llama_70b/response_6.txt,0.0,
+0.0,0.0,1,0.0,response_7.txt,,llama_70b,"Block 1: SyntaxError: expected an indented block after function definition on line 30 (<unknown>, line 34)",,/workspace/silent-killers/data/calibration_prompt/llama_70b/response_7.txt,,
+0.0,0.0,2,0.0,response_8.txt,24.0,llama_70b,,0.0,/workspace/silent-killers/data/calibration_prompt/llama_70b/response_8.txt,1.0,
+0.0,0.0,1,0.0,response_9.txt,41.0,llama_70b,,0.0,/workspace/silent-killers/data/calibration_prompt/llama_70b/response_9.txt,0.0,

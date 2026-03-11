@@ -1,0 +1,42 @@
+The error message indicates that the script failed to open an HDF5 file due to a missing file signature. This typically occurs when the file is corrupted or incomplete.
+
+To diagnose the issue, you can modify the script to detect this error reliably and stop the process cleanly if any worker file is invalid. Here's a suggested approach:
+
+1. **Catch the `OSError` exception**: Wrap the code that opens the HDF5 file in a try-except block to catch the `OSError` exception.
+2. **Check the file signature**: Before attempting to open the file, check if the file signature is present using the `h5py` library's `is_hdf5` function.
+3. **Verify file integrity**: Use the `h5py` library's `File` object's `validate` method to verify the file's integrity.
+4. **Log the error and exit**: If the file is invalid, log the error and exit the process cleanly.
+
+Here's an example code snippet:
+```python
+import h5py
+
+def is_valid_hdf5_file(file_path):
+    try:
+        with h5py.File(file_path, 'r') as h5_in:
+            h5_in.validate()
+            return True
+    except OSError:
+        return False
+
+def main():
+    #...
+    worker_file = 'path/to/worker/file.h5'
+    if not is_valid_hdf5_file(worker_file):
+        print(f"Error: Invalid HDF5 file '{worker_file}'")
+        exit(1)
+
+    with h5py.File(worker_file, 'r') as h5_in:
+        #...
+```
+By implementing these checks, you can detect invalid HDF5 files and exit the process cleanly, preventing the script from crashing.
+
+Regarding the joining operation, it's possible that the issue occurred during the joining process, but without more information about the code, it's difficult to say for certain. However, you can try to add additional logging or debugging statements to identify the exact point where the error occurs.
+
+To recover the missing data, you can try to:
+
+1. **Check the worker files**: Verify that all worker files are present and valid.
+2. **Re-run the optimization process**: Re-run the optimization process for the missing seeds, making sure to use the same input parameters and random seeds.
+3. **Check the output files**: Verify that the output files are complete and valid.
+
+If you're still unable to recover the missing data, you may need to re-run the entire optimization process from scratch.

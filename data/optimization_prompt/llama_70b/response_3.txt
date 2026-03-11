@@ -1,0 +1,41 @@
+**Issue Diagnosis**
+
+The error message "OSError: Unable to synchronously open file (file signature not found)" indicates that the script is trying to open a file that is either corrupted or not a valid HDF5 file. This error occurs when the script tries to read the worker file using `h5py.File(worker_file, 'r')`.
+
+The fact that the script was able to complete 2999/3000 optimizations successfully suggests that the issue is likely related to a specific worker file that is causing the error.
+
+**Modifications to Detect and Handle the Error**
+
+To detect and handle this error reliably, you can modify the script to:
+
+1. **Check the worker file before opening it**: Use a try-except block to catch the `OSError` exception and check the file's integrity before trying to open it. You can use the `os` module to check if the file exists and has a valid HDF5 signature.
+2. **Handle the error and exit cleanly**: If the file is invalid or corrupted, handle the error by logging a message, removing the invalid file (if possible), and exiting the script with a non-zero exit code.
+
+Here's an example of how you can modify the script:
+```python
+import os
+import h5py
+
+#...
+
+try:
+    with h5py.File(worker_file, 'r') as h5_in:
+        #...
+except OSError as e:
+    if "file signature not found" in str(e):
+        print(f"Error: Invalid worker file '{worker_file}'")
+        # Remove the invalid file (if possible)
+        try:
+            os.remove(worker_file)
+        except OSError:
+            pass
+        # Exit with a non-zero exit code
+        sys.exit(1)
+    else:
+        raise
+```
+**Additional Suggestions**
+
+* Consider adding more robust error handling for other potential issues that may occur when reading worker files.
+* If you're using a distributed computing environment, consider implementing a more robust way to handle worker file failures, such as retrying the optimization or using a different worker file.
+* Make sure to test the modified script with a small set of worker files to ensure that it correctly handles invalid files and exits cleanly.

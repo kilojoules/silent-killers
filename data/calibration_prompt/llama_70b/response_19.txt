@@ -1,0 +1,96 @@
+Your code is quite extensive, but I'll provide some general feedback and suggestions.
+
+**Modularity and Structure**
+
+Your code is a mix of data loading, simulation, optimization, and plotting. Consider breaking it down into separate functions or modules, each with a clear responsibility. This will make your code more modular, reusable, and easier to maintain.
+
+**Variable Naming and Comments**
+
+Some variable names, such as `dat`, `turbine`, and `flow_roi`, are not very descriptive. Consider using more descriptive names to improve code readability. Additionally, comments are scarce in your code. Add comments to explain the purpose of each section and any complex calculations.
+
+**Optimization**
+
+You're using Bayesian optimization, which is a great approach. However, the optimization function `evaluate_rmse` is quite complex and has many inputs. Consider breaking it down into smaller functions or using a more efficient optimization algorithm.
+
+**Plotting**
+
+You're using matplotlib for plotting, which is a great library. However, some of your plots, such as the `contourf` plots, are not very informative. Consider using more informative plot types, such as heatmap or scatter plots, to better visualize your data.
+
+**Error Handling**
+
+Your code does not have extensive error handling. Consider adding try-except blocks to handle potential errors, such as file loading errors or optimization failures.
+
+**Code Duplication**
+
+There is some code duplication, such as the `wfm` and `sim_res` assignments. Consider extracting these into separate functions to avoid duplication.
+
+**Type Hints**
+
+You're using Python 3.x, which supports type hints. Consider adding type hints for function parameters and return types to improve code readability and help catch type-related errors.
+
+Here's an updated version of your code with some of these suggestions applied:
+```python
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from py_wake.rotor_avg_models.gaussian_overlap_model import GaussianOverlapAvgModel
+from py_wake.deficit_models.gaussian import TurboGaussianDeficit
+from py_wake.examples.data.dtu10mw._dtu10mw import DTU10MW
+from bayes_opt import BayesianOptimization
+
+def load_data(file_path):
+    """Load data from file"""
+    dat = xr.load_dataset(file_path)
+    #...
+    return dat
+
+def setup_simulation(site, turbine, wake_deficit_model, superposition_model, deflection_model, turbulence_model, blockage_deficit_model):
+    """Setup simulation"""
+    wfm = All2AllIterative(site, turbine, wake_deficit_model, superposition_model, deflection_model, turbulence_model, blockage_deficit_model)
+    return wfm
+
+def evaluate_rmse(params, wfm, full_ws, full_ti, target_x, target_y):
+    """Evaluate RMSE"""
+    #...
+    return rmse
+
+def optimize_rmse(wfm, full_ws, full_ti, target_x, target_y, bounds, defaults):
+    """Optimize RMSE"""
+    optimizer = BayesianOptimization(evaluate_rmse, bounds, random_state=1)
+    optimizer.probe(params=defaults, lazy=True)
+    optimizer.maximize(init_points=50, n_iter=200)
+    return optimizer.max['params']
+
+def plot_results(best_params, defaults, keys):
+    """Plot results"""
+    #...
+    return
+
+def main():
+    # Load data
+    dat = load_data('./DTU10MW.nc')
+
+    # Setup simulation
+    site = Hornsrev1Site()
+    turbine = DTU10MW()
+    wake_deficit_model = BlondelSuperGaussianDeficit2020()
+    superposition_model = LinearSum()
+    deflection_model = None
+    turbulence_model = CrespoHernandez()
+    blockage_deficit_model = SelfSimilarityDeficit2020()
+    wfm = setup_simulation(site, turbine, wake_deficit_model, superposition_model, deflection_model, turbulence_model, blockage_deficit_model)
+
+    # Define bounds and defaults
+    bounds = {...}
+    defaults = {...}
+
+    # Optimize RMSE
+    best_params = optimize_rmse(wfm, full_ws, full_ti, target_x, target_y, bounds, defaults)
+
+    # Plot results
+    plot_results(best_params, defaults, keys)
+
+if __name__ == '__main__':
+    main()
+```
+Note that this is just a starting point, and you'll need to fill in the gaps and modify the code to suit your specific needs.

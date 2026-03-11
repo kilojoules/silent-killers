@@ -1,0 +1,43 @@
+The error message indicates that there's an issue with opening an HDF5 file, specifically that the file signature is not found. This could be due to a corrupted file or an issue with the HDF5 library.
+
+To detect this error reliably and stop the process cleanly, you can add a try-except block around the code that opens the HDF5 file. Here's an example:
+```python
+try:
+    with h5py.File(worker_file, 'r') as h5_in:
+        # rest of your code here
+except OSError as e:
+    print(f"Error opening file {worker_file}: {e}")
+    # You can also log the error and/or send a notification here
+    # If you want to stop the process, you can use sys.exit()
+    import sys
+    sys.exit(1)
+```
+This will catch the `OSError` exception that is raised when the file cannot be opened and print an error message. You can also add additional error handling, such as logging the error or sending a notification.
+
+If you want to detect this error earlier, you can also add a check before opening the file to see if it exists and is a valid HDF5 file. You can use the `os` module to check if the file exists, and the `h5py` library to check if the file is a valid HDF5 file:
+```python
+import os
+import h5py
+
+def is_valid_hdf5_file(file_path):
+    if not os.path.exists(file_path):
+        return False
+    try:
+        with h5py.File(file_path, 'r') as h5_in:
+            pass
+        return True
+    except OSError:
+        return False
+
+if not is_valid_hdf5_file(worker_file):
+    print(f"Error: {worker_file} is not a valid HDF5 file")
+    # You can also log the error and/or send a notification here
+    # If you want to stop the process, you can use sys.exit()
+    import sys
+    sys.exit(1)
+```
+This will check if the file exists and is a valid HDF5 file before trying to open it. If the file is not valid, it will print an error message and exit the process.
+
+As for the joining operation, it's possible that the error is occurring because one of the worker files is corrupted or invalid. You can try to identify which worker file is causing the issue by adding some debugging print statements or using a debugger. Once you've identified the problematic file, you can try to recover the missing data by re-running the optimization process for that specific file.
+
+Alternatively, you can also consider adding some error handling to your joining operation to handle cases where one of the worker files is invalid. For example, you could skip over invalid files and continue with the rest of the joining process. However, this would depend on the specific requirements of your application and the trade-offs you're willing to make.

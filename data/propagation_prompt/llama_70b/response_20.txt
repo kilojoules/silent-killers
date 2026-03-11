@@ -1,0 +1,77 @@
+To create a script that propagates realistic measurement uncertainties through PyWake and saves a series of flow field images showing the sensitivity of the flow at different times to this inflow, you'll need to follow these steps. I'll provide a basic script outline, and you can modify it according to your specific requirements.
+
+First, make sure you have the necessary libraries installed:
+
+```bash
+pip install pywake numpy matplotlib scipy
+```
+
+Here's a basic script that should get you started:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake import WakeModel
+from pywake import TurbineMap
+from pywake import HorizontalGrid
+from scipy.stats import sobol_sequence
+from scipy.stats import norm
+
+# Define the turbine and wake model
+turbine = TurbineMap(40, 80, 0.5, 0.1)
+wake_model = WakeModel(turbine, 10, 10)
+
+# Define the grid
+grid = HorizontalGrid(100, 100, 0.1, 0.1)
+
+# Define the inflow
+inflow = np.random.normal(10, 1, 100)  # 10 m/s mean, 1 m/s standard deviation
+
+# Define the Sobol sequence
+sobol_sequence = sobol_sequence.sobol_sequence(100, 2, scramble=False)
+
+# Define the uncertainty bounds
+lower_bound = 8
+upper_bound = 12
+
+# Create a figure and axis
+fig, ax = plt.subplots(10, 10, figsize=(20, 20))
+
+# Loop over the Sobol sequence
+for i in range(100):
+    # Get the current Sobol point
+    sobol_point = sobol_sequence[i]
+
+    # Scale the Sobol point to the uncertainty bounds
+    scaled_sobol_point = (sobol_point * (upper_bound - lower_bound)) + lower_bound
+
+    # Create a new inflow with the scaled Sobol point
+    new_inflow = np.random.normal(scaled_sobol_point, 1, 100)
+
+    # Calculate the wake
+    wake = wake_model.calculate(new_inflow, grid)
+
+    # Calculate the effective wind speed (WS_eff)
+    ws_eff = np.sqrt(np.mean(wake**2))
+
+    # Calculate the Sobol sensitivity of WS_eff as a function of x and y
+    sobol_sensitivity = np.zeros((grid.x.shape[0], grid.y.shape[0]))
+    for j in range(grid.x.shape[0]):
+        for k in range(grid.y.shape[0]):
+            sobol_sensitivity[j, k] = np.std(ws_eff[:, j, k] * sobol_sequence[:, 0])
+
+    # Plot the Sobol sensitivity
+    ax[i // 10, i % 10].imshow(sobol_sensitivity, cmap='viridis')
+    ax[i // 10, i % 10].set_title(f'Sobol Sensitivity at Time {i}')
+
+# Layout so plots do not overlap
+fig.tight_layout()
+
+plt.show()
+```
+
+This script will generate a 10x10 grid of images showing the Sobol sensitivity of WS_eff as a function of x and y at different times. Each image represents a different time step, and the colorbar represents the Sobol sensitivity.
+
+Note that this script assumes that the inflow is a random variable with a normal distribution, and that the uncertainty bounds are 8 and 12 m/s. You'll need to modify the script to match your specific use case.
+
+Also, keep in mind that this script is just a starting point, and you may need to modify it to suit your specific needs.

@@ -1,0 +1,109 @@
+I'll provide a script that uses PyWake to propagate measurement uncertainties and calculate the Sobol sensitivity of the effective wind speed (WS_eff) as a function of x and y. This script will also save a series of flow field images showing the sensitivity of the flow at different times to the inflow.
+
+**Note:** This script assumes you have PyWake installed and configured properly. Also, the specific implementation may vary depending on your system setup and the version of PyWake you're using.
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake import PyWake
+from pywake.flow_field import FlowField
+from pywake.turbine import Turbine
+from pywake.wake_models import NOJWake
+from pywake.wind_farm import WindFarm
+from SALib.sample import latin
+from SALib.analyze import sobol
+from scipy.stats import norm
+
+# Define the wind farm layout and turbine properties
+turbine_x = np.array([100, 200, 300, 400, 500])  # x-coordinates of turbines
+turbine_y = np.array([100, 200, 300, 400, 500])  # y-coordinates of turbines
+turbine_z = np.array([100, 100, 100, 100, 100])  # z-coordinates of turbines (hub height)
+turbine_diameter = 100  # turbine diameter
+turbine_rotor_diameter = 80  # turbine rotor diameter
+turbine_hub_height = 100  # turbine hub height
+
+# Define the wind direction and speed
+wind_direction = 270  # wind direction (degrees)
+wind_speed = 10  # wind speed (m/s)
+
+# Define the uncertainty parameters and their ranges
+uncertainty_params = {
+    'turbine_x': {'min': 90,'max': 110},
+    'turbine_y': {'min': 190,'max': 210},
+    'turbine_z': {'min': 90,'max': 110},
+    'turbine_diameter': {'min': 90,'max': 110},
+    'turbine_rotor_diameter': {'min': 70,'max': 90},
+    'turbine_hub_height': {'min': 90,'max': 110},
+    'wind_direction': {'min': 260,'max': 280},
+    'wind_speed': {'min': 9,'max': 11}
+}
+
+# Generate the uncertainty samples using Latin Hypercube Sampling
+n_samples = 1000
+samples = latin.sample(len(uncertainty_params), n_samples, bounds=uncertainty_params)
+
+# Initialize the PyWake object
+pywake = PyWake(
+    wind_farm=WindFarm(
+        turbines=[Turbine(x=x, y=y, z=z, diameter=diameter, rotor_diameter=rotor_diameter, hub_height=hub_height)
+                  for x, y, z, diameter, rotor_diameter, hub_height in
+                  zip(turbine_x, turbine_y, turbine_z, [turbine_diameter] * len(turbine_x),
+                      [turbine_rotor_diameter] * len(turbine_x), [turbine_hub_height] * len(turbine_x))],
+        wind_direction=wind_direction,
+        wind_speed=wind_speed
+    ),
+    wake_model=NOJWake()
+)
+
+# Create a FlowField object to store the flow field data
+flow_field = FlowField()
+
+# Calculate the flow field for each uncertainty sample
+for i, sample in enumerate(samples):
+    # Update the PyWake object with the current sample
+    pywake.wind_farm.turbines[0].x = sample['turbine_x']
+    pywake.wind_farm.turbines[0].y = sample['turbine_y']
+    pywake.wind_farm.turbines[0].z = sample['turbine_z']
+    pywake.wind_farm.turbines[0].diameter = sample['turbine_diameter']
+    pywake.wind_farm.turbines[0].rotor_diameter = sample['turbine_rotor_diameter']
+    pywake.wind_farm.turbines[0].hub_height = sample['turbine_hub_height']
+    pywake.wind_direction = sample['wind_direction']
+    pywake.wind_speed = sample['wind_speed']
+
+    # Calculate the flow field
+    flow_field_data = pywake.calculate_flow_field()
+
+    # Store the flow field data
+    flow_field.add_data(flow_field_data)
+
+# Calculate the Sobol sensitivity indices
+sobol_indices = sobol.analyze(flow_field.data, uncertainty_params, ['WS_eff'])
+
+# Plot the Sobol sensitivity indices as a function of x and y
+x = np.linspace(0, 1000, 100)
+y = np.linspace(0, 1000, 100)
+X, Y = np.meshgrid(x, y)
+
+fig, ax = plt.subplots(figsize=(10, 10))
+ax.contourf(X, Y, sobol_indices['S1'], cmap='coolwarm')
+ax.set_title('Sobol Sensitivity Indices of WS_eff')
+ax.set_xlabel('x (m)')
+ax.set_ylabel('y (m)')
+plt.show()
+
+# Save the flow field images at different times
+for i in range(len(flow_field.data)):
+    fig, ax = plt.subplots(figsize=(10, 10))
+    ax.contourf(X, Y, flow_field.data[i], cmap='coolwarm')
+    ax.set_title(f'Flow Field at Time {i}')
+    ax.set_xlabel('x (m)')
+    ax.set_ylabel('y (m)')
+    plt.savefig(f'flow_field_{i}.png')
+    plt.close()
+```
+
+This script first defines the wind farm layout and turbine properties, as well as the uncertainty parameters and their ranges. It then generates the uncertainty samples using Latin Hypercube Sampling and initializes the PyWake object. The script then calculates the flow field for each uncertainty sample and stores the data in a FlowField object. The Sobol sensitivity indices are calculated and plotted as a function of x and y. Finally, the script saves the flow field images at different times.
+
+Note that this script assumes that the flow field data is stored in a 3D array, where the first dimension represents the time, and the second and third dimensions represent the x and y coordinates, respectively. The script also assumes that the Sobol sensitivity indices are calculated for the effective wind speed (WS_eff) at each point in the flow field.
+
+Please note that this is a basic example and may need to be adapted to your specific use case.

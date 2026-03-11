@@ -1,0 +1,30 @@
+The error message indicates that there's an issue with one of the worker files that are being used to join the results. The specific error is an `OSError` with the message "Unable to synchronously open file (file signature not found)".
+
+This error typically occurs when the HDF5 library (which is used by `h5py`) is unable to read the file because it's corrupted or incomplete.
+
+To detect this error reliably and stop the process cleanly if any worker file is invalid, you can add some error handling around the code that opens the HDF5 files.
+
+Here's an example of how you can modify the code to catch this error and stop the process cleanly:
+```python
+try:
+    with h5py.File(worker_file, 'r') as h5_in:
+        # rest of the code...
+except OSError as e:
+    if "file signature not found" in str(e):
+        print(f"Error: Invalid worker file '{worker_file}'")
+        # You can also log the error or raise a custom exception here
+        raise SystemExit("Invalid worker file")
+    else:
+        raise  # Re-raise the original exception
+```
+This code will catch any `OSError` exceptions that occur when opening the HDF5 file, and if the error message contains "file signature not found", it will print an error message and raise a `SystemExit` exception to stop the process cleanly.
+
+You can also add some additional logging or error handling to help diagnose the issue, such as printing the worker file name or logging the error message.
+
+To prevent this error from occurring in the first place, you can also add some checks before opening the HDF5 files, such as:
+
+* Checking if the file exists and has a valid size
+* Checking if the file has a valid HDF5 signature (using tools like `h5dump` or `h5ls`)
+* Verifying the integrity of the file using checksums or digital signatures
+
+By adding these checks and error handling, you can make your code more robust and reliable, and prevent the process from crashing unexpectedly due to invalid worker files.

@@ -1,0 +1,69 @@
+Your approach to modularizing the code is a good start. However, there are a few suggestions I can make to improve it further:
+
+1. **Separate the code into logical sections**: You can separate the code into sections like data loading, model definition, simulation, optimization, and visualization. This will make it easier to read and understand the code.
+
+2. **Use functions to encapsulate repeated code**: You have repeated code for creating the wake deficit model and the blockage deficit model. You can create functions to encapsulate this code and make it reusable.
+
+3. **Use a consistent naming convention**: You are using both camelCase and underscore notation for variable names. It's better to stick to a consistent convention throughout the code.
+
+4. **Use docstrings to document your code**: You can add docstrings to your functions and classes to explain what they do, what inputs they expect, and what outputs they produce.
+
+5. **Consider using a more robust optimization algorithm**: The Bayesian optimization algorithm you are using is a good start, but you may want to consider using more robust algorithms like gradient-based optimization or evolutionary algorithms.
+
+6. **Visualize the results**: You are saving the results as images, but it would be better to visualize them directly in the code using matplotlib or seaborn.
+
+Here's an example of how you can refactor your code to make it more modular:
+
+```python
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from py_wake import *
+
+# Data loading
+def load_data():
+    dat = xr.load_dataset('./DTU10MW.nc')
+    #...
+    return dat
+
+# Model definition
+def create_wake_deficit_model(model_number, downwind):
+    if model_number == 1:
+        #...
+    else:
+        #...
+
+def create_blockage_deficit_model(model_number, downwind):
+    if model_number == 1:
+        #...
+    else:
+        #...
+
+# Simulation
+def run_simulation(site, turbine, wake_deficit_model, blockage_deficit_model):
+    #...
+
+# Optimization
+def optimize_rmse(wake_deficit_model, blockage_deficit_model):
+    #...
+
+# Visualization
+def visualize_results(rmse_values, best_params, defaults):
+    #...
+
+# Main function
+def main():
+    dat = load_data()
+    model_number = 2
+    downwind = True
+    wake_deficit_model = create_wake_deficit_model(model_number, downwind)
+    blockage_deficit_model = create_blockage_deficit_model(model_number, downwind)
+    sim_res = run_simulation(site, turbine, wake_deficit_model, blockage_deficit_model)
+    rmse_values = optimize_rmse(wake_deficit_model, blockage_deficit_model)
+    visualize_results(rmse_values, best_params, defaults)
+
+if __name__ == '__main__':
+    main()
+```
+
+This is just a rough example, and you will need to fill in the details. But it should give you an idea of how to structure your code in a more modular way.

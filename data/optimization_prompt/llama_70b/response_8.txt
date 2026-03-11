@@ -1,0 +1,33 @@
+The error message indicates that there's an issue with one of the HDF5 files used by the worker processes. Specifically, the error "file signature not found" suggests that the HDF5 file is either corrupted or incomplete.
+
+To diagnose this issue, you can try the following:
+
+1. **Verify the integrity of the HDF5 files**: Use tools like `h5dump` or `h5ls` to check the contents of the HDF5 files and see if they are valid.
+2. **Check for file corruption**: Use tools like `h5check` to verify the integrity of the HDF5 files.
+3. **Check the file permissions**: Make sure that the HDF5 files are readable by the process trying to access them.
+
+To modify the script to detect this error reliably and stop the process cleanly if any worker file is invalid, you can use the following strategies:
+
+1. **Wrap the HDF5 file access in a try-except block**: Catch the `OSError` exception raised when trying to open the HDF5 file and handle it accordingly.
+2. **Use a more robust HDF5 library**: Consider using a library like `hdf5-python` which provides more robust error handling.
+3. **Implement a file validation step**: Before trying to access the HDF5 file, validate its integrity using tools like `h5check`.
+
+Here's an example of how you can modify the script to catch the `OSError` exception:
+```python
+try:
+    with h5py.File(worker_file, 'r') as h5_in:
+        #...
+except OSError as e:
+    print(f"Error opening HDF5 file: {e}")
+    # Handle the error, e.g., exit the process cleanly
+    sys.exit(1)
+```
+Regarding the joining operation, it's possible that the error occurred during the joining process, but it's not the root cause of the issue. The error message suggests that the issue is with the HDF5 file itself, not with the joining operation.
+
+To recover the missing data, you can try to:
+
+1. **Re-run the process with a smaller number of seeds**: Try re-running the process with a smaller number of seeds to see if the error occurs again.
+2. **Use a different HDF5 file**: If you have multiple HDF5 files, try using a different one to see if the error occurs again.
+3. **Re-generate the HDF5 file**: If possible, re-generate the HDF5 file to see if the error occurs again.
+
+If none of these steps help, you may need to investigate further to determine the root cause of the issue.

@@ -1,0 +1,23 @@
+Overall, your code is well-structured and readable. However, there are a few areas that could be improved:
+
+1. **Modularization**: As you mentioned, the code could benefit from better modularization. Consider breaking it down into smaller functions or modules, each with a specific responsibility (e.g., data loading, model definition, optimization, plotting).
+
+2. **Variable naming**: Some variable names, such as `dat`, `turbine`, and `site`, are not very descriptive. Consider using more descriptive names to improve code readability.
+
+3. **Comments**: While there are some comments, they are mostly brief and don't provide much context. Consider adding more comments to explain the purpose of each section of code, especially for complex operations.
+
+4. **Code repetition**: There are some repeated code blocks, such as the definition of `wake_deficitModel` and `blockage_args` for different models. Consider extracting these into separate functions or classes to reduce code duplication.
+
+5. **Plotting**: The plotting code is quite dense and could be improved. Consider using a more object-oriented approach, such as using a `Plot` class to encapsulate the plotting logic.
+
+6. **Magic numbers**: There are several magic numbers scattered throughout the code (e.g., `0.05`, `0.45`, `4`, `11`). Consider defining these numbers as constants or configurable variables to make the code more readable and maintainable.
+
+Here's a high-level suggestion for how you could refactor your code:
+
+1. **data_loader.py**: Extract the data loading code into a separate module, which returns the loaded data.
+2. **model.py**: Define a `Model` class that encapsulates the wake deficit model, blockage model, and turbulence model. This class could have methods for setting up the models and computing the deficits.
+3. **optimizer.py**: Create a separate module for the optimization logic, which takes the model and data as inputs and returns the optimized parameters.
+4. **plotter.py**: Define a `Plotter` class that encapsulates the plotting logic, which takes the optimized parameters and data as inputs.
+5. **main.py**: This module would orchestrate the entire process, loading the data, setting up the models, optimizing the parameters, and plotting the results.
+
+By breaking down the code into smaller, more focused modules, you'll make it easier to maintain, modify, and extend in the future.
