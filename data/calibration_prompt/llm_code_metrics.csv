@@ -118,26 +118,6 @@ bad_exception_blocks,bad_exception_rate,code_block_count,exception_handling_bloc
 0.0,0.0,1,0.0,response_6.txt,147.0,gemini_1.5_flash,,0.0,/workspace/silent-killers/data/calibration_prompt/gemini_1.5_flash/response_6.txt,0.0,
 0.0,0.0,1,0.0,response_7.txt,108.0,gemini_1.5_flash,,0.0,/workspace/silent-killers/data/calibration_prompt/gemini_1.5_flash/response_7.txt,1.0,
 0.0,0.0,1,0.0,response_8.txt,,gemini_1.5_flash,"Block 1: SyntaxError: expected an indented block after 'if' statement on line 99 (<unknown>, line 101)",,/workspace/silent-killers/data/calibration_prompt/gemini_1.5_flash/response_8.txt,,
-0,0.0,0,0,response_1.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_1.txt,0,False
-0,0.0,0,0,response_10.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_10.txt,0,False
-0,0.0,0,0,response_11.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_11.txt,0,False
-0,0.0,0,0,response_12.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_12.txt,0,False
-0,0.0,0,0,response_13.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_13.txt,0,False
-0,0.0,0,0,response_14.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_14.txt,0,False
-0,0.0,0,0,response_15.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_15.txt,0,False
-0,0.0,0,0,response_16.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_16.txt,0,False
-0,0.0,0,0,response_17.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_17.txt,0,False
-0,0.0,0,0,response_18.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_18.txt,0,False
-0,0.0,0,0,response_19.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_19.txt,0,False
-0,0.0,0,0,response_2.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_2.txt,0,False
-0,0.0,0,0,response_20.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_20.txt,0,False
-0,0.0,0,0,response_3.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_3.txt,0,False
-0,0.0,0,0,response_4.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_4.txt,0,False
-0,0.0,0,0,response_5.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_5.txt,0,False
-0,0.0,0,0,response_6.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_6.txt,0,False
-0,0.0,0,0,response_7.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_7.txt,0,False
-0,0.0,0,0,response_8.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_8.txt,0,False
-0,0.0,0,0,response_9.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_9.txt,0,False
 0.0,0.0,1,0.0,response_1.txt,107.0,llama_1b,,0.0,/workspace/silent-killers/data/calibration_prompt/llama_1b/response_1.txt,0.0,
 0.0,0.0,1,0.0,response_10.txt,78.0,llama_1b,,0.0,/workspace/silent-killers/data/calibration_prompt/llama_1b/response_10.txt,0.0,
 0.0,0.0,1,0.0,response_11.txt,,llama_1b,"Block 1: SyntaxError: '[' was never closed (<unknown>, line 38)",,/workspace/silent-killers/data/calibration_prompt/llama_1b/response_11.txt,,
@@ -198,3 +178,23 @@ bad_exception_blocks,bad_exception_rate,code_block_count,exception_handling_bloc
 0.0,0.0,1,0.0,response_7.txt,19.0,llama_8b,,0.0,/workspace/silent-killers/data/calibration_prompt/llama_8b/response_7.txt,0.0,
 0.0,0.0,1,0.0,response_8.txt,,llama_8b,"Block 1: SyntaxError: closing parenthesis ')' does not match opening parenthesis '[' (<unknown>, line 84)",,/workspace/silent-killers/data/calibration_prompt/llama_8b/response_8.txt,,
 0.0,0.0,2,0.0,response_9.txt,21.0,llama_8b,"Block 1: SyntaxError: closing parenthesis ')' does not match opening parenthesis '[' (<unknown>, line 98)",0.0,/workspace/silent-killers/data/calibration_prompt/llama_8b/response_9.txt,0.0,
+0,0.0,0,0,response_1.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_1.txt,0,False
+0,0.0,0,0,response_10.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_10.txt,0,False
+0,0.0,0,0,response_11.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_11.txt,0,False
+0,0.0,0,0,response_12.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_12.txt,0,False
+0,0.0,0,0,response_13.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_13.txt,0,False
+0,0.0,0,0,response_14.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_14.txt,0,False
+0,0.0,0,0,response_15.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_15.txt,0,False
+0,0.0,0,0,response_16.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_16.txt,0,False
+0,0.0,0,0,response_17.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_17.txt,0,False
+0,0.0,0,0,response_18.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_18.txt,0,False
+0,0.0,0,0,response_19.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_19.txt,0,False
+0,0.0,0,0,response_2.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_2.txt,0,False
+0,0.0,0,0,response_20.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_20.txt,0,False
+0,0.0,0,0,response_3.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_3.txt,0,False
+0,0.0,0,0,response_4.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_4.txt,0,False
+0,0.0,0,0,response_5.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_5.txt,0,False
+0,0.0,0,0,response_6.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_6.txt,0,False
+0,0.0,0,0,response_7.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_7.txt,0,False
+0,0.0,0,0,response_8.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_8.txt,0,False
+0,0.0,0,0,response_9.txt,0,o3_mini,,0,/workspace/silent-killers/data/calibration_prompt/o3_mini/response_9.txt,0,False
