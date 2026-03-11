@@ -1,0 +1,62 @@
+The issue you're experiencing is due to the `h5py` library being unable to open one of the worker files because the file signature is not found. This is likely caused by the `h5py` library trying to open the file in a way that doesn't match the actual file format.
+
+The `h5py` library uses a technique called "synchronous I/O" to open files, which means it tries to open the file in a way that's compatible with the file format. However, sometimes this can lead to issues if the file format has changed or if the file is not properly formatted.
+
+To diagnose and fix this issue, you can try the following:
+
+1. Check the file format: Make sure that the file format is correct and that the files are properly formatted. You can use tools like `h5dump` or `h5info` to check the file format.
+
+2. Check for file corruption: Check the files for any signs of corruption, such as incorrect data or invalid metadata. You can use tools like `h5dump` or `h5info` to check for corruption.
+
+3. Use asynchronous I/O: Consider using asynchronous I/O instead of synchronous I/O. Asynchronous I/O can help avoid issues like this by allowing the program to continue running while waiting for I/O operations to complete.
+
+4. Use a different library: Consider using a different library that's more robust and flexible, such as `h5py` or `pandas` for reading and writing HDF5 files.
+
+Here's an example of how you can modify your code to use asynchronous I/O using the `asyncio` library:
+
+```python
+import asyncio
+import aiofiles
+import os
+
+async def read_h5_file(file_path):
+    async with aiofiles.open(file_path, mode='rb') as f:
+        # Read the file contents
+        data = await f.read()
+        # Process the data
+        return data
+
+async def main():
+    worker_files = ['worker_file1.h5', 'worker_file2.h5', 'worker_file3.h5']
+    tasks = [read_h5_file(file) for file in worker_files]
+    results = await asyncio.gather(*tasks)
+    # Process the results
+
+asyncio.run(main())
+```
+
+This code uses the `aiofiles` library to open the files asynchronously, which can help avoid issues like the one you're experiencing.
+
+As for the `joining operation`, it's possible that the issue is related to the way the files are being joined. However, without more information about the joining operation, it's difficult to say for sure.
+
+One possible solution is to try to recreate the joined files using a different method. If the joined files are not essential, you may be able to recreate them using a different method, such as using a different algorithm or a different tool.
+
+Here's an example of how you can modify your code to recreate the joined files:
+
+```python
+import h5py
+
+def join_files(file_paths):
+    # Create a new file
+    with h5py.File('joined_file.h5', 'w') as f:
+        # Loop through the files and copy the data to the new file
+        for file_path in file_paths:
+            with h5py.File(file_path, 'r') as f_in:
+                for key in f_in.keys():
+                    f.copy(f_in[key], f)
+
+# Call the function with the file paths
+join_files(['worker_file1.h5', 'worker_file2.h5'])
+```
+
+This code creates a new file and copies the data from the input files to the new file using the `h5py` library. This can help recreate the joined files and avoid issues like the one you're experiencing.

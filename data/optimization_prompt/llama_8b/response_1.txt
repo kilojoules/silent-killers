@@ -1,0 +1,74 @@
+The error you're encountering is due to an invalid HDF5 file. The error message "file signature not found" indicates that the file does not contain a valid HDF5 signature.
+
+Given that you're trying to run for 50 seeds, it's likely that the issue is related to the way you're handling the worker files. Here are a few potential solutions to modify your script to detect and handle invalid worker files:
+
+1.  **Check if the file exists before trying to open it:**
+
+    You can use the `os.path.exists()` function to check if the file exists before attempting to open it with `h5py`.
+
+    ```python
+import os
+
+worker_files = ['worker_file_1.h5', 'worker_file_2.h5',...]  # list of worker files
+
+for worker_file in worker_files:
+    if not os.path.exists(worker_file):
+        print(f"Warning: file {worker_file} does not exist.")
+        continue
+    with h5py.File(worker_file, 'r') as h5_in:
+        # Process the file
+```
+
+2.  **Catch the `OSError` exception:**
+
+    You can wrap the `h5py.File` open call in a `try`-`except` block to catch the `OSError` exception and handle it accordingly.
+
+    ```python
+import h5py
+
+worker_files = ['worker_file_1.h5', 'worker_file_2.h5',...]  # list of worker files
+
+for worker_file in worker_files:
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Process the file
+    except OSError as e:
+        print(f"Error: unable to open file {worker_file}. Error: {e}")
+        continue
+```
+
+3.  **Check the file signature:**
+
+    You can use the `h5py.file` module to check if the file is a valid HDF5 file by checking its signature.
+
+    ```python
+import h5py
+
+worker_files = ['worker_file_1.h5', 'worker_file_2.h5',...]  # list of worker files
+
+for worker_file in worker_files:
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Check the signature
+            if not h5_in.file['/'].attrs['H5I_VERSION'] == 100:
+                print(f"Warning: file {worker_file} has an invalid signature.")
+                continue
+            # Process the file
+    except OSError as e:
+        print(f"Error: unable to open file {worker_file}. Error: {e}")
+        continue
+```
+
+To recover the missing data, you may need to investigate the cause of the invalid worker files. Here are some possible reasons:
+
+*   **Corrupted files:** Check the files for corruption or inconsistencies.
+*   **Invalid file creation:** Review the code that generates the worker files to ensure they are created correctly.
+*   **File format changes:** If the HDF5 file format has changed, the worker files may need to be updated accordingly.
+
+To debug this issue, you can try the following:
+
+*   **Print the list of worker files:** Before attempting to open the files, print the list of worker files to see which ones are missing or invalid.
+*   **Add print statements:** Add print statements throughout your script to understand the flow of execution and identify where the issue arises.
+*   **Check the HDF5 file format:** Verify that the HDF5 file format is correct and consistent across all worker files.
+
+By implementing these suggestions, you should be able to modify your script to handle invalid worker files and recover the missing data.

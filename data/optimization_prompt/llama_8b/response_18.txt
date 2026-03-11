@@ -1,0 +1,58 @@
+The error message indicates that the script is trying to open an invalid HDF5 file, which suggests that the worker file is corrupted or does not exist.
+
+Based on the provided output, it appears that the script is trying to open multiple files with the same name, but different paths. The error occurs when the script tries to open a file that does not exist or is corrupted.
+
+To modify the script to ensure this error is detected reliably and stop the process cleanly if any worker file is invalid, you can add error handling to check if the file exists before trying to open it. Here's an example of how you can modify the script:
+
+```python
+import os
+
+# List of worker files
+worker_files = ["/work/users/juqu/ocdtuct_repo/farm_layouts_9_type_4_seed_24.h5",
+               "/work/users/juqu/ocdtuct_repo/farm_layouts_9_type_5_seed_49.h5",
+               "/work/users/juqu/ocdtuct_repo/farm_layouts_9_type_5_seed_39.h5"]
+
+# Main function
+def main():
+    for worker_file in worker_files:
+        if not os.path.exists(worker_file):
+            print(f"Error: File '{worker_file}' does not exist.")
+            continue
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                # Process the file
+                #...
+        except OSError as e:
+            print(f"Error: Unable to open file '{worker_file}'. Error: {e}")
+
+# Call the main function
+main()
+```
+
+In this modified script, we first check if each file exists using `os.path.exists()`. If the file does not exist, we print an error message and continue to the next file. If the file exists, we try to open it with `h5py.File()`. If the file is invalid or corrupted, an `OSError` exception is raised, and we print an error message.
+
+Alternatively, you can use a more robust way to handle the file operations by using `h5py.File()`'s `swmr` mode, which allows you to open the file in synchronous mode and check if it exists before trying to open it:
+
+```python
+import h5py
+
+# List of worker files
+worker_files = ["/work/users/juqu/ocdtuct_repo/farm_layouts_9_type_4_seed_24.h5",
+               "/work/users/juqu/ocdtuct_repo/farm_layouts_9_type_5_seed_49.h5",
+               "/work/users/juqu/ocdtuct_repo/farm_layouts_9_type_5_seed_39.h5"]
+
+# Main function
+def main():
+    for worker_file in worker_files:
+        with h5py.File(worker_file, 'r', swmr=True) as h5_in:
+            if not h5_in:
+                print(f"Error: File '{worker_file}' does not exist or is corrupted.")
+                continue
+            # Process the file
+            #...
+
+# Call the main function
+main()
+```
+
+In this modified script, we use `h5py.File()` with the `swmr` mode to open the file synchronously. If the file does not exist or is corrupted, `h5_in` will be `None`, and we print an error message and continue to the next file.

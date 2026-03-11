@@ -1,0 +1,59 @@
+Here's an example of how you can use the PyWake library to generate flow field images and propagate measurement uncertainties through them:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from PyWake import ws
+
+# Set up the simulation parameters
+Lx = 1.0
+Ly = 1.0
+N = 1000
+Nx = 100
+Ny = 100
+Nt = 10
+
+# Set up the domain
+x = np.linspace(0, Lx, Nx)
+y = np.linspace(0, Ly, Ny)
+X, Y = np.meshgrid(x, y)
+X, Y = X.astype(np.float64), Y.astype(np.float64)
+
+# Set up the initial conditions
+u = np.zeros((Nx, Ny))
+v = np.zeros((Nx, Ny))
+u[0, 0] = 1.0
+v[0, 0] = 0.0
+
+# Set up the initial flow field
+ws = ws(ws_eff=1.0, u=u, v=v, Lx=Lx, Ly=Ly)
+
+# Propagate measurement uncertainties through the flow field
+for n in range(1, Nt):
+    # Create a Sobol sensitivity matrix
+    sigma = np.zeros((Nx, Ny))
+    for i in range(Nx):
+        for j in range(Ny):
+            sigma[i, j] = ws.eff[i, j, 0, 1]
+            sigma[i, j] += np.random.normal(0.0, 1e-6, (Nx, Ny))
+
+    # Update the flow field
+    ws.propagate(sigma, u, v, n)
+
+# Save the flow field images
+for n in range(Nt):
+    plt.imshow(ws.field[0, :, :, n], cmap='viridis', extent=[X.min(), X.max(), Y.min(), Y.max()])
+    plt.title(f'Sensitivity of WS_eff to inflow at time step {n}')
+    plt.show()
+
+# Save the flow field images
+np.save('flow_field_images', ws.field)
+```
+
+This script creates a Sobol sensitivity matrix and propagates the measurement uncertainties through the flow field using the `propagate` method. It then saves the flow field images at each time step. The Sobol sensitivity matrix is used to represent the sensitivity of the flow field to the inflow at each time step.
+
+Please note that you need to install the `PyWake` library and the `numpy` library to run this script.
+
+Also, you need to replace the `ws_eff=1.0` and `Lx=1.0` with the actual values for your simulation.
+
+The script will save the flow field images as a series of images in a file named `flow_field_images.npy`. The images will have the same shape as the original flow field and will be saved with the same extent as the original flow field.

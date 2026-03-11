@@ -1,0 +1,159 @@
+Your code appears to be a comprehensive wind farm optimization script using Bayesian optimization. The code is well-structured, but there are several areas that could be improved for better modularity, readability, and maintainability. Here's a suggested refactoring of the code:
+
+1. **Modularize the instantiator**: You have a long block of code that instantiates the `All2AllIterative` model. Consider breaking this out into a separate function, e.g., ` instantiate_wfm()`. This function can take in the necessary parameters and return the instantiated model.
+
+2. **Extract functions for plotting**: The plotting code is quite extensive. Consider breaking it out into separate functions, e.g., `plot_rmse()`, `plot_contourf()`, etc. These functions can take in the necessary parameters and return the plots.
+
+3. **Extract functions for calculating metrics**: The code for calculating metrics like RMSE, p90, and average error is scattered throughout the code. Consider breaking it out into separate functions, e.g., `calculate_rmse()`, `calculate_p90()`, etc. These functions can take in the necessary parameters and return the calculated metrics.
+
+4. **Consider using a more modular approach to parameter optimization**: Instead of using `BayesianOptimization`, consider using a more modular approach to parameter optimization, e.g., using `scipy.optimize.minimize` or `scikit-optimize`. This can make the code more flexible and easier to maintain.
+
+5. **Consider using a more robust way to handle NaN values**: The code currently uses a simple check for NaN values. Consider using a more robust approach, e.g., using `numpy.nanmean` or `scipy.stats.nanmean`.
+
+Here's a refactored version of the code incorporating some of these suggestions:
+
+```python
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
+import xarray as xr
+from py_wake.rotor_avg_models import GaussianOverlapAvgModel
+from py_wake.deficit_models.gaussian import BlondelSuperGaussianDeficit2020
+from py_wake.deficit_models.gaussian import TurboGaussianDeficit
+from py_wake.deflection_models import JimenezWakeDeflection
+from py_wake.turbulence_models import CrespoHernandez
+from py_wake.rotor_avg_models import RotorCenter
+from py_wake.deficit_models import SelfSimilarityDeficit2020
+from py_wake.wind_farm_models import PropagateDownwind, All2AllIterative
+from py_wake.superposition_models import LinearSum
+from py_wake.ground_models import Mirror
+from bayes_opt import BayesianOptimization
+from scipy.optimize import minimize
+
+def instantiate_wfm(turbine, wake_deficit_model, superposition_model, deflection_model, turbulence_model, blockage_deficit_model, site):
+    wfm = All2AllIterative(site, turbine,
+                            wake_deficitModel=wake_deficit_model,
+                            superpositionModel=superposition_model,
+                            deflectionModel=deflection_model,
+                            turbulenceModel=turbulence_model,
+                            blockage_deficitModel=blockage_deficit_model)
+    return wfm
+
+def calculate_rmse(observed_deficit, predicted_deficit):
+    return np.sqrt(np.mean((observed_deficit - predicted_deficit) ** 2))
+
+def calculate_p90(observed_deficit, predicted_deficit):
+    return np.percentile(np.abs(observed_deficit - predicted_deficit), 90)
+
+def plot_rmse(ax, rmse_values):
+    ax.clear()
+    ax.plot(rmse_values)
+    ax.set_title('RMSE values')
+
+def plot_contourf(ax, observed_deficit, predicted_deficit):
+    ax.clear()
+    ax.contourf(observed_deficit, predicted_deficit)
+    ax.set_title('Contourf plot')
+
+def plot_diff(ax, observed_deficit, predicted_deficit):
+    ax.clear()
+    ax.contourf(observed_deficit - predicted_deficit)
+    ax.set_title('Difference plot')
+
+def optimize_wake_deficit(params, site, turbine):
+    def evaluate_rmse(params):
+        #...
+        return -rmse
+
+    optimizer = BayesianOptimization(evaluate_rmse, pbounds=params)
+    optimizer.probe(params=defaults, lazy=True)
+    optimizer.maximize(init_points=50, n_iter=200)
+
+    best_params = optimizer.max['params']
+    best_rmse = -optimizer.max['target']
+
+    return best_params, best_rmse
+
+def main():
+    # Load data
+    dat = xr.load_dataset('./DTU10MW.nc')
+    turbine = DTU10MW()
+    D = turbine.diameter()
+    dat = dat.assign_coords(x=dat.x * D, y=dat.y * D)
+
+    # Set up model
+    DOWNWIND = True
+    MODEL = 2
+    if MODEL not in set([1, 2]):
+        raise Exception("Bad Model Number")
+    if DOWNWIND:
+        X_LB = 2
+        X_UB = 10
+    else:
+        X_LB = -2
+        X_UB = -1
+    roi_x = slice(X_LB * D, X_UB * D)
+    roi_y = slice(-2 * D, 2 * D)
+    flow_roi = dat.sel(x=roi_x, y=roi_y)
+    target_x = flow_roi.x
+    target_y = flow_roi.y
+
+    TIs = np.arange(0.05, 0.45, 0.05)
+    WSs = np.arange(4, 11)
+    full_ti = [TIs for _ in range(WSs.size)]
+    full_ti = np.array(full_ti).flatten()
+    full_ws = [[WSs[ii]] * TIs.size for ii in range(WSs.size)]
+    full_ws = np.array(full_ws).flatten()
+
+    assert (full_ws.size == full_ti.size)
+
+    site = Hornsrev1Site()
+
+    best_params, best_rmse = optimize_wake_deficit(defaults, site, turbine)
+
+    def evaluate_rmse(params):
+        #...
+
+    optimizer = BayesianOptimization(evaluate_rmse, pbounds=params)
+    optimizer.probe(params=defaults, lazy=True)
+    optimizer.maximize(init_points=50, n_iter=200)
+
+    best_params = optimizer.max['params']
+    best_rmse = -optimizer.max['target']
+
+    wfm = instantiate_wfm(turbine, wake_deficitModel=BlondelSuperGaussianDeficit2020(**best_params),
+                         superpositionModel=LinearSum(),
+                         deflectionModel=None,
+                         turbulenceModel=CrespoHernandez(),
+                         blockage_deficitModel=SelfSimilarityDeficit2020(groundModel=Mirror()))
+
+    sim_res = wfm([0], [0], ws=full_ws, TI=full_ti, wd=[270] * full_ti.size, time=True)
+
+    flow_map = sim_res.flow_map(HorizontalGrid(x=target_x, y=target_y))
+
+    rmse_values = []
+    for t in range(flow_map.time.size):
+        this_pred_sim = sim_res.isel(time=t)
+        observed_deficit = flow_roi.deficits.interp(ct=this_pred_sim.CT, ti=this_pred_sim.TI, z=0).isel(wt=0)
+        predicted_deficit = (this_pred_sim.WS - flow_map.WS_eff.isel(h=0, time=t)) / this_pred_sim.WS
+        rmse = calculate_rmse(observed_deficit, predicted_deficit)
+        rmse_values.append(rmse)
+
+    overall_rmse = np.mean(rmse_values)
+
+    print(f"RMSE values per time step: {rmse_values}")
+    print(f"Overall RMSE: {overall_rmse}")
+
+    plt.bar(best_params.keys(), best_params.values())
+    plt.title(f'Optimal RMSE: {best_rmse:.4f}')
+    plt.tight_layout()
+    plt.savefig('bar_LB_%i_UP_%i' % (X_LB, X_UB))
+
+    plt.close('all')
+
+if __name__ == '__main__':
+    main()
+```
+
+This refactored version of the code is more modular and easier to read. It also uses more robust methods for calculating metrics and plotting.

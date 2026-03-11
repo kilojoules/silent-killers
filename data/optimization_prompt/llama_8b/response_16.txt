@@ -1,0 +1,61 @@
+The error message indicates that the file signature is not found, which suggests that the worker files are not valid HDF5 files. This could be due to a few reasons:
+
+1.  The files are not in the correct format.
+2.  The files are corrupted.
+3.  The file paths are incorrect.
+
+To diagnose the issue, I would recommend the following steps:
+
+1.  Check the file paths: Ensure that the file paths in your script are correct and the files exist in those locations.
+
+2.  Validate the HDF5 files: You can use the `h5py` library to check the validity of the HDF5 files. Here's a simple script to validate the files:
+
+    ```python
+import h5py
+
+def validate_hdf5_file(file_path):
+    try:
+        with h5py.File(file_path, 'r') as f:
+            return True
+    except OSError as e:
+        print(f"Error validating {file_path}: {e}")
+        return False
+
+# List of worker files
+worker_files = ["worker_file_1.h5", "worker_file_2.h5", "worker_file_3.h5"]
+
+for file in worker_files:
+    if not validate_hdf5_file(file):
+        print(f"Invalid file: {file}")
+```
+
+3.  Check the file format: If the files are in the correct format but still not being recognized, you may need to check the file format or the version of the HDF5 library you're using.
+
+To ensure that the script stops cleanly if any worker file is invalid, you can modify the script to catch the `OSError` exception and exit the process. Here's an example:
+
+```python
+import h5py
+
+def load_worker_file(file_path):
+    try:
+        with h5py.File(file_path, 'r') as f:
+            return f
+    except OSError as e:
+        print(f"Error loading {file_path}: {e}")
+        return None
+
+# List of worker files
+worker_files = ["worker_file_1.h5", "worker_file_2.h5", "worker_file_3.h5"]
+
+for file in worker_files:
+    worker_data = load_worker_file(file)
+    if worker_data is None:
+        print(f"Skipping {file} due to invalid file.")
+        continue
+    # Process the worker data
+    #...
+```
+
+This way, if any worker file is invalid, the script will skip it and continue with the remaining files. If all files are invalid, the script will exit with an error message.
+
+As for recovering the missing data, it depends on the specific requirements of your project. If you're using a database or a specific data storage system, you may need to check the logs or the database to see if the data is still available. If the data is lost, you may need to re-run the computation or re-generate the data.

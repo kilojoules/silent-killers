@@ -1,0 +1,93 @@
+I'll provide a script that uses PyWake to propagate measurement uncertainties and calculate the Sobol sensitivity of the wake flow at different times. This script will use the PyWake library to simulate the wake flow and calculate the Sobol sensitivity indices.
+
+```python
+# Import necessary libraries
+import numpy as np
+import matplotlib.pyplot as plt
+from sobol_distributions import SobolDeterministic
+from pywake import PyWake
+from pywake.plotting import plot_flow_field
+from pywake.turbulence import TurbulenceModel
+from pywake.measurement_uncertainty import MeasurementUncertainty
+from pywake.sensitivity import SobolSensitivity
+
+# Set the seed for the Sobol sensitivity analysis
+np.random.seed(0)
+
+# Set the simulation parameters
+turbulence_model = TurbulenceModel('shear')
+wake_characteristics = {
+    'hub_height': 80,
+    'rotor_diameter': 126,
+    'inflow_speed': 7,
+    'turbulence_intensity': 0.16,
+    'turbulence_length': 500,
+    'turbulence_direction': 90,
+}
+
+# Create a PyWake object
+pywake = PyWake(wake_characteristics, turbulence_model)
+
+# Create a measurement uncertainty object
+uncertainty = MeasurementUncertainty(
+    pywake,
+    measurement_error=0.05,
+    turbulence_intensity_uncertainty=0.1,
+    inflow_speed_uncertainty=0.1,
+    hub_height_uncertainty=10,
+)
+
+# Define the number of samples for the Sobol sensitivity analysis
+n_samples = 10000
+
+# Create a SobolDeterministic object
+sobol = SobolDeterministic(n_samples)
+
+# Create a Sobol sensitivity object
+sobol_sensitivity = SobolSensitivity(pywake, sobol, uncertainty)
+
+# Calculate the Sobol sensitivity indices
+sobol_sensitivity.calculate_sobol_indices('x', 'y')
+
+# Create an array to store the flow field images
+flow_fields = np.zeros((sobol_sensitivity.sobol_indices.shape[1], pywake.num_time_steps, pywake.num_y, pywake.num_x))
+
+# Loop over the time steps
+for i in range(pywake.num_time_steps):
+    # Get the flow field at the current time step
+    flow_field = pywake.get_flow_field(i)
+    
+    # Loop over the Sobol indices
+    for j, (sobol_idx_x, sobol_idx_y) in enumerate(zip(sobol_sensitivity.sobol_indices[:, 0], sobol_sensitivity.sobol_indices[:, 1])):
+        # Get the current wind speed at the specified location
+        x = sobol.sample(sobol_idx_x)
+        y = sobol.sample(sobol_idx_y)
+        wind_speed = pywake.get_wind_speed(x, y, i)
+        
+        # Calculate the uncertainty in the wind speed
+        uncertainty_wind_speed = uncertainty.calculate_uncertainty(x, y, i)
+        
+        # Calculate the effective wind speed
+        eff_wind_speed = wind_speed + uncertainty_wind_speed
+        
+        # Update the flow field image
+        flow_fields[j, i, :, :] = eff_wind_speed
+        
+        # Plot the flow field image
+        plot_flow_field(flow_fields[j, i, :, :], pywake.num_x, pywake.num_y, title=f'Sobol Index ({sobol_idx_x}, {sobol_idx_y}) at Time Step {i}')
+
+# Save the flow field images
+plt.savefig('flow_fields.png')
+```
+
+This script uses the Sobol sensitivity analysis to calculate the sensitivity of the wake flow at different times to the inflow. The flow field images are stored in the `flow_fields` array and saved as a single image using Matplotlib.
+
+Please note that this script assumes that you have the necessary dependencies installed, including PyWake and SobolDistributions. If you haven't installed these libraries, you can do so using pip:
+
+```bash
+pip install pywake sobol-distributions
+```
+
+This script also assumes that you have a working PyWake installation and that the necessary input files (e.g., `wake_characteristics.yaml`) are present in the working directory.
+
+Also, please note that the script is for educational purposes only and should not be used for any actual engineering or scientific purposes without proper validation and verification.

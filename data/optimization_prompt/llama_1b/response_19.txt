@@ -1,0 +1,54 @@
+The issue you're experiencing is due to the joining operation not being able to find the file, and you're trying to read from a non-existent file.
+
+The error message indicates that the file signature is not found. In this case, it seems like the issue is with the file `worker_file`. Here are a few potential solutions:
+
+1. **Check the file existence and permissions**: Make sure the file `worker_file` exists and is readable by your Python process.
+
+2. **Specify the file path**: Make sure the file path is correct and the file is in the correct location. If the file is in a different directory, you may need to specify the full path.
+
+3. **Use a different file name or path**: If you're using a different file name or path, try changing it to match the one in your code.
+
+4. **Use the `h5py` version**: The error message suggests that the file signature is not found. You can try using a different version of `h5py` that might be compatible with your Python version.
+
+5. **Check for corrupted files**: If the files are corrupted, you can try using a different file or re-downloading the files from the specified location.
+
+6. **Use a different file format**: If you're working with multiple files, try using a different file format. The issue might be specific to a particular file format.
+
+7. **Check the join operation**: You mentioned that the joining operation is the issue. Try removing the join operation or commenting it out to see if it makes a difference.
+
+8. **Use `h5py.open()` with `check_same_file=True`**: Instead of using `h5py.open()` with `makefid=True`, try using `h5py.open()` with `check_same_file=True`. This can help detect file corruption.
+
+Here's an example of how to modify the code to use `check_same_file=True`:
+
+```python
+with h5py.File(worker_file, 'r', mode='r', check_same_file=True) as h5_in:
+    #...
+```
+
+9. **Try using `h5py` with the correct file format**: If you're working with multiple files, try using a different file format.
+
+Here's an example of how to modify the code to handle invalid files:
+
+```python
+def main():
+    #...
+
+    # Try opening the file
+    try:
+        with h5py.File(worker_file, 'r', mode='r', check_same_file=True) as h5_in:
+            #...
+    except OSError as e:
+        print(f"Error: {e}")
+        return
+
+    # Try to read the file
+    try:
+        #...
+    except OSError as e:
+        print(f"Error: {e}")
+        return
+
+#...
+```
+
+If none of these solutions work, you may want to try to recover the data from the files or use a different approach.

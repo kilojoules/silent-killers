@@ -1,0 +1,113 @@
+To achieve this, we'll use the `pywake` library for wake modeling, `sobol` library for sensitivity analysis, and `numpy` and `matplotlib` for image processing and plotting. We'll also use `xarray` to handle the uncertainty propagation.
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+import xarray as xr
+import pywake as pw
+from sobol import sobol_sequence
+from scipy import stats
+
+# Define the parameters
+L = 100  # Turbine rotor diameter
+D = 0.5  # Turbine diameter
+z0 = 80  # Hub height
+u_in = 8  # Inflow velocity
+turbulence_intensity = 0.1  # Turbulence intensity
+z_ref = 100  # Reference height
+z_ref_height = 100  # Reference height
+C_t = 0.95  # Turbulence correlation coefficient
+k = 0.45  # Roughness length
+C_d = 0.01  # Drag coefficient
+rho = 1.225  # Air density
+A = np.pi * D**2 / 4  # Rotor area
+
+# Create a grid
+x = np.linspace(-L, L, 100)
+y = np.linspace(-L, L, 100)
+X, Y = np.meshgrid(x, y)
+Z = np.linspace(0, 2 * z0, 100)
+
+# Define the inflow uncertainty parameters
+u_in_uncertainty = 0.1  # Uncertainty in inflow velocity
+turbulence_intensity_uncertainty = 0.1  # Uncertainty in turbulence intensity
+k_uncertainty = 0.1  # Uncertainty in roughness length
+C_d_uncertainty = 0.01  # Uncertainty in drag coefficient
+
+# Generate the Sobol sequence
+n_samples = 10000
+sobol_sequence = sobol_sequence(n_samples, 2)
+sobol_sequence = sobol_sequence[:, :2]
+
+# Define the model function
+def model(u_in, turbulence_intensity, k, C_d):
+    # Create a wake model
+    wake = pw.WakeModel(
+        D,
+        u_in,
+        z0,
+        turbulence_intensity,
+        z_ref,
+        z_ref_height,
+        C_t,
+        k,
+        C_d,
+    )
+    return wake.WS_eff(X, Y, Z)
+
+# Propagate the uncertainty through the model
+n_vars = 2
+sobol_sequence = sobol_sequence[:, :n_vars]
+n_samples = sobol_sequence.shape[0]
+WS_eff_sobol = np.zeros((n_samples, 100, 100))
+
+for i in range(n_samples):
+    u_in_unc = u_in + sobol_sequence[i, 0] * u_in_uncertainty
+    turbulence_intensity_unc = turbulence_intensity + sobol_sequence[i, 1] * turbulence_intensity_uncertainty
+    k_unc = k + sobol_sequence[i, 1] * k_uncertainty
+    C_d_unc = C_d + sobol_sequence[i, 1] * C_d_uncertainty
+    WS_eff_sobol[i, :, :] = model(u_in_unc, turbulence_intensity_unc, k_unc, C_d_unc)
+
+# Plot the sensitivity
+sobol_index = np.linspace(0, 1, n_samples)
+plt.figure(figsize=(8, 6))
+for i in range(10):
+    plt.plot(sobol_index, WS_eff_sobol[i, 50, :], label=f"Sample {i}")
+plt.xlabel("Sobol Index")
+plt.ylabel("WS_eff")
+plt.title("Sobol Sensitivity of WS_eff")
+plt.legend()
+plt.show()
+
+# Save the flow field images
+for t in range(100):
+    plt.figure(figsize=(8, 6))
+    for i in range(10):
+        plt.plot(X[:, t], WS_eff_sobol[i, :, t], label=f"Sample {i}")
+    plt.xlabel("x (m)")
+    plt.ylabel("WS_eff")
+    plt.title(f"WS_eff at Time {t}")
+    plt.legend()
+    plt.savefig(f"WS_eff_at_time_{t}.png")
+    plt.close()
+
+# Save the WS_eff_sobol data
+ds = xr.Dataset(
+    {
+        "WS_eff": (
+            ["sobol_index", "x", "y"],
+            WS_eff_sobol,
+            {
+                "sobol_index": ("sobol_index", sobol_index),
+                "x": ("x", x),
+                "y": ("y", y),
+            },
+        )
+    }
+)
+ds.to_netcdf("WS_eff_sobol.nc")
+```
+
+This script will generate a series of flow field images showing the sensitivity of the flow at different times to the inflow uncertainty, as well as save the WS_eff_sobol data to a netCDF file. The Sobol sensitivity of WS_eff as a function of x and y is shown in the plot.
+
+Note that this script assumes that the `pywake` library is installed and imported correctly. If you haven't installed `pywake` yet, you can do so by running `pip install pywake`.

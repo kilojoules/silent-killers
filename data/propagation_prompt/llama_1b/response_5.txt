@@ -1,0 +1,69 @@
+To create a script that propagates the sensitivity of the flow field through PyWAKE, we'll need to use the following steps:
+
+1. Define the WS_eff function that contains the Sobol sensitivity function.
+2. Use PyWAKE to simulate the flow field and propagate the sensitivity of the flow field.
+3. Save the flow field images at different times.
+4. Visualize the flow field and the sensitivity of the flow field.
+
+Here's a Python script that performs these steps:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from PyWAKE import *
+
+# Define the WS_eff function
+def WS_eff(x, y, flow, sigma, N):
+    """
+    Sobol sensitivity function for the WS_eff model.
+    
+    Parameters:
+    x (float): x-coordinate
+    y (float): y-coordinate
+    flow (float): flow speed
+    sigma (float): sensitivity parameter
+    N (int): number of Sobol modes
+    
+    Returns:
+    float: Sobol sensitivity
+    """
+    return np.exp(-(x**2 + y**2) / (2 * sigma**2)) * flow
+
+# Set up the simulation parameters
+x = np.linspace(-1, 1, 100)
+y = np.linspace(-1, 1, 100)
+X, Y = np.meshgrid(x, y)
+sigma = 0.1
+N = 100
+
+# Create a 2D grid of flow field values
+flow = np.zeros((len(x), len(y), N, N))
+
+# Initialize the flow field with a uniform distribution
+flow[:, :, 0, 0] = np.random.uniform(-1, 1, (len(x), len(y), N, N))
+
+# Propagate the sensitivity of the flow field
+for i in range(N):
+    for j in range(N):
+        flow[:, :, i, j] = WS_eff(X[i, j, 0, i], Y[i, j, 0, j], flow[:, :, i, j], sigma)
+
+# Save the flow field images
+for i in range(len(x)):
+    for j in range(len(y)):
+        plt.imshow(flow[:, i, j, :], cmap='RdYlBu')
+        plt.title(f"Time = {i} seconds")
+        plt.draw()
+        plt.pause(0.01)
+        plt.savefig(f"flow_{i}_{j}.png")
+
+# Visualize the flow field
+plt.figure(figsize=(10, 10))
+for i in range(len(x)):
+    for j in range(len(y)):
+        plt.plot(X[i, j], Y[i, j], 'bo')
+plt.show()
+```
+
+This script defines the WS_eff function, which calculates the Sobol sensitivity of the flow field at a given point. It then sets up the simulation parameters and initializes the flow field with a uniform distribution. It propagates the sensitivity of the flow field using the Sobol sensitivity function, and saves the flow field images at different times. Finally, it visualizes the flow field and the sensitivity of the flow field.
+
+Please note that you'll need to install the PyWAKE library and the matplotlib library to run this script.

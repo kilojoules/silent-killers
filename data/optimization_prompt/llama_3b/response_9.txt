@@ -1,0 +1,61 @@
+The error message suggests that the issue is with the file format of the `.h5` files being opened. The `OSError: Unable to synchronously open file (file signature not found)` error indicates that the file does not match the expected format.
+
+After analyzing the stacktrace, it appears that the issue is caused by the `h5py` library being unable to open one of the `.h5` files. The `with h5py.File(worker_file, 'r') as h5_in:` line suggests that the file is being opened in read-only mode.
+
+Here are a few potential solutions to this issue:
+
+1.  **Verify the file format**: Ensure that the `.h5` files are in the correct format. Check the file signature by using the `h5py` library's `File` class:
+    ```python
+import h5py
+
+with h5py.File('worker_file.h5', 'r') as f:
+    print(f.fileid())
+```
+    If the file signature is not recognized, try converting the file to a compatible format using `h5py`'s `convert_to` method.
+
+2.  **Check for corrupted files**: Verify that the `.h5` files are not corrupted. Try opening a different file to see if the issue is specific to one particular file.
+3.  **Use a different library**: If the above steps do not work, try using a different library to read the `.h5` files, such as `pandas` or `numpy`.
+4.  **Handle exceptions**: Wrap the file opening code in a try-except block to catch any exceptions that may occur:
+    ```python
+try:
+    with h5py.File(worker_file, 'r') as h5_in:
+        # code that uses the file
+except OSError as e:
+    print(f"Error opening file {worker_file}: {e}")
+    # handle the error, e.g., skip this file or log the error
+```
+5.  **Stop the process cleanly**: If the issue is specific to one worker file, you can use a try-except block to catch the `OSError` exception and stop the process cleanly:
+    ```python
+try:
+    # code that uses the files
+except OSError as e:
+    print(f"Error: {e}")
+    exit(1)
+```
+    This will exit the process with a non-zero status code, indicating an error.
+
+By implementing these solutions, you should be able to diagnose and handle the issue with the `.h5` files, ensuring that the process stops cleanly if any worker file is invalid.
+
+Example code with error handling:
+```python
+import h5py
+
+def optimize_worker_file(worker_file):
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # code that uses the file
+            pass
+    except OSError as e:
+        print(f"Error opening file {worker_file}: {e}")
+
+def main():
+    for worker_file in ['worker_file1.h5', 'worker_file2.h5', 'worker_file3.h5']:
+        try:
+            optimize_worker_file(worker_file)
+        except OSError as e:
+            print(f"Error: {e}")
+
+if __name__ == '__main__':
+    main()
+```
+This code defines a function `optimize_worker_file` that attempts to open a `.h5` file and catch any `OSError` exceptions that may occur. The `main` function iterates over a list of worker files, calls `optimize_worker_file` for each file, and handles any errors that may occur. If an error occurs, the process stops cleanly.

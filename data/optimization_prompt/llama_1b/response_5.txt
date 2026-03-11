@@ -1,0 +1,40 @@
+The error message you're seeing is likely due to the `h5py` library not being able to find the file you're trying to open. The `h5py` library is a Python API for reading and writing HDF5 files, and it requires a specific file signature to be present in the file.
+
+The file signature is a unique identifier that `h5py` uses to identify the file. In your case, it's likely that the file is missing the signature.
+
+The joining operation you're performing in your code is likely the culprit. The joining operation is not a standard operation in `h5py`, and it's possible that it's causing the file to be corrupted or missing the required signature.
+
+To fix this issue, you can try the following steps:
+
+1. Check the file signature: Make sure the file you're trying to open has the correct file signature. You can do this by checking the file's metadata or using the `h5info` command-line tool to verify its signature.
+
+2. Try to reproduce the error on a different file: Try opening the same file on a different Python environment to see if the issue is specific to this file or not.
+
+3. Use a different file: If you have other files that you can use to test your code, you can try using them instead of this specific file.
+
+4. Check the file format: Make sure the file you're trying to open is in the correct format. `h5py` supports various file formats, including HDF5, netCDF, and VTK.
+
+5. Check for corrupted data: If you're using a large dataset, it's possible that there may be corrupted data in the file that's causing the issue. You can try running your code with a smaller dataset to see if the issue is specific to this dataset.
+
+Here's an example of how you can modify your code to detect and handle this issue:
+```python
+import h5py
+import logging
+
+def main():
+    # Open the file
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Check if the file has the correct signature
+            if h5_in.shape[0]!= 3000:
+                logging.error(f"File {worker_file} does not have the correct signature")
+                return
+            #... rest of your code
+    except h5py.error.H5Error as e:
+        logging.error(f"Error opening file: {e}")
+        return
+
+if __name__ == "__main__":
+    main()
+```
+This code checks if the file has the correct signature before trying to open it. If it doesn't, it logs an error message and returns.

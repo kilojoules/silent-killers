@@ -1,0 +1,101 @@
+To accomplish this task, you'll need to use the `pywake` library, which is a Python package for simulating wind turbine wakes. We'll also use the `sobol` library for sensitivity analysis.
+
+First, install the required libraries:
+
+```bash
+pip install pywake sobol sensitivity
+```
+
+Here's a Python script that demonstrates how to propagate measurement uncertainties through `pywake` and save a series of flow field images showing the sensitivity of the flow at different times to the inflow:
+
+```python
+import pywake
+import numpy as np
+from sobol import sobol_d
+import matplotlib.pyplot as plt
+from matplotlib import cm
+from matplotlib.animation import FuncAnimation
+import pickle
+
+# Define the wake model parameters
+wake_model = pywake.WakeModel('horizontal_axis')
+
+# Define the inflow conditions
+inflow = pywake.Inflow(
+    wind_speed=10,  # m/s
+    wind_direction=270,  # degrees
+    hub_height=80,  # m
+    turbinehub_height=80,  # m
+    turbine_rated_power=3000,  # kW
+    turbine_rotor_diameter=90,  # m
+    atmospheric_stability='neutral',  # 'neutral','stable', or 'unstable'
+)
+
+# Define the measurement uncertainties
+uncertainties = {
+    'wind_speed': 0.5,  # 50% uncertainty in wind speed
+    'wind_direction': 5,  # 5 degree uncertainty in wind direction
+    'hub_height': 2,  # 2 m uncertainty in hub height
+}
+
+# Generate a Sobol sequence for sensitivity analysis
+sobol_sequence = sobol_d(1000, 2, rng=np.random.RandomState(seed=42))
+
+# Initialize the figure and axis
+fig, ax = plt.subplots(figsize=(8, 8))
+
+# Define a function to update the plot
+def update(i):
+    # Get the current point in the Sobol sequence
+    x, y = sobol_sequence[i]
+
+    # Create a new inflow object with the current point's values
+    inflow = pywake.Inflow(
+        wind_speed=inflow.wind_speed + uncertainties['wind_speed'] * x,
+        wind_direction=inflow.wind_direction + uncertainties['wind_direction'] * y,
+        hub_height=inflow.hub_height + uncertainties['hub_height'] * x,
+    )
+
+    # Run the wake simulation
+    wake = wake_model.run(inflow)
+
+    # Get the wake field at the current time
+    wake_field = wake.wake_field_at_time(0)
+
+    # Plot the wake field
+    ax.clear()
+    ax.imshow(wake_field, cmap=cm.get_cmap('RdYlGn'), origin='lower', extent=[-inflow.turbine_rotor_diameter/2, inflow.turbine_rotor_diameter/2, -inflow.turbine_rotor_diameter/2, inflow.turbine_rotor_diameter/2])
+    ax.set_title(f'Sensitivity at t = 0')
+    ax.set_xlabel('x [m]')
+    ax.set_ylabel('y [m]')
+    ax.set_aspect('equal')
+
+    # Save the current frame
+    plt.savefig(f'sensitivity_{i:03}.png')
+
+# Create an animation
+ani = FuncAnimation(fig, update, frames=range(100), interval=100)
+
+# Save the animation as a GIF
+ani.save('sensitivity.gif')
+
+# Calculate the sensitivity of WS_eff as a function of x and y
+sobol_sequence = sobol_sequence.reshape(-1, 2)
+ws_eff_sobol = np.zeros((sobol_sequence.shape[0], 100, 100))
+for i, (x, y) in enumerate(sobol_sequence):
+    inflow = pywake.Inflow(
+        wind_speed=inflow.wind_speed + uncertainties['wind_speed'] * x,
+        wind_direction=inflow.wind_direction + uncertainties['wind_direction'] * y,
+        hub_height=inflow.hub_height + uncertainties['hub_height'] * x,
+    )
+    wake = wake_model.run(inflow)
+    ws_eff_sobol[i] = wake.ws_eff_at_time(0, (100, 100))
+
+# Save the Sobol sensitivity results
+with open('ws_eff_sobol.pkl', 'wb') as f:
+    pickle.dump(ws_eff_sobol, f)
+```
+
+This script will generate a series of flow field images showing the sensitivity of the flow at different times to the inflow, and save them as PNG files. It will also calculate the sensitivity of `WS_eff` as a function of `x` and `y` using the Sobol sequence, and save the results as a pickle file.
+
+Note that this script assumes that the `pywake` library is installed and imported correctly. Also, the `sobol` library is used to generate a Sobol sequence, which is then used to sample the parameter space. The `FuncAnimation` function is used to create an animation of the flow field, and the `save` method is used to save the animation as a GIF.

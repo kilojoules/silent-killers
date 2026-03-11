@@ -1,0 +1,112 @@
+Your code is quite complex and does a lot of tasks, but I'll try to provide a high-level overview and some suggestions for improvement.
+
+**Modularization**
+
+You're right that the code could benefit from a more modular structure. Here are some suggestions:
+
+1. Define a class for the `DTU10MW` turbine, which encapsulates its properties and methods.
+2. Create a separate class for the `Hornsrev1Site` site, which contains its properties and methods.
+3. Create a class for the `BlondelSuperGaussianDeficit2020` and `TurboGaussianDeficit` wake deficit models, which contain their properties and methods.
+4. Define a class for the `BayesianOptimizer` which will encapsulate the optimization process.
+
+**Code organization**
+
+The code is a bit hard to follow due to its complexity and the many nested functions. Consider breaking it down into smaller functions, each with a single responsibility.
+
+**Best practices**
+
+1. Use consistent naming conventions: you're using both camelCase and underscore notation for variable and function names. Try to stick to a single convention throughout the code.
+2. Use type hints: add type hints for function parameters and return types to make the code more readable and self-documenting.
+3. Avoid global variables: try to encapsulate variables within functions or classes to avoid polluting the global namespace.
+4. Use descriptive variable names: some variable names are quite short and don't convey their purpose. Try to use more descriptive names to make the code easier to understand.
+
+**Suggestions**
+
+1. Consider using a more robust optimization algorithm, such as `scipy.optimize.minimize` or `scipy.optimize.differential_evolution`.
+2. Use a more efficient way to compute the RMSE, such as using `numpy` vectorized operations.
+3. Consider using a more efficient way to store and access the optimization results, such as using a pandas DataFrame or a NumPy array.
+
+**Flow field plots**
+
+To create flow field plots, you can use the `plot` method of the `flow_map` object. For example:
+```python
+fig, ax = plt.subplots()
+flow_map.WS_eff.plot(ax=ax)
+```
+This will create a contour plot of the wind speed at each point in the flow map.
+
+**Reporting average and p90s of errors**
+
+To report the average and p90s of errors, you can use the `describe` method of a pandas Series or DataFrame. For example:
+```python
+rmse_values = [...]
+rmse_df = pd.DataFrame(rmse_values)
+print(rmse_df.describe())
+```
+This will print the mean, median, min, max, and other descriptive statistics of the RMSE values.
+
+Here's an updated version of your code with some of these suggestions applied:
+```python
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from py_wake import HorizontalGrid, All2AllIterative
+from py_wake.deficit_models.gaussian import BlondelSuperGaussianDeficit2020, TurboGaussianDeficit
+from py_wake.turbulence_models import CrespoHernandez
+from py_wake.deflection_models import JimenezWakeDeflection
+from py_wake.rotor_avg_models import RotorCenter
+from py_wake.deficit_models import SelfSimilarityDeficit2020
+from py_wake.wind_farm_models import PropagateDownwind, All2AllIterative
+from py_wake.superposition_models import LinearSum
+from py_wake.ground_models import Mirror
+from py_wake.examples.data.hornsrev1 import Hornsrev1Site
+from bayes_opt import BayesianOptimization
+
+class DTU10MW:
+    def __init__(self):
+        self.diameter = 80
+
+class Hornsrev1Site:
+    def __init__(self):
+        self.wind_speed = 10
+
+class BlondelSuperGaussianDeficit2020:
+    def __init__(self, **kwargs):
+        self.a_s = kwargs.get('a_s', 0.17)
+        self.b_s = kwargs.get('b_s', 0.005)
+        self.c_s = kwargs.get('c_s', 0.2)
+        self.b_f = kwargs.get('b_f', -0.68)
+        self.c_f = kwargs.get('c_f', 2.41)
+
+class TurboGaussianDeficit:
+    def __init__(self, **kwargs):
+        self.A = kwargs.get('A', 0.04)
+        self.cTI = kwargs.get('cTI', [1.5, 0.8])
+        self.ctlim = kwargs.get('ctlim', 0.999)
+        self.ceps = kwargs.get('ceps', 0.25)
+
+def evaluate_rmse(**kwargs):
+    #... (rest of the function remains the same)
+
+def update_plot(frame):
+    #... (rest of the function remains the same)
+
+def plot_flow_field(flow_map):
+    fig, ax = plt.subplots()
+    flow_map.WS_eff.plot(ax=ax)
+    return ax
+
+def plot_errors(rmse_values):
+    rmse_df = pd.DataFrame(rmse_values)
+    print(rmse_df.describe())
+    fig, ax = plt.subplots()
+    rmse_df.plot(ax=ax)
+    return ax
+
+def main():
+    #... (rest of the main function remains the same)
+
+if __name__ == '__main__':
+    main()
+```
+Note that this is just a starting point, and you'll need to further refine the code to suit your specific needs.

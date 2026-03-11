@@ -1,0 +1,104 @@
+To achieve this, I'll assume you have the following:
+
+1. `pywake` installed (`pip install pywake`)
+2. `sobol-distribution` installed (`pip install sobol-distribution`)
+3. A basic understanding of `pywake` and its API
+
+Here's a script that uses `pywake` to propagate uncertainties through the flow field and calculates the Sobol' sensitivity of `WS_eff` as a function of `x` and `y`.
+
+```python
+import pywake as pw
+import numpy as np
+import matplotlib.pyplot as plt
+from sobol_distribution import sobol_sequence
+import pandas as pd
+
+# Define the parameters for the flow field
+wind_speed = 10  # m/s
+turbulence_intensity = 0.2  # dimensionless
+z0 = 0.1  # m
+A = 100  # m
+L = 500  # m
+alpha = 0.1  # dimensionless
+
+# Define the range of x and y coordinates
+x_range = np.linspace(0, L, 10)
+y_range = np.linspace(0, A, 10)
+X, Y = np.meshgrid(x_range, y_range)
+
+# Define the uncertainty ranges for the input parameters
+uncertainty_ranges = {
+    'wind_speed': [wind_speed - 1, wind_speed + 1],
+    'turbulence_intensity': [turbulence_intensity - 0.1, turbulence_intensity + 0.1],
+    'z0': [z0 - 0.05, z0 + 0.05],
+    'A': [A - 50, A + 50],
+    'L': [L - 50, L + 50],
+    'alpha': [alpha - 0.05, alpha + 0.05]
+}
+
+# Create a Sobol' sequence for the input parameters
+sobol_seq = sobol_sequence(10000, len(uncertainty_ranges))
+
+# Initialize the arrays to store the results
+ws_eff_sobol = np.zeros((len(x_range), len(y_range), len(sobol_seq)))
+for i, x in enumerate(x_range):
+    for j, y in enumerate(y_range):
+        for k, sobol_point in enumerate(sobol_seq):
+            # Create a pywake flow field with the current point in the Sobol' sequence
+            wake = pw.Wake(
+                x=x,
+                y=y,
+                wind_speed=uncertainty_ranges['wind_speed'][0] + uncertainty_ranges['wind_speed'][1] * sobol_point[k],
+                turbulence_intensity=uncertainty_ranges['turbulence_intensity'][0] + uncertainty_ranges['turbulence_intensity'][1] * sobol_point[k],
+                z0=uncertainty_ranges['z0'][0] + uncertainty_ranges['z0'][1] * sobol_point[k],
+                A=uncertainty_ranges['A'][0] + uncertainty_ranges['A'][1] * sobol_point[k],
+                L=uncertainty_ranges['L'][0] + uncertainty_ranges['L'][1] * sobol_point[k],
+                alpha=uncertainty_ranges['alpha'][0] + uncertainty_ranges['alpha'][1] * sobol_point[k]
+            )
+
+            # Propagate the uncertainties through the flow field
+            wake.propagate()
+
+            # Calculate the wake efficiency at the current point
+            ws_eff_sobol[i, j, k] = wake.ws_eff
+
+# Calculate the mean and standard deviation of the wake efficiency at each point
+ws_eff_mean = np.mean(ws_eff_sobol, axis=2)
+ws_eff_std = np.std(ws_eff_sobol, axis=2)
+
+# Create a contour plot of the mean wake efficiency
+plt.contourf(X, Y, ws_eff_mean, cmap='RdYlGn')
+plt.colorbar(label='Mean wake efficiency')
+plt.xlabel('x [m]')
+plt.ylabel('y [m]')
+plt.title('Mean Wake Efficiency')
+plt.show()
+
+# Create a contour plot of the standard deviation of the wake efficiency
+plt.contourf(X, Y, ws_eff_std, cmap='RdYlGn')
+plt.colorbar(label='Standard deviation of wake efficiency')
+plt.xlabel('x [m]')
+plt.ylabel('y [m]')
+plt.title('Standard Deviation of Wake Efficiency')
+plt.show()
+
+# Calculate the Sobol' sensitivity indices
+sobol_sensitivity = np.zeros((len(x_range), len(y_range)))
+for i, x in enumerate(x_range):
+    for j, y in enumerate(y_range):
+        for k in range(len(sobol_seq)):
+            sobol_sensitivity[i, j] += (ws_eff_sobol[i, j, k] - ws_eff_mean[i, j]) ** 2
+sobol_sensitivity /= len(sobol_seq)
+
+# Create a contour plot of the Sobol' sensitivity indices
+plt.contourf(X, Y, sobol_sensitivity, cmap='RdYlGn')
+plt.colorbar(label='Sobol\' sensitivity')
+plt.xlabel('x [m]')
+plt.ylabel('y [m]')
+plt.title('Sobol\' Sensitivity')
+plt.show()
+```
+
+This script creates a Sobol' sequence for the input parameters, propagates the uncertainties through the flow field using `pywake`, calculates the mean and standard deviation of the wake efficiency at each point, and creates contour plots of the mean wake efficiency, standard deviation of the wake efficiency, and Sobol' sensitivity indices.
+
+Note that this script assumes that the input parameters have a uniform distribution within the specified ranges. If the distribution is different, you may need to adjust the script accordingly.

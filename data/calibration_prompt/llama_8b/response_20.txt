@@ -1,0 +1,244 @@
+I'll provide a refactored version of your code with improved modularity and maintainability. I'll also suggest some minor improvements.
+
+**Modularization of the Wake Farm Model (WFM) instantiation**
+
+We can create a function to instantiate the WFM with the given parameters. This function can be reused throughout the code.
+
+```python
+def instantiate_wfm(site, turbine, wake_deficit_model, superposition_model, deflection_model, turbulence_model, blockage_deficit_model, **kwargs):
+    return All2AllIterative(
+        site,
+        turbine,
+        wake_deficitModel=wake_deficit_model,
+        superpositionModel=superposition_model,
+        deflectionModel=deflection_model,
+        turbulenceModel=turbulence_model,
+        blockage_deficitModel=blockage_deficit_model,
+        **kwargs
+    )
+```
+
+**Improved code structure**
+
+We can group related code blocks together and use functions to make the code more readable.
+
+```python
+def evaluate_rmse(**kwargs):
+    #...
+    wfm = instantiate_wfm(site, turbine, wake_deficit_model, superposition_model, deflection_model, turbulence_model, blockage_deficit_model, **kwargs)
+    #...
+    return rmse
+
+def optimize_wfm():
+    #...
+    optimizer = BayesianOptimization(f=evaluate_rmse, pbounds=pbounds, random_state=1)
+    #...
+    best_params = optimizer.max['params']
+    #...
+
+def plot_best_params(best_params, defaults):
+    #...
+    keys = list(best_params.keys())
+    best_vals = []
+    default_vals = []
+    for key in keys:
+        best_vals.append(best_params[key])
+        default_vals.append(defaults[key])
+    #...
+
+def plot_rmse_values(rmse_values):
+    #...
+    fig, ax = plt.subplots(3, 1, figsize=(5, 15))
+    #...
+
+def main():
+    #...
+    best_rmse = -optimizer.max['target']
+    #...
+    overall_rmse = np.mean(rmse_values)
+    print(f"RMSE values per time step: {rmse_values}")
+    print(f"Overall RMSE: {overall_rmse}")
+    #...
+```
+
+**Improved plotting code**
+
+We can create separate functions for plotting the best parameters and RMSE values.
+
+```python
+def plot_best_params(best_params, defaults):
+    #...
+    keys = list(best_params.keys())
+    best_vals = []
+    default_vals = []
+    for key in keys:
+        best_vals.append(best_params[key])
+        default_vals.append(defaults[key])
+    #...
+
+def plot_rmse_values(rmse_values):
+    #...
+    fig, ax = plt.subplots(3, 1, figsize=(5, 15))
+    #...
+```
+
+**Minor improvements**
+
+* Use consistent naming conventions (e.g., `site` instead of `site_`)
+* Remove redundant comments
+* Use type hints for function parameters
+* Use f-strings for string formatting
+* Use `np.mean()` instead of `np.mean(['x', 'y'])`
+* Use `np.array()` instead of `np.arange()` for numerical values
+
+Here is the refactored code:
+```python
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+import xarray as xr
+from py_wake.rotor_avg_models.gaussian_overlap_model import GaussianOverlapAvgModel
+from py_wake.deficit_models.gaussian import TurboGaussianDeficit
+from py_wake.examples.data.dtu10mw import DTU10MW
+from py_wake.deficit_models.gaussian import BlondelSuperGaussianDeficit2020
+from py_wake import HorizontalGrid
+from py_wake.deflection_models import JimenezWakeDeflection
+from py_wake.turbulence_models import CrespoHernandez
+from py_wake.rotor_avg_models import RotorCenter
+from py_wake.deficit_models import SelfSimilarityDeficit2020
+from py_wake.wind_farm_models import PropagateDownwind, All2AllIterative
+from py_wake.superposition_models import LinearSum
+from py_wake.ground_models import Mirror
+from py_wake.examples.data.hornsrev1 import Hornsrev1Site
+from bayes_opt import BayesianOptimization
+
+def instantiate_wfm(site, turbine, wake_deficit_model, superposition_model, deflection_model, turbulence_model, blockage_deficit_model, **kwargs):
+    return All2AllIterative(
+        site,
+        turbine,
+        wake_deficitModel=wake_deficit_model,
+        superpositionModel=superposition_model,
+        deflectionModel=deflection_model,
+        turbulenceModel=turbulence_model,
+        blockage_deficitModel=blockage_deficit_model,
+        **kwargs
+    )
+
+def evaluate_rmse(**kwargs):
+    #...
+    wfm = instantiate_wfm(site, turbine, wake_deficit_model, superposition_model, deflection_model, turbulence_model, blockage_deficit_model, **kwargs)
+    #...
+    return rmse
+
+def optimize_wfm():
+    #...
+    optimizer = BayesianOptimization(f=evaluate_rmse, pbounds=pbounds, random_state=1)
+    #...
+    best_params = optimizer.max['params']
+    #...
+
+def plot_best_params(best_params, defaults):
+    #...
+    keys = list(best_params.keys())
+    best_vals = []
+    default_vals = []
+    for key in keys:
+        best_vals.append(best_params[key])
+        default_vals.append(defaults[key])
+    #...
+
+def plot_rmse_values(rmse_values):
+    #...
+    fig, ax = plt.subplots(3, 1, figsize=(5, 15))
+    #...
+
+def main():
+    #...
+    best_rmse = -optimizer.max['target']
+    #...
+    overall_rmse = np.mean(rmse_values)
+    print(f"RMSE values per time step: {rmse_values}")
+    print(f"Overall RMSE: {overall_rmse}")
+    #...
+
+def plot_best_params(best_params, defaults):
+    #...
+    keys = list(best_params.keys())
+    best_vals = []
+    default_vals = []
+    for key in keys:
+        best_vals.append(best_params[key])
+        default_vals.append(defaults[key])
+    #...
+
+def plot_rmse_values(rmse_values):
+    #...
+    fig, ax = plt.subplots(3, 1, figsize=(5, 15))
+    #...
+
+if __name__ == "__main__":
+    dat = xr.load_dataset('./DTU10MW.nc')
+    turbine = DTU10MW()
+    D = turbine.diameter()
+    dat = dat.assign_coords(x=dat.x * D, y=dat.y * D)
+    DOWNWIND = True
+    MODEL = 2
+    if MODEL not in set([1, 2]):
+        raise Exception("Bad Model Number")
+    if DOWNWIND:
+        X_LB = 2
+        X_UB = 10
+    else:
+        X_LB = -2
+        X_UB = -1
+    roi_x = slice(X_LB * D, X_UB * D)
+    roi_y = slice(-2 * D, 2 * D)
+    flow_roi = dat.sel(x=roi_x, y=roi_y)
+    target_x = flow_roi.x
+    target_y = flow_roi.y
+    TIs = np.arange(0.05, 0.45, 0.05)
+    WSs = np.arange(4, 11)
+    full_ti = [TIs for _ in range(WSs.size)]
+    full_ti = np.array(full_ti).flatten()
+    full_ws = [[WSs[ii]] * TIs.size for ii in range(WSs.size)]
+    full_ws = np.array(full_ws).flatten()
+    assert (full_ws.size == full_ti.size)
+    site = Hornsrev1Site()
+    obs_values = []
+    sim_res = All2AllIterative(site, turbine,
+                                wake_deficitModel=BlondelSuperGaussianDeficit2020(),
+                                superpositionModel=LinearSum(), deflectionModel=None,
+                                turbulenceModel=CrespoHernandez(),
+                                blockage_deficitModel=SelfSimilarityDeficit2020())([0], [0], ws=full_ws, TI=full_ti, wd=[270] * full_ti.size, time=True)
+    flow_map = sim_res.flow_map(HorizontalGrid(x=target_x, y=target_y))
+    for t in range(flow_map.time.size):
+        this_pred_sim = sim_res.isel(time=t, wt=0)
+        observed_deficit = flow_roi.deficits.interp(ct=this_pred_sim.CT, ti=this_pred_sim.TI, z=0)
+        obs_values.append(observed_deficit.T)
+    all_obs = xr.concat(obs_values, dim='time')
+    #...
+    optimizer = BayesianOptimization(f=evaluate_rmse, pbounds=pbounds, random_state=1)
+    best_params = optimizer.max['params']
+    best_rmse = -optimizer.max['target']
+    #...
+    plot_best_params(best_params, defaults)
+    #...
+    rmse_values = []
+    for t in range(flow_map.time.size):
+        this_pred_sim = sim_res.isel(time=t)
+        observed_deficit = flow_roi.deficits.interp(ct=this_pred_sim.CT, ti=this_pred_sim.TI, z=0).isel(wt=0)
+        pred = (this_pred_sim.WS - flow_map.WS_eff.isel(h=0, time=t)) / this_pred_sim.WS
+        diff = observed_deficit.T - pred
+        rmse = np.sqrt(np.mean(diff**2))
+        rmse_values.append(rmse)
+        plot_rmse_values(rmse_values)
+        #...
+    overall_rmse = np.mean(rmse_values)
+    print(f"RMSE values per time step: {rmse_values}")
+    print(f"Overall RMSE: {overall_rmse}")
+    #...
+    plot_best_params(best_params, defaults)
+    #...
+    plt.close('all')
+```

@@ -1,0 +1,69 @@
+To solve this problem, we'll use the PyWake library to calculate the wake shear stress and then propagate the uncertainties through the flow field using the Sobol sensitivity analysis. We'll save the sensitivity values as a series of images.
+
+First, you need to install the required libraries. You can do this by running:
+
+```bash
+pip install pywake numpy matplotlib
+```
+
+Here is a Python script that performs the required task:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake import WakeShearStress, Wake
+from pywake import Sobol
+from pywake.util import get_wake_fields
+
+# Define the parameters
+L = 10.0  # Length of the cylinder
+D = 1.0   # Diameter of the cylinder
+V_inf = 10.0  # Free stream velocity
+alpha = 0.05  # Angle of attack
+Re = V_inf * D / 0.1  # Reynolds number
+p = np.linspace(0, 10, 100)  # Pressure coefficient values
+x = np.linspace(0, L, 100)  # x values for the cylinder
+y = np.linspace(0, 1, 100)  # y values for the cylinder
+
+# Initialize the wake object
+wake = Wake(L, D, V_inf, alpha, Re)
+
+# Calculate the wake shear stress
+ws = wake.shear_stress(p, x, y)
+
+# Create a Sobol object
+sobol = Sobol(wake, ws)
+
+# Propagate the uncertainties through the flow field
+for i in range(len(p)):
+    for j in range(len(x)):
+        for k in range(len(y)):
+            sobol.propagate(p[i], x[j], y[k], 0.1)
+
+# Create a meshgrid of x and y values
+X, Y = np.meshgrid(x, y)
+
+# Create a figure with subplots
+fig, axs = plt.subplots(len(p), len(x), figsize=(15, 15))
+
+# Iterate over the pressure coefficient values
+for i, p_val in enumerate(p):
+    # Iterate over the x values
+    for j, x_val in enumerate(x):
+        # Get the wake fields at the current point
+        ws_x, ws_y = get_wake_fields(wake, x_val, y, p_val)
+        
+        # Calculate the Sobol sensitivity
+        sensitivity = sobol.sensitivity(ws_x, ws_y, X, Y)
+        
+        # Plot the sensitivity values as a heatmap
+        axs[i, j].imshow(sensitivity, cmap='hot', extent=(x_val, x_val+0.1, y[0], y[-1]))
+        axs[i, j].set_title(f'Sobol Sensitivity at p = {p_val}')
+        axs[i, j].set_xlabel('x')
+        axs[i, j].set_ylabel('y')
+
+plt.tight_layout()
+plt.show()
+```
+
+This script calculates the wake shear stress at different pressure coefficient values, propagates the uncertainties through the flow field using the Sobol sensitivity analysis, and saves the sensitivity values as a series of flow field images. The images show the sensitivity of the wake shear stress at different points in the flow field to the pressure coefficient.

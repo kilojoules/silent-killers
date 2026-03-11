@@ -1,0 +1,65 @@
+To achieve this, we'll use the `PyWake` library to simulate the flow field and calculate the Sobol sensitivity of the wake efficiency (`WS_eff`) as a function of x and y. We'll then visualize the flow field at different times to illustrate the sensitivity of the flow to the inflow uncertainties.
+
+First, make sure to install the required libraries:
+
+```bash
+pip install PyWake numpy matplotlib
+```
+
+Here's a script that demonstrates how to achieve this:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from PyWake import Wake
+
+# Define the inflow parameters
+L = 100  # length of the cylinder (m)
+d = 0.1  # diameter of the cylinder (m)
+U_inf = 5  # free-stream velocity (m/s)
+rho = 1.225  # air density (kg/m^3)
+kappa = 1.72  # roughness length (m)
+C_d = 0.47  # drag coefficient
+
+# Create a Wake object
+wake = Wake(L, d, U_inf, rho, kappa, C_d)
+
+# Define the grid size
+N_x = 100
+N_y = 100
+
+# Create a 2D grid
+x = np.linspace(0, L, N_x)
+y = np.linspace(0, L, N_y)
+X, Y = np.meshgrid(x, y)
+
+# Define the inflow uncertainties
+sigma_U = 0.1  # standard deviation of the free-stream velocity (m/s)
+
+# Initialize the flow field and sensitivity arrays
+U = np.zeros((N_y, N_x))
+WS_eff = np.zeros((N_y, N_x))
+Sobol = np.zeros((N_y, N_x, 3))
+
+# Calculate the flow field and sensitivity at different times
+for i in range(5):
+    # Introduce inflow uncertainty
+    U += np.random.normal(0, sigma_U, size=(N_y, N_x))
+
+    # Calculate the wake efficiency
+    WS_eff = wake.WS_eff(X, Y, U)
+
+    # Calculate the Sobol sensitivity
+    Sobol[:, :, i] = wake.Sobol(WS_eff, X, Y, U)
+
+    # Plot the flow field at this time
+    plt.figure(figsize=(10, 5))
+    plt.imshow(U, cmap='RdBu', extent=[0, L, 0, L])
+    plt.title(f'Time step {i+1}')
+    plt.colorbar()
+    plt.show()
+```
+
+This script creates a Wake object with the specified parameters and calculates the wake efficiency (`WS_eff`) at different times with inflow uncertainties. It then calculates the Sobol sensitivity of `WS_eff` with respect to the inflow uncertainties and plots the flow field at each time step.
+
+Please note that the above script uses a simplified model for the wake efficiency and may not accurately represent real-world conditions. You may need to adjust the parameters and the model to better suit your specific use case.

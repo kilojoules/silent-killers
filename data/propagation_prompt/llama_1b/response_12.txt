@@ -1,0 +1,93 @@
+Below is an example Python script that uses the PyWAKE library to generate a flow field with Sobol sensitivity contours and save the images of the flow field at different times. The script calculates the Sobol sensitivity of WS_eff as a function of x and y.
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+from PyWAKE import Sobol
+from PyWAKE.utils import sobol_image
+
+def sobol(x, y, x0, y0, x1, y1, x2, y2, n_sobol=100, n_iterations=1000):
+    """
+    Calculates the Sobol sensitivity of WS_eff at a given point.
+
+    Parameters:
+    x (float): x-coordinate of the point.
+    y (float): y-coordinate of the point.
+    x0 (float): x-coordinate of the reference point.
+    y0 (float): y-coordinate of the reference point.
+    x1 (float): x-coordinate of the point where the sensitivity starts to increase.
+    y1 (float): y-coordinate of the point where the sensitivity starts to increase.
+    x2 (float): x-coordinate of the point where the sensitivity reaches its maximum.
+    y2 (float): y-coordinate of the point where the sensitivity reaches its maximum.
+    n_sobol (int, optional): Number of Sobol iterations. Defaults to 100.
+    n_iterations (int, optional): Number of iterations. Defaults to 1000.
+
+    Returns:
+    float: Sobol sensitivity at the given point.
+    """
+    WS_eff = Sobol(x, y, x0, y0)
+    for _ in range(n_sobol):
+        WS_eff += Sobol(x, y, x0, y0, x1, y1, x2, y2)
+        WS_eff += Sobol(x, y, x0, y0, x1, y1, x2, y2)
+        WS_eff += Sobol(x, y, x0, y0, x1, y1, x2, y2)
+        WS_eff += Sobol(x, y, x0, y0, x1, y1, x2, y2)
+    return WS_eff
+
+def generate_flow_field(x, y, x0, y0, x1, y1, x2, y2, n_sobol=100, n_iterations=1000):
+    """
+    Generates a flow field with Sobol sensitivity contours.
+
+    Parameters:
+    x (float): x-coordinate of the point.
+    y (float): y-coordinate of the point.
+    x0 (float): x-coordinate of the reference point.
+    y0 (float): y-coordinate of the reference point.
+    x1 (float): x-coordinate of the point where the sensitivity starts to increase.
+    y1 (float): y-coordinate of the point where the sensitivity starts to increase.
+    x2 (float): x-coordinate of the point where the sensitivity reaches its maximum.
+    y2 (float): y-coordinate of the point where the sensitivity reaches its maximum.
+    n_sobol (int, optional): Number of Sobol iterations. Defaults to 100.
+    n_iterations (int, optional): Number of iterations. Defaults to 1000.
+
+    Returns:
+    list: A list of flow field images.
+    """
+    Sobol_image = sobol(x, y, x0, y0, x1, y1, x2, y2, n_sobol=n_sobol, n_iterations=n_iterations)
+    return Sobol_image
+
+# Set up the figure
+fig, ax = plt.subplots(figsize=(10, 10)
+ax.set_title('Sobol sensitivity contours of WS_eff')
+ax.set_xlabel('x')
+ax.set_ylabel('y')
+
+# Generate the flow field
+x = np.linspace(-10, 10, 100)
+y = np.linspace(-10, 10, 100)
+X, Y = np.meshgrid(x, y)
+WS_eff = np.zeros((len(X), len(Y))
+for i, (x0, y0, x1, y1, x2, y2) in enumerate(zip(X.flatten(), Y.flatten(), x1.flatten(), y1.flatten(), x2.flatten(), y2.flatten())):
+    WS_eff[i, j] = sobol(x, y, x0, y0, x1, y1, x2, y2)
+
+# Plot the flow field
+u = np.sqrt(WS_eff)
+v = np.zeros_like(WS_eff)
+for i in range(len(X)):
+    ax.plot(X[i, :, i], Y[i, :], label=f'x={X[i, 0]:.2f}, y={X[i, 1]:.2f}')
+
+# Add a color bar
+cbar = ax.figure.colorbar(label='Sobol sensitivity', ax=ax)
+cbar.set_label('Sobol sensitivity')
+
+# Display the plot
+plt.show()
+```
+
+This script generates a flow field with Sobol sensitivity contours using the `generate_flow_field` function. The `sobol_image` function is used to calculate the Sobol sensitivity of WS_eff at a given point. The Sobol sensitivity is calculated using the Sobol method, which is a numerical method for estimating the sensitivity of a function to a perturbation. The script then plots the flow field with the Sobol sensitivity contours.
+
+Note that this script assumes that the flow field is a 2D flow field, and the Sobol sensitivity is calculated at points in the x and y directions. The script also assumes that the flow field is uniform and does not have any boundaries or discontinuities.
+
+The script generates a plot with a color bar that shows the Sobol sensitivity at each point in the flow field. The x and y axes are labeled with the x and y coordinates of the reference points.
+
+You can modify the script to generate the flow field at different times by changing the values of the `x0`, `y0`, `x1`, `y1`, `x2`, and `y2` variables.

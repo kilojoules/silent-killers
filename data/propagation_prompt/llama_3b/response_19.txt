@@ -1,0 +1,72 @@
+I'll provide a Python script using PyWake and Matplotlib to propagate measurement uncertainties through the wake of an airfoil and save a series of flow field images showing the sensitivity of the flow at different times to the inflow uncertainty. We'll use the Sobol sensitivity analysis to estimate the sensitivity of the wake efficiency (WS_eff) to the inflow uncertainty.
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake import wake
+from pywake import WakeField
+
+# Define the inflow parameters
+Uinf = 10  # free stream velocity
+L = 10  # chord length
+b = 2  # width of the airfoil
+alpha = np.pi/4  # angle of attack
+delta_alpha = 0.01  # uncertainty in angle of attack
+
+# Create a WakeField object
+wake_field = WakeField(L, b, Uinf, alpha)
+
+# Define the number of grid points and time steps
+N_x, N_y = 100, 100
+N_t = 10
+
+# Create a grid of x and y values
+x = np.linspace(0, L, N_x)
+y = np.linspace(0, b, N_y)
+X, Y = np.meshgrid(x, y)
+
+# Create a time array
+t = np.linspace(0, 1, N_t)
+
+# Define the Sobol sensitivity analysis parameters
+S = 10  # number of sensitivity calculations
+n = 2  # number of dimensions (x and y)
+
+# Initialize the sensitivity matrices
+S_matrices = np.zeros((n, n, S, N_t))
+
+# Calculate the Sobol sensitivity for each time step
+for i in range(S):
+    for t_index in range(N_t):
+        # Set the uncertainty in angle of attack
+        alpha_uncertainty = delta_alpha * np.sin(np.pi * (i / S) + np.random.uniform(0, 1, (N_x, N_y)))
+
+        # Calculate the wake field with the uncertain angle of attack
+        wake_field_uncertain = wake_field(X, Y, alpha + alpha_uncertainty)
+
+        # Calculate the wake efficiency with the uncertain angle of attack
+        WS_eff_uncertain = wake_field_uncertain.WS_eff()
+
+        # Calculate the Sobol sensitivity
+        S_matrices[:, :, i, t_index] = WS_eff_uncertain - wake_field.WS_eff()
+
+# Plot the sensitivity of WS_eff with respect to x and y
+for i in range(S):
+    for t_index in range(N_t):
+        plt.figure(figsize=(10, 6))
+        plt.imshow(S_matrices[:, i, t_index, :], cmap='RdYlGn', origin='lower')
+        plt.title(f'Sobol sensitivity of WS_eff at t = {t_index/N_t:.2f}')
+        plt.colorbar(label='Sobol sensitivity')
+        plt.xlabel('x')
+        plt.ylabel('y')
+        plt.show()
+
+# Save the sensitivity matrices to files
+np.save('S_matrices_S{}.npy'.format(S), S_matrices)
+```
+
+This script first creates a WakeField object representing the wake of the airfoil. It then calculates the Sobol sensitivity of the wake efficiency (WS_eff) to the inflow uncertainty in angle of attack at different times using the Sobol sensitivity analysis. The sensitivity matrices are stored in a 4D NumPy array, where the first two dimensions represent the x and y coordinates, the third dimension represents the time step, and the fourth dimension represents the sensitivity calculation.
+
+The script then plots the sensitivity of WS_eff with respect to x and y for each sensitivity calculation and saves the sensitivity matrices to files.
+
+Note: This script assumes that the WakeField object is already created and configured correctly. You may need to modify the script to match your specific use case.

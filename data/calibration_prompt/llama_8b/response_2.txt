@@ -1,0 +1,113 @@
+The code you've posted is a Bayesian optimization script using the `bayes_opt` library to optimize the parameters of a wake model for a wind farm. The model used is `All2AllIterative`, which is a simulation-based model that propagates the wake through the entire wind farm. The optimization is done using a contour plot, where the x and y axes represent the wind speed and the z-axis represents the deficit.
+
+Here are some suggestions for improving the code:
+
+1. **Modularize the wake model instantiation**: As you mentioned, the instantiation of the wake model is complex and could be modularized to make the code more readable and maintainable. You could create a separate function for instantiating the wake model with the required parameters.
+
+2. **Use consistent naming conventions**: The code uses both camelCase and underscore notation for variable names. It's better to stick to one convention throughout the code.
+
+3. **Use type hints**: The function arguments and return types could be annotated with type hints to make the code more readable and self-documenting.
+
+4. **Use constants**: The code uses magic numbers (e.g., `4`, `11`, `0.05`, `0.45`, etc.) that could be replaced with named constants to make the code more readable and easier to maintain.
+
+5. **Use a consistent layout**: The code has a mix of indentation and spacing. It's better to stick to a consistent layout throughout the code.
+
+6. **Use descriptive variable names**: Some variable names are not very descriptive (e.g., `sim_res`, `flow_map`). It's better to use more descriptive names to make the code easier to understand.
+
+7. **Use docstrings**: The functions and classes could have docstrings to provide a brief description of what they do.
+
+Here's an example of how you could refactor the code to make it more modular and readable:
+
+```python
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+import xarray as xr
+from py_wake.rotor_avg_models.gaussian_overlap_model import GaussianOverlapAvgModel
+from py_wake.deficit_models.gaussian import TurboGaussianDeficit
+from py_wake.examples.data.dtu10mw._dtu10mw import DTU10MW
+from py_wake.deficit_models.gaussian import BlondelSuperGaussianDeficit2020
+from py_wake import HorizontalGrid
+from py_wake.deflection_models import JimenezWakeDeflection
+from py_wake.turbulence_models import CrespoHernandez
+from py_wake.rotor_avg_models import RotorCenter
+from py_wake.deficit_models import SelfSimilarityDeficit2020
+from py_wake.wind_farm_models import PropagateDownwind, All2AllIterative
+from py_wake.superposition_models import LinearSum
+from py_wake.ground_models import Mirror
+from py_wake.examples.data.hornsrev1 import Hornsrev1Site
+from bayes_opt import BayesianOptimization
+
+def instantiate_wake_model(**kwargs):
+    if kwargs['MODEL'] == 1:
+        if kwargs['DOWNWIND']:
+            wake_deficitModel = BlondelSuperGaussianDeficit2020(**kwargs['def_args'])
+        else:
+            wake_deficitModel = BlondelSuperGaussianDeficit2020(**kwargs['def_args'])
+    else:
+        if kwargs['DOWNWIND']:
+            wake_deficitModel = TurboGaussianDeficit(**kwargs['turb_args'])
+        else:
+            wake_deficitModel = TurboGaussianDeficit(**kwargs['turb_args'])
+    turb_args = {'c': np.array([kwargs['ch1'], kwargs['ch2'], kwargs['ch3'], kwargs['ch4']])}
+    blockage_args = {}
+    if kwargs['MODEL'] == 2:
+        blockage_args['groundModel'] = Mirror()
+    return wake_deficitModel, turb_args, blockage_args
+
+def evaluate_rmse(**kwargs):
+    wake_deficitModel, turb_args, blockage_args = instantiate_wake_model(**kwargs)
+    wfm = All2AllIterative(kwargs['site'], kwargs['turbine'],
+                            wake_deficitModel=wake_deficitModel,
+                            superpositionModel=LinearSum(), deflectionModel=None,
+                            turbulenceModel=CrespoHernandez(**turb_args),
+                            blockage_deficitModel=SelfSimilarityDeficit2020(**blockage_args))
+    sim_res = wfm([0], [0], ws=kwargs['ws'], TI=kwargs['TI'], wd=[270] * kwargs['TI'].size, time=True)
+    flow_map = None
+    for tt in range(kwargs['ws'].size):
+        fm = sim_res.flow_map(HorizontalGrid(x=kwargs['target_x'], y=kwargs['target_y']), time=[tt])['WS_eff']
+        if flow_map is None:
+            flow_map = fm
+        else:
+            flow_map = xr.concat([flow_map, fm], dim='time')
+    pred = (sim_res.WS - flow_map.isel(h=0)) / sim_res.WS
+    rmse = float(np.sqrt(((kwargs['all_obs'] - pred) ** 2).mean(['x', 'y'])).mean('time'))
+    if np.isnan(rmse): return -0.5
+    return -rmse
+
+def update_plot(frame):
+    # Get the best parameters and corresponding RMSE up to the current frame
+    best_so_far_params = {}
+    best_so_far_rmse = float('inf')
+    best_so_far_rmses = []
+    for i in range(frame + 1):
+        if -optimizer.space.target[i] <= best_so_far_rmse:
+            best_so_far_rmse = -optimizer.space.target[i]
+            best_so_far_params = optimizer.res[i]['params']
+        best_so_far_rmses.append(best_so_far_rmse)
+    # Plot the entire history in gray
+    ax1.plot(-np.array(optimizer.space.target), color='gray', alpha=0.5)
+    # Plot the best RMSE so far in black
+    ax1.plot(np.array(best_so_far_rmses), color='black')
+    ax1.set_title('Optimization Convergence')
+    ax1.set_xlabel('Iteration')
+    ax1.set_ylabel('RMSE')
+    ax1.grid(True)
+    # Use the best parameters so far for the bar plot
+    keys = list(best_so_far_params.keys())
+    best_vals = []
+    default_vals = []
+    for key in keys:
+        best_vals.append(best_so_far_params[key])
+        default_vals.append(defaults[key])
+    ax2.bar(keys, best_vals, label='Optimized')
+    ax2.bar(keys, default_vals, edgecolor='black', linewidth=2, color='none', capstyle='butt', label='Default')
+    ax2.set_title(f'Best RMSE: {best_so_far_rmse:.4f}')
+    ax2.tick_params(axis='x', rotation=45)
+    ax2.legend()
+    plt.tight_layout()
+    return ax1, ax2
+```
+
+This code is a bit more modular and easier to read, but it still has a lot of room for improvement. The `instantiate_wake_model` function could be further simplified, and the `evaluate_rmse` function could be made more efficient by using NumPy's vectorized operations. The `update_plot` function could also be simplified by using a loop instead of recursion.

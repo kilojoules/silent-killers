@@ -1,0 +1,120 @@
+I'll provide a script that uses PyWake and the SALib library to perform a Sobol' sensitivity analysis on the WS_eff (wind speed efficiency) as a function of x and y coordinates.
+
+```python
+import numpy as np
+import pywake as pw
+import SALib
+from SALib.sample import sobol_seq
+from SALib.util import flatten_lists
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+import matplotlib.image as mpimg
+from PIL import Image
+
+# Define the input parameters and their ranges
+problem = {
+    'num_vars': 2,
+    'bounds': [[0, 100], [0, 100]],  # x and y coordinates
+    'variable_names': ['x', 'y'],
+    'output_names': ['WS_eff'],
+}
+
+# Define the PyWake model
+def pywake_model(X):
+    # Create a wind farm with a single turbine
+    turbine = pw.Turbine(
+        x=X[:, 0],
+        y=X[:, 1],
+        hub_height=90,
+        rotor_diameter=126,
+        wind_speed=10,
+        wind_direction=270,
+        ct=pw.CtCurve('iea_31_600')
+    )
+
+    # Create a wind farm object
+    wind_farm = pw.WindFarm(turbines=[turbine], wind_direction=270)
+
+    # Calculate the flow field
+    flow_field = wind_farm.flow_field()
+
+    # Calculate the WS_eff (wind speed efficiency)
+    WS_eff = flow_field['WS_eff'].values
+
+    return {'WS_eff': WS_eff}
+
+# Perform the Sobol' sensitivity analysis
+problem['num_simulations'] = 1000
+X_samples = sobol_seq.sample(problem['num_vars'], problem['num_simulations'], seed=1234)
+output = pywake_model(X_samples)
+
+# Flatten the output
+output_flat = flatten_lists([output['WS_eff']])
+
+# Create a Sobol' sensitivity index
+si = SALib.analyze.sobol.analyze(problem, output_flat, num_samples=1000, calc_second_order=False)
+
+# Create a Sobol' sensitivity index plot
+plt.bar(range(problem['num_vars']), si['S1'], color='b')
+plt.xlabel('Variable')
+plt.ylabel('Sobol\' Index')
+plt.title('Sobol\' Sensitivity Index')
+plt.show()
+
+# Save a series of flow field images
+for i in range(100):
+    # Create a wind farm with a single turbine
+    turbine = pw.Turbine(
+        x=i,
+        y=i,
+        hub_height=90,
+        rotor_diameter=126,
+        wind_speed=10,
+        wind_direction=270,
+        ct=pw.CtCurve('iea_31_600')
+    )
+
+    # Create a wind farm object
+    wind_farm = pw.WindFarm(turbines=[turbine], wind_direction=270)
+
+    # Calculate the flow field
+    flow_field = wind_farm.flow_field()
+
+    # Save the flow field image
+    flow_field_image = flow_field['WS_eff'].values
+    img = flow_field_image
+    img = (img - np.min(img)) / (np.max(img) - np.min(img))
+    img = (img * 255).astype(np.uint8)
+    img = Image.fromarray(img)
+    img.save(f'flow_field_{i}.png')
+
+# Create an animation
+img_list = []
+for i in range(100):
+    img = mpimg.imread(f'flow_field_{i}.png')
+    img_list.append(img)
+
+ani = animation.ArtistAnimation(
+    plt.figure(),
+    img_list,
+    interval=50,
+    blit=False,
+    repeat_delay=0
+)
+
+plt.show()
+
+# Remove the images
+for i in range(100):
+    os.remove(f'flow_field_{i}.png')
+```
+
+This script performs a Sobol' sensitivity analysis on the WS_eff (wind speed efficiency) as a function of x and y coordinates. It then saves a series of flow field images showing the sensitivity of the flow at different times. The flow field images are created using PyWake and saved as PNG files. An animation is also created to visualize the flow field images.
+
+Note that this script assumes that you have PyWake and SALib installed. You can install them using pip:
+
+```bash
+pip install pywake SALib
+```
+
+Also, note that this script creates a series of 100 flow field images, which are saved as PNG files. You can adjust the number of images by changing the range in the for loop.

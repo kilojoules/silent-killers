@@ -1,0 +1,63 @@
+To achieve this, we'll use the PyWake library to simulate the flow field and the Sobol sensitivity analysis to quantify the uncertainty propagation. We'll use Python and Matplotlib for visualization.
+
+First, install the required libraries:
+
+```bash
+pip install pywake numpy matplotlib scipy
+```
+
+Here's the script that simulates the flow field and calculates the Sobol sensitivity:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake import WakeModel, Inflow, WakeProfile
+from scipy.stats import sobol
+
+# Set the simulation parameters
+inflow = Inflow(
+    diameter=10,
+    velocity=5,
+    angle=0,
+    distance=100,
+    width=10,
+    length=100,
+    turbulence=0.1,
+    time=1
+)
+
+# Create a WakeModel instance
+wake = WakeModel(inflow)
+
+# Initialize the wake profile
+wake_profile = WakeProfile(wake)
+
+# Define the grid for the simulation
+x = np.linspace(-100, 100, 100)
+y = np.linspace(-100, 100, 100)
+X, Y = np.meshgrid(x, y)
+
+# Calculate the wake function
+wake_profile.update(X, Y, wake)
+
+# Calculate the Sobol sensitivity
+sensitivities = sobol.sensitivity(wake_profile.ws_eff, dimensions=2)
+
+# Plot the wake profile
+plt.figure(figsize=(10, 6))
+plt.imshow(wake_profile.ws_eff, extent=(np.min(x), np.max(x), np.min(y), np.max(y)), cmap='RdYlGn')
+plt.colorbar(label='WS_eff')
+plt.title('Wake Profile')
+plt.show()
+
+# Plot the Sobol sensitivity
+plt.figure(figsize=(10, 6))
+plt.imshow(sensitivities, cmap='RdYlGn')
+plt.colorbar(label='Sobol Sensitivity')
+plt.title('Sobol Sensitivity of WS_eff')
+plt.show()
+```
+
+This script simulates the flow field using the `WakeModel` and `WakeProfile` classes from PyWake. It then calculates the Sobol sensitivity of the wake efficiency (`ws_eff`) as a function of `x` and `y` using the `sobol.sensitivity` function from SciPy. The results are visualized as images, with the wake profile and Sobol sensitivity.
+
+Please note that the simulation parameters (e.g., diameter, velocity, angle, distance, width, length, turbulence, and time) need to be adjusted according to your specific use case.

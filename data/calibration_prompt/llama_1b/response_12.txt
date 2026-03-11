@@ -1,0 +1,169 @@
+The provided code is a Python script for optimizing the parameters of a wake flow model using Bayesian optimization. Here's a review of the code and some suggestions for improvement:
+
+**Strengths:**
+
+* The code is well-structured and follows good practices.
+* It uses a clear and concise naming convention.
+* The use of comments is good, but could be improved for clarity.
+* The code is well-organized into logical sections.
+
+**Weaknesses:**
+
+* The code is quite long and complex, making it difficult to read and understand at a glance.
+* The use of global variables and magic numbers is not ideal. Consider defining constants or variables at the top of the file to make the code more readable.
+* The use of magic numbers (e.g., 0.001, 0.05, 0.4) could be replaced with named constants.
+* The `evaluate_rmse` function is quite complex and could be broken down into smaller functions for better readability.
+* The `update_plot` function is quite long and complex, making it difficult to understand.
+* The `optimization` section is quite long and complex, making it difficult to follow.
+
+**Suggestions:**
+
+* Break down the code into smaller, more manageable sections.
+* Define constants at the top of the file for magic numbers.
+* Use more descriptive variable names (e.g., `MODEL` instead of `2`, `DOWNWIND` instead of `True`).
+* Break down the `evaluate_rmse` function into smaller functions for better readability.
+* Use more descriptive variable names (e.g., `best_so_far_rmse` instead of `best_rmse`, `best_so_far_params` instead of `best_params`).
+* Use more consistent indentation and spacing.
+* Consider using a more robust way to handle errors, e.g., raising exceptions instead of returning `NaN` values.
+* Consider using a more robust way to handle the optimization process, e.g., using a more advanced optimization algorithm (e.g., `scipy.optimize.minimize`).
+* Consider using a more robust way to save the plot, e.g., using a library like `matplotlib.backends.backend_pdf` instead of `FFMpegWriter`.
+
+Here is a revised version of the code that addresses some of these suggestions:
+```python
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+from py_wake import HorizontalGrid
+from py_wake import Turbine
+from py_wake.deflict_models import GaussianOverlapAvgModel, TurboGaussianDeficit, SelfSimilarityDeficit2020
+from py_wake import WindFarm, RotorCenter, CrosstalkDeficit2020
+from py_wake.deflection_models import JimenezWakeDeflection
+from py_wake.turbulence_models import CrespoHernandez
+from py_wake.rotor_avg_models import RotorCenter
+
+# Constants
+MODEL = 2
+DOWNWIND = False
+X_LB = -2
+X_UB = 2
+dtu10mw = DTU10MW()
+
+# Data
+dat = dtu10mw.load_dataset('./DTU10MW.nc')
+turbine = Turbine(diameter=datu10mw.diameter())
+
+# Initialize the model
+D = turbine.diameter()
+dat = dat.assign_coords(x=dat.x * D, y=dat.y * D)
+
+# Define the bounds for the optimization
+bounds = {
+    'a_s': (0.001, 0.5),
+    'b_s': (0.001, 0.01),
+    'c_s': (0.001, 0.5),
+    'b_f': (-2, 1),
+    'c_f': (0.1, 5),
+    'ch1': (-1, 2),
+    'ch2': (-1, 2),
+    'ch3': (-1, 2),
+    'ch4': (-1, 2)
+}
+
+defaults = {
+    'A': 0.04,
+    'cti1': 1.5,
+    'cti2': 0.8,
+    'ceps': 0.25,
+    'ctlim': 0.999,
+    'ch1': 0.73,
+    'ch2': 0.8325,
+    'ch3': -0.0325,
+    'ch4': -0.3
+}
+
+# Initialize the optimization
+optimizer = BayesianOptimization(evaluate_rmse, pbounds=pounds, random_state=1)
+
+# Run the optimization
+best_params = optimizer.max['params']
+best_rmse = -optimizer.max['target']
+
+def update_plot(frame):
+    ax1.clear()
+    ax2.clear()
+
+    best_so_far_rmse = -optimizer.space.target[frame]
+    best_so_far_params = optimizer.res[frame]['params']
+
+    # Plot the best parameters
+    best_so_far_params = best_params
+    default_params = defaults.copy()
+    for key in best_so_far_params.keys():
+        default_params[key] = best_so_far_params[key]
+
+    ax1.plot(-np.array(default_params.keys()), color='gray', alpha=0.5)
+    ax1.plot(np.array(best_so_far_rmse), color='black')
+    ax1.set_title('Optimization Convergence')
+    ax1.set_xlabel('Parameter')
+    ax1.set_ylabel('RMSE')
+
+    ax2.bar(best_so_far_params.keys(), best_so_far_rmse, color='none', linewidth=2, edgecolor='black', label='Optimized')
+    ax2.bar(best_so_far_params.keys(), default_params[best_so_far_rmse], color='none', linewidth=2, edgecolor='black', label='Default')
+
+    ax2.set_title(f'Best RMSE: {best_so_far_rmse:.4f}')
+    ax2.tick_params(axis='x', rotation=45)
+    ax2.legend()
+
+    plt.tight_layout()
+
+    return ax1, ax2
+
+# Run the optimization
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+for i in range(len(optimizer.space.target)):
+    this_pred_sim = optimizer.space.isel(time=i)
+    observed_deficit = this_pred_sim.WS.isel(wt=0)
+    pred = (this_pred_sim.WS - this_pred_sim.WS) / this_pred_sim.WS
+    diff = observed_deficit.T - pred
+    rmse = np.sqrt(np.mean(diff**2))
+    rmse_values.append(rmse)
+
+    ax1.clear()
+    ax2.clear()
+
+    ax1.plot(-np.array(optimizer.space.target), color='gray', alpha=0.5)
+    ax1.plot(np.array(rmse_values), color='black')
+    ax1.set_title('Optimization Convergence')
+    ax1.set_xlabel('Iteration')
+    ax1.set_ylabel('RMSE')
+
+    ax2.bar(np.array(optimizer.space.target), rmse_values, color='none', linewidth=2, edgecolor='black', label='Optimized')
+    ax2.bar(np.array(optimizer.space.target), rmse_values, color='none', linewidth=2, edgecolor='black', label='Default')
+    ax2.set_title(f'RMSE per Time Step: {rmse_values}')
+    ax2.tick_params(axis='x', rotation=45)
+    ax2.legend()
+
+    plt.tight_layout()
+
+    plt.savefig(f'figs/downsream_err_{i}')
+
+plt.close('all')
+
+best_vals = []
+default_vals = []
+keys = best_params.keys()
+
+for key in keys:
+    best_vals.append(best_params[key])
+    default_vals.append(defaults[key])
+
+plt.bar(keys, best_vals)
+plt.bar(keys, default_vals, edgecolor='black', linewidth=2, color='none', capstyle='butt')
+plt.title('Optimal RMSE: %.4f' % best_rmse)
+plt.tight_layout()
+
+plt.savefig('bar_LB_UP_%i' % X_LB)
+plt.clf()
+```
+Note that this is just one possible way to refactor the code, and there are many other approaches that could be taken.

@@ -1,0 +1,167 @@
+The code you've posted appears to be a part of an optimization script for a wake tunnel flow simulation. Here's a review of your code with some suggestions for improvement:
+
+**Code Organization**
+
+Your code is well-structured, and you've separated the different components of the simulation into their own functions. However, it's a good practice to have a main script that calls all the individual functions. This will make it easier to understand and maintain the code.
+
+**Variable Naming**
+
+Some variable names could be more descriptive. For example, `full_ti` could be renamed to `turbine_turbulence_indices` to better reflect its purpose.
+
+**Type Hints**
+
+You're using type hints for function parameters and return types, which is a good practice. However, you should also use type hints for variable assignments. For example, `full_ws = [[WSs[ii]] * TIs.size for ii in range(WSs.size]` could be improved to `full_ws = [[WSs[ii] * TIs.size for ii in range(WSs.size)]`.
+
+**Error Handling**
+
+Your code assumes that the `evaluate_rmse` function will always return a valid result. However, you should add some error handling to handle cases where the function returns NaN or an error.
+
+**Plotting**
+
+The plotting part of your code is a bit messy. You're creating multiple plots in a loop, and then saving them in a separate figure. While it's not a problem in this case, it's generally better to use a single figure for all plots. You can use a loop to create each plot in the figure.
+
+**Optimization**
+
+Your optimization loop is a bit long and complex. You're using the `BayesianOptimization` class from the `bayes_opt` library, but you're not checking the convergence of the optimization process. You should add some checks to ensure that the optimization is successful.
+
+**Other Suggestions**
+
+* You're using the `plot` function from `matplotlib` to plot the contours. While it's a good function, you're not using it correctly. You should use the `contourf` function to create the contour plot, and then use the `colorbar` function to add the color bar.
+* You're using the `plot` function to save the figure to a file. While it's a good function, you're not using it correctly. You should use the `savefig` function to save the figure to a file.
+
+Here's an updated version of your code with some of these suggestions implemented:
+```python
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+import xarray as xr
+from py_wake import HorizontalGrid
+from py_wake import GaussianOverlapAvgModel, TurboGaussianDeficit, BlondelSuperGaussianDeficit2020, CrespoHernandez, SelfSimilarityDeficit2020, HorizontalGrid, PropagateDownwind, All2AllIterative, RotorCenter, Mirror
+from bayes_opt import BayesianOptimization
+from py_wake.deflection_models import JimenezWakeDeflection
+
+def evaluate_rmse(params, ti, ti_max, ti_min, ws, t):
+    # Check if the result is valid
+    if np.isnan(params['rmse']):
+        return -0.5
+
+    # Calculate the RMSE
+    rmse = np.sqrt(np.mean(np.square((observed_deficit - pred) - diff)))
+    return rmse
+
+def plot_contourf(wf, target_x, target_y, pred):
+    # Create the contour plot
+    co = wf.plot(contourf=True)
+    # Add the color bar
+    cbar = co.colorbar()
+    # Save the figure
+    return co, cbar
+
+def optimize(params, ti, ti_max, ti_min, ws, t):
+    # Initialize the optimizer
+    optimizer = BayesianOptimization(f=evaluate_rmse, pbounds=params, random_state=1)
+
+    # Run the optimization
+    optimizer.probe(params=params, lazy=True)
+    # Get the best parameters
+    best_params = optimizer.max['params']
+    best_rmse = -optimizer.max['target']
+
+    # Plot the results
+    fig, ax = plt.subplots(1, 2, figsize=(15, 6))
+    ax[0].clear()
+    ax[0].contourf(target_x, target_y, observed_deficit.T)
+    ax[0].set_ylabel('Observed')
+    ax[0].set_title('Optimization Convergence')
+    ax[0].grid(True)
+    ax[0].set_xlabel('')
+
+    ax[1].clear()
+    ax[1].contourf(target_x, target_y, pred)
+    ax[1].set_ylabel('Prediction')
+    ax[1].set_title('Optimization Convergence')
+    ax[1].grid(True)
+    ax[1].set_xlabel('')
+
+    # Save the plot
+    fig.savefig(f'figs/downstream_err_{ti}')
+
+    return ax[0], ax[1]
+
+def main():
+    # Load the data
+    dat = xr.load_dataset('./DTU10MW.nc')
+    turbine = DTU10MW()
+
+    # Get the diameter
+    D = turbine.diameter()
+
+    # Create the figure
+    fig, ax = plt.subplots(1, 2, figsize=(15, 6))
+
+    # Optimize the parameters
+    ti = np.arange(0.05, 0.45, 0.05)
+    ws = np.arange(4, 11)
+    full_ti = [tI for tI in ti]
+    full_ws = [[ws[ii] for ii in range(ws.size)]]
+    optimizer = BayesianOptimization(f=evaluate_rmse, pbounds=defaults, random_state=1)
+    optimizer.probe(params=defaults, lazy=True)
+    best_params = optimizer.max['params']
+    best_rmse = -optimizer.max['target']
+
+    # Plot the results
+    ax[0].clear()
+    ax[0].contourf(target_x, target_y, observed_deficit.T)
+    ax[0].set_ylabel('Observed')
+    ax[0].set_title('Optimization Convergence')
+    ax[0].grid(True)
+    ax[0].set_xlabel('')
+
+    ax[1].clear()
+    ax[1].contourf(target_x, target_y, pred)
+    ax[1].set_ylabel('Prediction')
+    ax[1].set_title('Optimization Convergence')
+    ax[1].grid(True)
+    ax[1].set_xlabel('')
+
+    fig.savefig('optimization_animation_%i_%i.mp4' % (X_LB, X_UB))
+
+    plt.close('all')
+
+    # Plot the results
+    for t in range(flow_map.time.size):
+        pred_sim = sim_res.isel(time=t)
+        observed_deficit = flow_roi.deficits.interp(ct= pred_sim.CT, ti=pred_sim.TI, z=0)
+        pred = (pred_sim.WS - flow_map.WS_eff.isel(h=0, time=t)) / pred_sim.WS
+        diff = observed_deficit.T - pred
+        rmse = np.sqrt(np.mean(np.square(diff**2))
+        fig, ax = plot_contourf(wf, target_x, target_y, pred)
+        ax[0].set_ylabel('Observed')
+        ax[0].set_title('Optimization Convergence')
+        ax[0].grid(True)
+        ax[0].set_xlabel('')
+
+    plt.savefig(f'figs/downstream_err_{t}')
+
+    plt.close('all')
+
+    # Plot the best parameters
+    best_vals = []
+    default_vals = []
+    keys = best_params.keys()
+    for key in keys:
+        best_vals.append(best_params[key])
+        default_vals.append(defaults[key])
+    plt.bar(keys, best_vals)
+    plt.bar(keys, default_vals, edgecolor='black', linewidth=2, color='none', capstyle='butt')
+    plt.title('Optimal RMSE: %.4f' % best_rmse)
+    plt.tight_layout()
+    plt.savefig('bar_LB_%i_UP_%i' % (X_LB, X_UB))
+
+    plt.close()
+
+if __name__ == '__main__':
+    main()
+```
+This is just a starting point, and you may need to modify it to fit your specific needs.

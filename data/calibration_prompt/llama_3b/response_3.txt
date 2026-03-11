@@ -1,0 +1,192 @@
+Your approach looks good, but there are a few things that could be improved:
+
+1. Modularization: You're right, the code could be more modular. Consider breaking it down into functions, each with a single responsibility. This will make the code easier to read, maintain, and test.
+
+2. Code Duplication: There's some duplicated code in your script. For example, the code for plotting the results is repeated in multiple places. Consider extracting a separate function for this.
+
+3. Error Handling: The script assumes that certain variables are defined and in the correct format. Consider adding some error checking to ensure that this is the case.
+
+4. Variable Naming: Some variable names could be more descriptive. For example, `D` could be renamed to `diameter`.
+
+5. Type Hints: Adding type hints can make the code easier to understand and catch type-related errors.
+
+6. Docstrings: Adding docstrings can make it easier to understand what the code does and how to use it.
+
+7. Comments: While the code has some comments, there are a few places where more context would be helpful.
+
+Here's an example of how you could refactor the code to address these points:
+
+```python
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+import xarray as xr
+from py_wake.rotor_avg_models.gaussian_overlap_model import GaussianOverlapAvgModel
+from py_wake.deficit_models.gaussian import TurboGaussianDeficit
+from py_wake.deficit_models.gaussian import BlondelSuperGaussianDeficit2020
+from py_wake.examples.data.dtu10mw import DTU10MW
+from py_wake.deficit_models.gaussian import SelfSimilarityDeficit2020
+from py_wake.deflection_models import JimenezWakeDeflection
+from py_wake.turbulence_models import CrespoHernandez
+from py_wake.rotor_avg_models import RotorCenter
+from py_wake.deficit_models import SelfSimilarityDeficit2020
+from py_wake.wind_farm_models import PropagateDownwind, All2AllIterative
+from py_wake.superposition_models import LinearSum
+from py_wake.ground_models import Mirror
+from bayes_opt import BayesianOptimization
+
+def load_data():
+    """Load the data from the file."""
+    dat = xr.load_dataset('./DTU10MW.nc')
+    return dat
+
+def create_turbine(dat):
+    """Create a Turbine instance."""
+    turbine = DTU10MW()
+    return turbine
+
+def create_turbine_parameters(dat):
+    """Create the turbine parameters."""
+    diameter = dat.diameter()
+    dat = dat.assign_coords(x=dat.x * diameter, y=dat.y * diameter)
+    return dat
+
+def create_downwind_settings():
+    """Create the downwind settings."""
+    DOWNWIND = True
+    MODEL = 2
+    if MODEL not in [1, 2]:
+        raise Exception("Bad Model Number")
+    if DOWNWIND:
+        X_LB = 2
+        X_UB = 10
+    else:
+        X_LB = -2
+        X_UB = -1
+    roi_x = slice(X_LB * diameter, X_UB * diameter)
+    roi_y = slice(-2 * diameter, 2 * diameter)
+    return roi_x, roi_y
+
+def create_flow_roi(dat):
+    """Create the flow ROI."""
+    flow_roi = dat.sel(x=roi_x, y=roi_y)
+    target_x = flow_roi.x
+    target_y = flow_roi.y
+    return target_x, target_y
+
+def create_target_deficits(dat, target_x, target_y):
+    """Create the target deficits."""
+    TIs = np.arange(0.05, 0.45, 0.05)
+    WSs = np.arange(4, 11)
+    full_ti = [TIs for _ in range(WSs.size)]
+    full_ti = np.array(full_ti).flatten()
+    full_ws = [[WSs[ii]] * TIs.size for ii in range(WSs.size)]
+    full_ws = np.array(full_ws).flatten()
+    assert (full_ws.size == full_ti.size)
+    return full_ti, full_ws
+
+def create_simulation_settings(site, turbine, flow_roi, full_ti, full_ws, wd):
+    """Create the simulation settings."""
+    wake_deficitModel = BlondelSuperGaussianDeficit2020()
+    superpositionModel = LinearSum()
+    deflectionModel = None
+    turbulenceModel = CrespoHernandez()
+    blockage_deficitModel = SelfSimilarityDeficit2020(groundModel=Mirror())
+    return wake_deficitModel, superpositionModel, deflectionModel, turbulenceModel, blockage_deficitModel
+
+def create_simulator(site, turbine, wake_deficitModel, superpositionModel, deflectionModel, turbulenceModel, blockage_deficitModel):
+    """Create the simulator."""
+    wfm = All2AllIterative(site, turbine,
+                            wake_deficitModel=wake_deficitModel,
+                            superpositionModel=superpositionModel,
+                            deflectionModel=deflectionModel,
+                            turbulenceModel=turbulenceModel,
+                            blockage_deficitModel=blockage_deficitModel)
+    return wfm
+
+def create_simulations(site, turbine, wake_deficitModel, superpositionModel, deflectionModel, turbulenceModel, blockage_deficitModel, full_ti, full_ws, wd):
+    """Create the simulations."""
+    sim_res = []
+    for t in range(flow_roi.time.size):
+        this_pred_sim = None
+        observed_deficit = None
+        for tt in range(full_ws.size):
+            fm = None
+            if this_pred_sim is None:
+                fm = wfm.flow_map(HorizontalGrid(x=target_x, y=target_y), time=[tt])
+            else:
+                fm = xr.concat([fm, wfm.flow_map(HorizontalGrid(x=target_x, y=target_y), time=[tt])], dim='time')
+            this_pred_sim = sim_res[tt]
+            observed_deficit = flow_roi.deficits.interp(ct=this_pred_sim.CT, ti=this_pred_sim.TI, z=0).isel(wt=0)
+            pred = (this_pred_sim.WS - fm.WS_eff.isel(h=0, time=t)) / this_pred_sim.WS
+            diff = observed_deficit.T - pred
+            rmse = np.sqrt(np.mean(diff**2))
+            rmse_values.append(rmse)
+    return sim_res, rmse_values
+
+def evaluate_rmse(sim_res, flow_roi):
+    """Evaluate the RMSE."""
+    rmse_values = []
+    for t in range(flow_roi.time.size):
+        this_pred_sim = sim_res.isel(time=t)
+        observed_deficit = flow_roi.deficits.interp(ct=this_pred_sim.CT, ti=this_pred_sim.TI, z=0).isel(wt=0)
+        pred = (this_pred_sim.WS - flow_map.WS_eff.isel(h=0, time=t)) / this_pred_sim.WS
+        diff = observed_deficit.T - pred
+        rmse = np.sqrt(np.mean(diff**2))
+        rmse_values.append(rmse)
+    return rmse_values
+
+def optimize(params, rmse_values):
+    """Optimize the parameters."""
+    optimizer = BayesianOptimization(f=evaluate_rmse, pbounds=params, random_state=1)
+    optimizer.probe(params=params, lazy=True)
+    optimizer.maximize(init_points=50, n_iter=200)
+    best_params = optimizer.max['params']
+    best_rmse = -optimizer.max['target']
+    return best_params, best_rmse
+
+def plot_results(sim_res, flow_roi, best_params, rmse_values):
+    """Plot the results."""
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+    update_plot(frame=0, ax1=ax1, ax2=ax2, best_so_far_params={}, best_so_far_rmse=float('inf'), best_so_far_rmses=[])
+    ani = animation.FuncAnimation(fig, update_plot, frames=len(optimizer.space.target), repeat=False)
+    writer = animation.FFMpegWriter(fps=15)
+    ani.save('optimization_animation_%i_%i.mp4' % (X_LB, X_UB), writer=writer)
+    plt.close('all')
+
+def plot_rmse(rmse_values):
+    """Plot the RMSE values."""
+    keys = list(best_params.keys())
+    best_vals = []
+    default_vals = []
+    for key in keys:
+        best_vals.append(best_params[key])
+        default_vals.append(defaults[key])
+    plt.bar(keys, best_vals)
+    plt.bar(keys, default_vals, edgecolor='black', linewidth=2, color='none', capstyle='butt')
+    plt.title('Optimal RMSE: %.4f' % best_rmse)
+    plt.tight_layout()
+    plt.savefig('bar_LB_%i_UP_%i' % (X_LB, X_UB))
+
+def main():
+    dat = load_data()
+    turbine = create_turbine(dat)
+    dat = create_turbine_parameters(dat)
+    roi_x, roi_y = create_downwind_settings()
+    target_x, target_y = create_flow_roi(dat)
+    full_ti, full_ws = create_target_deficits(dat, target_x, target_y)
+    wake_deficitModel, superpositionModel, deflectionModel, turbulenceModel, blockage_deficitModel = create_simulation_settings(site, turbine, flow_roi, full_ti, full_ws, wd)
+    wfm = create_simulator(site, turbine, wake_deficitModel, superpositionModel, deflectionModel, turbulenceModel, blockage_deficitModel)
+    sim_res, rmse_values = create_simulations(site, turbine, wake_deficitModel, superpositionModel, deflectionModel, turbulenceModel, blockage_deficitModel, full_ti, full_ws, wd)
+    best_params, best_rmse = optimize(params=defaults, rmse_values=rmse_values)
+    plot_results(sim_res=sim_res, flow_roi=flow_roi, best_params=best_params, rmse_values=rmse_values)
+    plot_rmse(rmse_values=rmse_values)
+    print(f"RMSE values per time step: {rmse_values}")
+    print(f"Overall RMSE: {best_rmse}")
+
+if __name__ == "__main__":
+    main()
+```
+
+This refactored code is more modular, easier to read, and maintain. It also includes docstrings to explain what each function does. The variable names are more descriptive, and the code is more consistent.

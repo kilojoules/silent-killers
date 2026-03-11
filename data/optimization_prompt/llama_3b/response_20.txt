@@ -1,0 +1,46 @@
+The error message indicates that the issue lies with the joining operation, and the problem is with the file not being found. The file signature is not valid, which means the file is not in the expected format.
+
+The problem is likely due to the fact that the `h5py` library is unable to find the file because the file signature is not valid. This could be due to a number of reasons such as:
+
+*   The file is not a valid HDF5 file.
+*   The file is corrupted.
+*   The file is not in the correct location.
+
+To debug this issue, you can try the following steps:
+
+1.  Check the file format: Make sure that the file is a valid HDF5 file. You can use tools like `h5dump` or `h5ls` to check the file format.
+
+2.  Check the file location: Ensure that the file is in the correct location and is not corrupted.
+
+3.  Check the file size: Ensure that the file size is correct. If the file is too large, it may cause issues with the `h5py` library.
+
+4.  Try to read the file using a different method: You can try to read the file using a different method such as `pandas` or `numpy` to see if the issue is specific to `h5py`.
+
+Here's an example of how you can modify your code to catch the error and stop the process cleanly:
+
+```python
+import h5py
+import os
+
+def process_worker_file(worker_file):
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Process the file here
+            pass
+    except OSError as e:
+        print(f"Error processing file {worker_file}: {e}")
+        return False
+    return True
+
+def main():
+    for seed in range(50):
+        worker_file = f"worker_{seed}.h5"
+        if not process_worker_file(worker_file):
+            print(f"Error processing file {worker_file}, stopping process")
+            return
+
+if __name__ == "__main__":
+    main()
+```
+
+In this code, the `process_worker_file` function attempts to open the file using `h5py`. If the file cannot be opened, it catches the `OSError` exception and prints an error message. The `main` function checks if each file can be processed and stops the process if any file cannot be processed.

@@ -1,0 +1,70 @@
+The error message suggests that the issue lies in the joining operation. The problem is that the file `worker_file` is not found or is corrupted, which causes the `h5py` library to fail when trying to open it.
+
+To diagnose the issue, let's analyze the error message:
+
+- The error message "Unable to synchronously open file (file signature not found)" indicates that the file signature is missing or corrupted.
+- The error occurs when the file is being opened in read-only mode (`'r'`) in the line `with h5py.File(worker_file, 'r') as h5_in:`.
+- The file is not found because the `worker_file` variable contains a path that is not valid or the file does not exist.
+
+To ensure that the script stops cleanly if any worker file is invalid, we can add error handling to catch the `OSError` exception and provide a more informative error message. Here's an example of how you can modify the script:
+
+```python
+import os
+import h5py
+
+def load_h5_file(file_path):
+    try:
+        with h5py.File(file_path, 'r') as h5_in:
+            return h5_in
+    except OSError as e:
+        print(f"Error loading file {file_path}: {e}")
+        return None
+
+def main():
+    #... (rest of the script remains the same)
+
+    # Load the worker file
+    worker_file = os.path.join(output_dir, f"farm_{seed}_{type}.h5")
+    worker_h5 = load_h5_file(worker_file)
+    if worker_h5 is None:
+        print(f"Worker file {worker_file} is invalid or missing.")
+        return
+
+    #... (rest of the script remains the same)
+```
+
+In this modified script, the `load_h5_file` function attempts to load the `worker_file` using `h5py`. If the file cannot be loaded, it catches the `OSError` exception, prints an error message, and returns `None`. The `main` function checks if the `worker_h5` variable is `None` and exits if it is.
+
+To recover the missing data, you would need to analyze the files manually and determine which ones are missing or corrupted. You can then recreate the missing files or adjust the script to handle the missing data in a way that makes sense for your specific use case.
+
+To identify the specific files that are causing the issue, you can modify the script to log the paths of the worker files and the error messages:
+
+```python
+import os
+import h5py
+import logging
+
+def load_h5_file(file_path):
+    try:
+        with h5py.File(file_path, 'r') as h5_in:
+            return h5_in
+    except OSError as e:
+        logging.error(f"Error loading file {file_path}: {e}")
+        return None
+
+def main():
+    logging.basicConfig(level=logging.INFO)
+    #... (rest of the script remains the same)
+
+    # Load the worker files
+    worker_files = [os.path.join(output_dir, f"farm_{seed}_{type}_{i}.h5") for i in range(num_seeds)]
+    for i, worker_file in enumerate(worker_files):
+        worker_h5 = load_h5_file(worker_file)
+        if worker_h5 is None:
+            logging.error(f"Worker file {worker_file} is invalid or missing.")
+            # You can also add additional error handling or logging here
+
+    #... (rest of the script remains the same)
+```
+
+This will log the paths of the worker files and the error messages, which can help you identify which files are causing the issue.

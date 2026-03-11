@@ -1,0 +1,132 @@
+Your code is quite complex and does a lot of different things. It appears to be a wake modeling code for a wind turbine. I'll provide some suggestions for improving the code structure, modularity, and readability.
+
+**Modularize the code**
+
+The code can be broken down into smaller, more focused functions. This will make it easier to understand, test, and maintain. Here are some suggestions:
+
+1. Extract functions for:
+	* Calculating the RMSE
+	* Updating the plots
+	* Initializing the optimization
+	* Running the optimization
+	* Creating the plots
+2. Create a `WakeModel` class to encapsulate the wake deficit models and their associated parameters.
+3. Create a `WindFarm` class to encapsulate the wind farm and its associated parameters.
+
+**Code Refactoring**
+
+Here's a refactored version of your code, incorporating the suggestions above:
+```python
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import xarray as xr
+import bayes_opt
+
+# Define the wake deficit models
+class WakeDeficitModel:
+    def __init__(self, **kwargs):
+        self.model = None
+        self.params = kwargs
+
+    def get_model(self):
+        if self.model is None:
+            if 'BlondelSuperGaussianDeficit2020' in self.params:
+                self.model = BlondelSuperGaussianDeficit2020(**self.params)
+            elif 'TurboGaussianDeficit' in self.params:
+                self.model = TurboGaussianDeficit(**self.params)
+
+class WindFarm:
+    def __init__(self, site, turbine, wake_deficit_model, superposition_model, turbulence_model, blockage_deficit_model, ground_model):
+        self.site = site
+        self.turbine = turbine
+        self.wake_deficit_model = wake_deficit_model
+        self.superposition_model = superposition_model
+        self.turbulence_model = turbulence_model
+        self.blockage_deficit_model = blockage_deficit_model
+        self.ground_model = ground_model
+
+    def run_optimization(self, pbounds, defaults):
+        optimizer = bayes_opt.BayesianOptimization(f=self.evaluate_rmse, pbounds=pbounds, random_state=1)
+        optimizer.probe(params=defaults, lazy=True)
+        optimizer.maximize(init_points=50, n_iter=200)
+        return optimizer.max['params']
+
+    def evaluate_rmse(self, params):
+        # Your existing evaluate_rmse function remains the same
+       ...
+
+    def run_simulation(self, ws, ti, wd, time):
+        # Your existing simulation code remains the same
+       ...
+
+    def plot_results(self, frame):
+        # Your existing plot_results function remains the same
+
+# Define the main function
+def main():
+    site = Hornsrev1Site()
+    turbine = DTU10MW()
+    wake_deficit_model = WakeDeficitModel()
+    superposition_model = LinearSum()
+    turbulence_model = CrespoHernandez()
+    blockage_deficit_model = SelfSimilarityDeficit2020()
+    ground_model = Mirror()
+
+    wind_farm = WindFarm(site, turbine, wake_deficit_model, superposition_model, turbulence_model, blockage_deficit_model, ground_model)
+
+    pbounds =...
+    defaults =...
+    best_params = wind_farm.run_optimization(pbounds, defaults)
+    best_rmse = -wind_farm.evaluate_rmse(best_params)
+
+    # Run the simulation and plot the results
+    ws =...
+    ti =...
+    wd =...
+    time =...
+    wind_farm.run_simulation(ws, ti, wd, time)
+    wind_farm.plot_results(len(wind_farm.space.target))
+
+if __name__ == '__main__':
+    main()
+```
+This refactored code is more modular, readable, and maintainable. The `WakeDeficitModel` and `WindFarm` classes encapsulate the wake deficit models and wind farm parameters, respectively. The `main` function orchestrates the entire process.
+
+**Reporting average and p90s of the errors**
+
+You can calculate the average and p90s of the errors by modifying the `evaluate_rmse` function to return the RMSE values and then calculating them using NumPy. Here's an example:
+```python
+def evaluate_rmse(self, params):
+    rmse_values = []
+    for t in range(flow_map.time.size):
+        this_pred_sim = sim_res.isel(time=t)
+        observed_deficit = flow_roi.deficits.interp(ct=this_pred_sim.CT, ti=this_pred_sim.TI, z=0).isel(wt=0)
+        pred = (this_pred_sim.WS - flow_map.WS_eff.isel(h=0, time=t)) / this_pred_sim.WS
+        diff = observed_deficit.T - pred
+        rmse = np.sqrt(np.mean(diff**2))
+        rmse_values.append(rmse)
+    return rmse_values
+
+def plot_rmse_values(rmse_values):
+    fig, ax = plt.subplots(3, 1, figsize=(5, 15))
+    ax[0].contourf(target_x, target_y, observed_deficit.T)
+    ax[1].contourf(target_x, target_y, pred)
+    ax[2].contourf(target_x, target_y, diff)
+    for jj, c in enumerate([co, cp, cd]):
+        fig.colorbar(c, ax=ax[jj])
+    ax[0].set_ylabel('Observed')
+    ax[1].set_ylabel('Prediction')
+    ax[2].set_ylabel('Diff')
+    plt.tight_layout()
+    plt.savefig(f'figs/downstream_err_{t}')
+    plt.clf()
+
+#...
+
+rmse_values = wind_farm.evaluate_rmse(best_params)
+print(f"RMSE values per time step: {rmse_values}")
+print(f"Overall RMSE: {np.mean(rmse_values)}")
+print(f"p90s: {np.percentile(rmse_values, 90)}")
+```
+This code calculates the RMSE values and then plots them using a contour plot. It also calculates the average and p90s of the RMSE values using NumPy.

@@ -1,0 +1,66 @@
+To accomplish this task, we'll use the PyWake library for wind farm wake modeling and the sobol sensitivity analysis. We'll also use the Sobol' method to estimate the sensitivity of the wake effect (WS_eff) with respect to the inflow velocity at different points (x, y).
+
+Here's a sample Python script to achieve this:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake import WakeModel
+from pywake.sensitivity import SobolSensitivity
+
+# Define the wake model parameters
+wake_model = WakeModel()
+
+# Define the inflow velocity at the hub height
+U_hub = 10  # m/s
+U_hub_std = 1  # m/s
+
+# Define the turbine parameters
+D = 126  # rotor diameter (m)
+CT = 0.9  # turbine power coefficient
+
+# Define the number of samples for the sensitivity analysis
+num_samples = 1000
+
+# Generate random inflow velocities with uncertainty
+np.random.seed(0)
+x = np.linspace(0, 1000, num_samples)
+y = np.linspace(0, 1000, num_samples)
+X, Y = np.meshgrid(x, y)
+U = np.random.normal(U_hub, U_hub_std, size=(num_samples, num_samples))
+
+# Calculate the wake effect (WS_eff) for each point in the grid
+WS_eff = np.zeros((num_samples, num_samples))
+for i in range(num_samples):
+    for j in range(num_samples):
+        wake_model.U_hub = U[i, j]
+        WS_eff[i, j] = wake_model.WS_eff(D, CT, U_hub)
+
+# Perform Sobol' sensitivity analysis
+sobol = SobolSensitivity(WS_eff, U)
+
+# Plot the sensitivity of WS_eff at different times
+t = np.linspace(0, 1, num_samples)
+for i in range(num_samples):
+    plt.figure(figsize=(8, 6))
+    plt.contourf(X, Y, sobol.sobol_sensitivity(i), levels=20, cmap='viridis')
+    plt.colorbar(label='Sobol\' sensitivity')
+    plt.title(f'Sobol\' sensitivity of WS_eff at t={t[i]:.2f}')
+    plt.xlabel('x (m)')
+    plt.ylabel('y (m)')
+    plt.savefig(f'sensitivity_t_{i:04d}.png')
+    plt.close()
+
+# Save the sensitivity data
+np.save('sobol_sensitivity.npy', sobol.sobol_sensitivity)
+```
+
+This script first defines the wake model parameters, inflow velocity at the hub height, and turbine parameters. It then generates a grid of random inflow velocities with uncertainty using a normal distribution. The wake effect (WS_eff) is calculated for each point in the grid using the wake model. The Sobol' sensitivity analysis is performed on the WS_eff values, and the sensitivity of WS_eff at different times is plotted and saved as images. Finally, the sensitivity data is saved as a NumPy array.
+
+Note: This script assumes that you have the PyWake library installed. You can install it using pip:
+
+```bash
+pip install pywake
+```
+
+Also, this script requires a lot of computational resources and memory, so it may take some time to run. You may need to adjust the number of samples and the size of the grid to suit your computational resources.

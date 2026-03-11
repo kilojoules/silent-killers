@@ -1,0 +1,49 @@
+The error you're encountering is due to a corrupted or invalid HDF5 file. This is likely caused by an issue with the way the worker files are being created or written. The error message "file signature not found" suggests that the file does not contain a valid HDF5 signature, which is the first line of the file that indicates it's an HDF5 file.
+
+To diagnose this issue, you can try the following steps:
+
+1.  **Check the worker files:** Manually inspect the worker files to see if they're being created and written correctly. Make sure that the files are not being truncated or corrupted during the writing process.
+
+2.  **Validate the HDF5 files:** You can use the `h5ls` command from the `h5py` library to list the contents of the HDF5 files. If the files are invalid, this command may raise an error.
+
+3.  **Check the file paths:** Ensure that the file paths are correct and that the files are being created in the expected location.
+
+4.  **Monitor the memory usage:** The issue might be related to memory constraints. If the worker processes are consuming too much memory, they might be killing each other, leading to the corrupted files.
+
+To modify the script to detect and handle invalid worker files, you can use a try-except block around the code that reads the HDF5 files. Here's an example of how you can modify your script:
+
+```python
+import h5py
+
+def load_hdf5_file(worker_file):
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            return h5_in
+    except OSError as e:
+        print(f"Error loading file {worker_file}: {e}")
+        return None
+
+def main():
+    # Your code here
+    worker_files = [...]  # List of worker files
+    for worker_file in worker_files:
+        h5_file = load_hdf5_file(worker_file)
+        if h5_file is not None:
+            # Process the HDF5 file
+            #...
+        else:
+            print(f"Skipping file {worker_file} due to invalid HDF5 signature")
+
+if __name__ == "__main__":
+    main()
+```
+
+In this modified script, the `load_hdf5_file` function attempts to load an HDF5 file. If the file is invalid, it catches the `OSError` exception and returns `None`. In the `main` function, it checks if the file was loaded successfully and skips the file if it was not.
+
+To recover the missing data, you'll need to investigate why the worker files are being corrupted in the first place. This could be due to a variety of reasons, such as:
+
+*   **Insufficient memory:** The worker processes might be consuming too much memory, causing them to crash and corrupt the files.
+*   **Incorrect file paths:** Make sure that the file paths are correct and that the files are being created in the expected location.
+*   **Corrupted worker code:** The worker code might be producing invalid HDF5 files. Inspect the worker code and ensure that it's writing the files correctly.
+
+To avoid this issue in the future, consider implementing a robust error handling mechanism in the worker code to detect and handle potential issues before they lead to corrupted files.

@@ -1,0 +1,51 @@
+Below is a Python script that uses PyWake to generate flow field images of the sensitivity of the flow to the inflow and saves them to an image file.
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from PyWake import get_sobol_sensitivity
+
+# Set parameters
+x_start = 0
+x_end = 10
+y_start = 0
+y_end = 10
+dx = 0.01
+dy = 0.01
+N = 1000
+x_grid = np.linspace(x_start, x_end, N)
+y_grid = np.linspace(y_start, y_end, N)
+
+# Generate Sobol sensitivity grid
+sobol_grid_x = np.linspace(x_start, x_end, N)
+sobol_grid_y = np.linspace(y_start, y_end, N)
+sobol_grid = np.meshgrid(sobol_grid_x, sobol_grid_y)
+
+# Calculate Sobol sensitivity
+sobol_sens = get_sobol_sensitivity(x_grid, y_grid, sobol_grid)
+
+# Plot flow field images
+fig, axs = plt.subplots(1, 4, figsize=(15, 5))
+for i in range(4):
+    ax = axs[i]
+    ax.imshow(sobol_sens[i, :, :], cmap='hot', extent=[x_start, x_end, y_start, y_end])
+    ax.set_title(f'Sobol sensitivity at (x, y) = ({sobol_grid_x[i, 0]:.2f}, {sobol_grid_y[i, 0]:.2f})')
+    ax.set_xlabel('x')
+    ax.set_ylabel('y')
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_xlim(x_start, x_end)
+    ax.set_ylim(y_start, y_end)
+plt.tight_layout()
+plt.show()
+```
+
+This script first generates a Sobol sensitivity grid with the specified parameters and then uses PyWake to calculate the Sobol sensitivity at each point on the grid. Finally, it plots the flow field images of the sensitivity at different points on the grid.
+
+Note: You will need to have PyWake installed and PyPlot installed to run this script. You can install PyWake using pip:
+
+```bash
+pip install PyWake
+```
+
+You can modify the parameters (x_start, x_end, y_start, y_end, dx, dy, N) to suit your needs.

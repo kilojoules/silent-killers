@@ -1,0 +1,75 @@
+The issue you're encountering is due to the fact that the `h5py` library is unable to open one of the files in the `worker_file` list, specifically because the file signature is not found.
+
+This is likely caused by the fact that you're joining multiple files together using `h5py.File` in a loop, which can lead to file corruption or inconsistencies if the files are not properly closed.
+
+To diagnose this issue, let's analyze the error message and the provided files.
+
+The error message indicates that the file signature is not found, which suggests that the file is not a valid H5 file. This could be due to several reasons:
+
+1.  **File corruption**: The file may have become corrupted during the joining process, leading to a file signature that is not recognized by `h5py`.
+2.  **Inconsistent file structure**: The file may not have the expected structure, which could be due to the joining process or other issues.
+3.  **Missing or invalid data**: The file may not contain the expected data, or the data may be in an invalid format.
+
+To recover the missing data, you can try the following:
+
+1.  **Verify the files**: Check the files for any signs of corruption or damage. You can use tools like `h5py`'s `check` function to verify the integrity of the files.
+2.  **Recreate the files**: Try recreating the files from scratch, using the same joining process, to ensure that the files are properly formatted and contain the expected data.
+3.  **Use a different joining method**: Consider using a different method to join the files, such as using `h5py`'s `join` function or a different library that is more robust.
+
+Here's an example of how you can modify the script to handle the issue:
+
+```python
+import h5py
+import os
+
+# Define the list of worker files
+worker_files = ['worker_1.h5', 'worker_2.h5', 'worker_3.h5']
+
+# Initialize an empty list to store the valid files
+valid_files = []
+
+# Iterate over the worker files
+for file in worker_files:
+    try:
+        # Attempt to open the file
+        with h5py.File(file, 'r') as f:
+            # Check if the file is valid
+            if f.attrs['file_signature'] == 'valid':
+                # If the file is valid, add it to the list of valid files
+                valid_files.append(file)
+    except OSError as e:
+        # If the file is not valid, print an error message
+        print(f"Error: Unable to open file {file}. Error: {e}")
+
+# Print the list of valid files
+print(valid_files)
+```
+
+In this modified script, we iterate over the list of worker files and attempt to open each file using `h5py.File`. If the file is valid, we add it to the list of valid files. If the file is not valid, we print an error message and continue to the next file. This approach ensures that we only process valid files and avoids the issue with corrupted or invalid files.
+
+As for the issue with the joining operation, you can try to use a different joining method, such as using `h5py`'s `join` function, which is designed to handle file joins more robustly. Here's an example:
+
+```python
+import h5py
+
+# Define the list of worker files
+worker_files = ['worker_1.h5', 'worker_2.h5', 'worker_3.h5']
+
+# Initialize an empty list to store the joined files
+joined_files = []
+
+# Iterate over the worker files
+for file in worker_files:
+    # Attempt to open the file
+    with h5py.File(file, 'r') as f:
+        # Join the file to the existing file
+        joined_files.append(h5py.File('joined_file.h5', 'a'))
+        for key in f.keys():
+            joined_files[-1].create_dataset(key, data=f[key])
+
+# Close the joined files
+for file in joined_files:
+    file.close()
+```
+
+In this modified script, we use the `h5py.File` class to open each file and join it to an existing file named `joined_file.h5`. We use the `create_dataset` method to add the data from the worker file to the joined file. This approach ensures that the joined files are properly formatted and contain the expected data.

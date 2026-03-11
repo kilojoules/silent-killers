@@ -1,0 +1,45 @@
+The error you're experiencing is due to the joining operation failing. The `join` method in `h5py` is not able to read the files because the files do not have a common data type. You need to specify a common type when joining files to ensure they can be read together.
+
+Here's a modified version of your script that detects when the joining operation fails and stops the process cleanly:
+
+```python
+import h5py
+import numpy as np
+
+def join_h5_files(file1, file2, common_type):
+    try:
+        with h5py.File(file1, 'r') as f1, h5py.File(file2, 'r') as f2:
+            return np.concatenate((f1, f2), axis=0)
+    except Exception as e:
+        print(f"Error joining files: {e}")
+        return None
+
+def main():
+    # Define the common type
+    common_type = 'float32'
+
+    # Define the seed values
+    seeds = [24, 49, 39]
+
+    # Define the file paths
+    file_paths = ["/path/to/seed1.h5", "/path/to/seed2.h5"]
+
+    # Join the files
+    joined_data = join_h5_files(file_paths[0], file_paths[1], common_type)
+
+    if joined_data is not None:
+        # Save the joined data to a new file
+        joined_file_path = "/path/to/joined_data.h5"
+        joined_data.tohdf5(joined_file_path, title="Joined Data", compression='gzip', format='h5', engine='mp')  # mp: Multi-level Parallel
+
+        print(f"Joined data saved to {joined_file_path}")
+
+if __name__ == "__main__":
+    main()
+```
+
+In this script, we define a function `join_h5_files` that takes two `h5py` files, a common type, and checks if they can be joined together. If they can be joined, it concatenates the two files along the specified axis (in this case, the third axis). If not, it returns `None`.
+
+In the `main` function, we join the files and save the joined data to a new file. We also specify the compression and format when saving the joined data.
+
+Note that this script assumes that the files are in the same directory as the script. You may need to adjust the file paths to match your actual file locations.

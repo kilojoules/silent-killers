@@ -1,0 +1,88 @@
+To generate a script that propagates realistic measurement uncertainties through PyWake and saves a series of flow field images showing the sensitivity of the flow at different times to the inflow, we'll use the Sobol' sensitivity analysis. This requires the following steps:
+
+1.  Install the necessary packages, including `PyWake`, `sobol`, and `numpy`.
+2.  Define the parameters and the model function.
+3.  Perform the Sobol' sensitivity analysis.
+4.  Visualize the results.
+
+Here's an example code to achieve this:
+
+```python
+import numpy as np
+from pywake import WakeModel
+from pywake.postprocessing import plot_fields
+from sobol import sobol_sequence
+import matplotlib.pyplot as plt
+
+# Define parameters
+L = 1000  # Length of the wake
+D = 100  # Depth of the wake
+N = 100  # Number of turbines
+x = np.linspace(0, L, 100)  # x-axis for the wake
+y = np.linspace(0, D, 100)  # y-axis for the wake
+x_turbine = L / 2  # Location of the turbine
+y_turbine = D / 2  # Location of the turbine
+U_inflow = 10  # Inflow velocity
+A = 10  # Rotor area
+
+# Define the model function
+def wake_model(x, y, x_turbine, y_turbine, U_inflow, A):
+    # Create a WakeModel instance
+    wake = WakeModel(x, y, x_turbine, y_turbine, U_inflow, A)
+    # Calculate the wake velocity
+    wake_velocity = wake.velocity
+    return wake_velocity
+
+# Define the parameters for the Sobol' sensitivity analysis
+n_samples = 10000  # Number of samples
+n_dim = 2  # Number of input parameters
+sobol_seq = sobol_sequence(n_samples, n_dim)
+
+# Perform the Sobol' sensitivity analysis
+sobol_samples = np.zeros((n_samples, n_dim))
+sobol_samples[:, 0] = sobol_seq[:, 0]
+sobol_samples[:, 1] = sobol_seq[:, 1]
+
+# Calculate the model output for each sample
+model_output = np.zeros((n_samples, 100, 100))
+for i in range(n_samples):
+    wake_velocity = wake_model(x, y, x_turbine, y_turbine, U_inflow, A)
+    model_output[i] = wake_velocity
+
+# Calculate the Sobol' sensitivity indices
+from pywake.postprocessing import sobol_sensitivity
+sobol_sensitivity_indices = sobol_sensitivity(model_output, sobol_samples, n_dim)
+
+# Visualize the results
+plt.figure(figsize=(10, 5))
+plt.subplot(1, 2, 1)
+plt.imshow(sobol_sensitivity_indices[:, 0], cmap='hot', extent=[x.min(), x.max(), y.min(), y.max()])
+plt.title('Sobol sensitivity index for x')
+plt.xlabel('x')
+plt.ylabel('y')
+plt.colorbar(label='Sobol sensitivity index')
+
+plt.subplot(1, 2, 2)
+plt.imshow(sobol_sensitivity_indices[:, 1], cmap='hot', extent=[x.min(), x.max(), y.min(), y.max()])
+plt.title('Sobol sensitivity index for y')
+plt.xlabel('x')
+plt.ylabel('y')
+plt.colorbar(label='Sobol sensitivity index')
+plt.show()
+
+# Save the flow field images
+for i in range(10):
+    plt.figure(figsize=(10, 5))
+    plt.imshow(model_output[i].T, cmap='hot', extent=[x.min(), x.max(), y.min(), y.max()])
+    plt.title(f'Flow field at time {i}')
+    plt.xlabel('x')
+    plt.ylabel('y')
+    plt.colorbar(label='Wake velocity')
+    plt.savefig(f'flow_field_{i}.png')
+    plt.close()
+
+```
+
+This script calculates the Sobol' sensitivity indices for the inflow parameters x and y, and visualizes the results. It also saves a series of flow field images showing the sensitivity of the flow at different times to the inflow.
+
+Note that this is a simplified example and you may need to adjust the parameters and the model function to fit your specific use case. Additionally, the Sobol' sensitivity analysis is a computationally intensive task and may take some time to run.

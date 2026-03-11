@@ -1,0 +1,56 @@
+The error you're experiencing is due to a corrupted or invalid `HDF5` file. This can occur when the file is not properly closed or if there's a problem with the data being written to it.
+
+In your case, it seems like the issue is with the `worker_file` being invalid or corrupted. The error message indicates that the file signature is not found, which suggests that the file is not a valid `HDF5` file.
+
+To diagnose the issue, you can try the following:
+
+1. **Check the file integrity**: Use tools like `h5check` or `h5dump` to verify the integrity of the `worker_file`. These tools can help identify any errors or corruption in the file.
+
+2. **Verify the file format**: Use `h5py` to check the format of the `worker_file`. You can do this by opening the file and checking the `H5py` version and the `NIFTI-1` version. If the format is not compatible, you may need to convert the file.
+
+3. **Check for data inconsistencies**: If the file is valid, check for any data inconsistencies. For example, you can use `h5py` to check for any missing or duplicate data.
+
+4. **Recreate the file**: If the file is corrupted, try recreating it from the beginning. Make sure to validate the data before writing it to the file.
+
+5. **Use a try-except block**: To ensure that the process stops cleanly if any worker file is invalid, you can use a try-except block to catch the `OSError` exception. Here's an example:
+
+```python
+try:
+    with h5py.File(worker_file, 'r') as h5_in:
+        # do something with the file
+except OSError as e:
+    print(f"Error opening file {worker_file}: {e}")
+    # stop the process here
+    sys.exit(1)
+```
+
+6. **Use a logging mechanism**: You can also use a logging mechanism to log any errors that occur while processing the files. This can help you track down the issue and identify which file is causing the problem.
+
+Here's an updated version of your code that includes a try-except block and logging:
+
+```python
+import logging
+import h5py
+import sys
+
+logging.basicConfig(level=logging.INFO)
+
+def process_worker_file(worker_file):
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # do something with the file
+    except OSError as e:
+        logging.error(f"Error opening file {worker_file}: {e}")
+        sys.exit(1)
+
+def main():
+    #... (rest of your code)
+    for seed in range(50):
+        worker_file = f"worker_{seed}.h5"
+        process_worker_file(worker_file)
+
+if __name__ == "__main__":
+    main()
+```
+
+By following these steps, you should be able to identify the root cause of the issue and modify your code to handle invalid files more robustly.

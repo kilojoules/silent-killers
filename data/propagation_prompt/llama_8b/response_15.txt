@@ -1,0 +1,92 @@
+It seems like you're working with the PyWake library for wind turbine wake simulations. To generate a script that propagates realistic measurement uncertainties through PyWake and saves a series of flow field images showing the sensitivity of the flow at different times to the inflow, we'll need to make some assumptions about your specific use case. However, I'll provide a general outline of how you could achieve this.
+
+First, you'll need to ensure you have the necessary dependencies installed, including PyWake and the Sobol sensitivity analysis library.
+
+```bash
+pip install pywake sobol
+```
+
+Here's an example script that demonstrates how you could use PyWake to simulate the flow field, propagate measurement uncertainties, and perform a Sobol sensitivity analysis on `WS_eff` as a function of `x` and `y`:
+
+```python
+import numpy as np
+import pywake as pw
+import matplotlib.pyplot as plt
+from sobol_distributions import SobolDistribution
+
+# Set the seed for reproducibility
+np.random.seed(0)
+
+# Define the wind turbine and atmospheric conditions
+wake = pw.Wake(
+    x=np.array([0, 10]),  # x-coordinates of the wind turbine
+    y=np.array([0, 0]),  # y-coordinates of the wind turbine
+    z=np.array([80, 80]),  # z-coordinates of the wind turbine
+    wind_direction=270,  # wind direction in degrees
+    wind_speed=10,  # wind speed in m/s
+    wind_shear=0.15,  # wind shear exponent
+    atmospheric_stability='neutral',  # atmospheric stability
+    inflow_field=pw.InflowField(
+        mean_speed=10,  # mean wind speed in m/s
+        turbulence_intensity=0.2,  # turbulence intensity
+        I_x=0.1,  # integral length scale in x-direction
+        I_y=0.1,  # integral length scale in y-direction
+        I_z=0.1,  # integral length scale in z-direction
+    ),
+)
+
+# Define the inflow uncertainties
+inflow_uncertainties = {
+   'mean_speed': 1,  # uncertainty in mean wind speed
+    'turbulence_intensity': 0.1,  # uncertainty in turbulence intensity
+    'I_x': 0.05,  # uncertainty in integral length scale in x-direction
+    'I_y': 0.05,  # uncertainty in integral length scale in y-direction
+    'I_z': 0.05,  # uncertainty in integral length scale in z-direction
+}
+
+# Create a Sobol distribution for the inflow uncertainties
+sobol_dist = SobolDistribution(inflow_uncertainties)
+
+# Define the time points at which to evaluate the flow field
+times = np.linspace(0, 3600, 10)  # 10 time points from 0 to 3600 seconds
+
+# Initialize arrays to store the results
+ws_eff_sobol = np.zeros((len(times), len(sobol_dist), len(sobol_dist)))
+
+# Perform the Sobol sensitivity analysis
+for i, t in enumerate(times):
+    # Evaluate the flow field at the current time point
+    wake.evaluate(t)
+    
+    # Get the wind speed at the turbine location
+    ws_eff = wake.wind_speeds[:, 0, 0]
+    
+    # Sample the inflow uncertainties using the Sobol distribution
+    sobol_samples = sobol_dist.sample((len(sobol_dist),))
+    
+    # Evaluate the wind speed at the turbine location for each set of inflow uncertainties
+    ws_eff_sobol[i] = np.array([np.mean(ws_eff + np.random.normal(0, uncert, size=len(sobol_samples)) for uncert in sobol_samples])
+
+# Plot the Sobol sensitivity indices
+plt.figure(figsize=(10, 8))
+for i in range(len(sobol_dist)):
+    plt.plot(times, ws_eff_sobol[:, i], label=f'Sobol index {i}')
+plt.xlabel('Time (s)')
+plt.ylabel('Wind speed (m/s)')
+plt.title('Sobol sensitivity indices')
+plt.legend()
+plt.show()
+
+# Save the flow field images
+for i, t in enumerate(times):
+    wake.evaluate(t)
+    wake.plot_flow_field('flow_field_{}.png'.format(i))
+```
+
+This script assumes that you have the `pywake` library installed and configured properly. It also assumes that you have the necessary dependencies installed, including `matplotlib` for plotting.
+
+Please note that this is a simplified example and you may need to adjust it to fit your specific use case. Additionally, the Sobol sensitivity analysis is a computationally expensive process, so it may take some time to run depending on the number of time points and the number of inflow uncertainties.
+
+To save the flow field images, you'll need to have a working installation of `pywake` with the necessary dependencies installed. The `plot_flow_field` method of the `Wake` object is used to save the flow field images.
+
+Make sure to replace the `wake.plot_flow_field` method call with the correct method to save the flow field images in your specific use case.

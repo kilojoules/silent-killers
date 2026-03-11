@@ -1,0 +1,93 @@
+The error message indicates that the issue is with the `h5py` library, which is unable to open the file due to a missing file signature. This suggests that the file is not properly formatted or corrupted.
+
+The error is occurring in the line where you're trying to open the `worker_file` with `h5py`. The fact that the error is happening after the `join` operation suggests that the `join` operation may have caused the file to become corrupted.
+
+To diagnose this issue, you can try the following:
+
+1. Check the file format: Verify that the file is in the correct format. The error message indicates that the file signature is missing, which suggests that the file may not be a valid HDF5 file.
+2. Check the file size: Make sure the file is not truncated or corrupted. You can use the `h5py` library to check the file size and contents.
+3. Check the file path: Verify that the file path is correct and that the file exists.
+
+To modify the script to detect and stop the process cleanly if any worker file is invalid, you can add error handling to catch the `OSError` exception and exit the process.
+
+Here's an example of how you can modify the script to add error handling:
+
+```python
+import h5py
+import os
+
+def main():
+    #... (rest of the script remains the same)
+
+    for seed in seeds:
+        worker_file = f"{base_dir}/{seed}.h5"
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                #... (rest of the code that uses the file remains the same)
+        except OSError as e:
+            print(f"Error opening file {worker_file}: {e}")
+            print(f"Skipping seed {seed}")
+            continue
+
+if __name__ == "__main__":
+    main()
+```
+
+This will catch the `OSError` exception and print an error message, then skip the current seed and continue with the next one.
+
+You can also add additional error handling to log the error and exit the process:
+
+```python
+import h5py
+import os
+import logging
+
+logging.basicConfig(level=logging.ERROR)
+
+def main():
+    #... (rest of the script remains the same)
+
+    for seed in seeds:
+        worker_file = f"{base_dir}/{seed}.h5"
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                #... (rest of the code that uses the file remains the same)
+        except OSError as e:
+            logging.error(f"Error opening file {worker_file}: {e}")
+            logging.error(f"Skipping seed {seed}")
+            return
+
+if __name__ == "__main__":
+    main()
+```
+
+This will log the error and exit the process.
+
+As for the missing data, you can try to recover it by using the `h5py` library to read the file and print the contents. However, the exact steps will depend on the specifics of your data and the format of the file.
+
+```python
+import h5py
+
+def recover_data(worker_file):
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            print(h5_in.keys())
+            print(h5_in.attrs)
+            print(h5_in[workers].shape)
+            print(h5_in[workers].dtype)
+    except OSError as e:
+        print(f"Error recovering data from file {worker_file}: {e}")
+
+#... (rest of the code that uses the file remains the same)
+
+for seed in seeds:
+    worker_file = f"{base_dir}/{seed}.h5"
+    try:
+        recover_data(worker_file)
+    except OSError as e:
+        print(f"Error recovering data from file {worker_file}: {e}")
+        print(f"Skipping seed {seed}")
+        continue
+```
+
+This will print the contents of the file and print an error message if the file cannot be recovered.

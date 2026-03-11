@@ -1,0 +1,56 @@
+Here's an example code snippet that demonstrates how to propagate the Sobol sensitivity of the WS_eff function through PyWake and save the results as flow field images:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+import PyWake as pw
+import time
+
+# Set the parameters
+N = 100
+L = 1.0  # length of the domain
+T = 10.0  # time step
+Nx, Ny, Lx, Ly = 100, 100, 0.1, 0.1  # grid resolution
+x, y, z = np.meshgrid(np.linspace(0, L, Nx), np.linspace(0, L, Ny), Lx, Ly)  # create a grid
+ws_eff = np.sin(np.pi * x / 10.0) * np.sin(np.pi * y / 10.0)  # example WS_eff function
+u = np.zeros((Nx, Ny, Lx, Ly))  # initialize the velocity field
+
+# Set the time step and the number of time steps
+dt = 0.1
+t = 0.0
+u[:, :, :, 0] = ws_eff  # initialize the velocity field
+
+# Initialize the solution
+u_old = np.copy(u)
+
+while t < T:
+    # Propagate the solution using the PyWake library
+    u_new = pw.propagate(u, dt, Lx, Ly)
+
+    # Compute the Sobol sensitivity
+    Sobol_x = pw.sobol_sensitivity(u_new, x, y)
+    Sobol_y = pw.sobol_sensitivity(u_new, y, z)
+
+    # Update the velocity field
+    u[:, :, :, 0] = u_new
+
+    # Plot the flow field
+    plt.figure(figsize=(10, 10))
+    plt.imshow(u[:, :, :, 0], extent=[x.min(), x.max(), y.min(), y.max()], cmap='viridis', origin='lower')
+    plt.colorbar()
+    plt.title('Flow field at time step {0:.2f}'.format(t))
+    plt.show()
+
+    # Save the flow field to a file
+    plt.savefig('flow_field_{}.png'.format(int(t * 10**3)), bbox_inches='tight')
+
+    # Save the Sobol sensitivity
+    Sobol_x = Sobol_x[:, :, 0].reshape(-1, 1, 1, 1)
+    Sobol_y = Sobol_y[:, :, 0].reshape(-1, 1, 1, 1)
+    np.save('sobel_x.npy', Sobol_x)
+    np.save('sobel_y.npy', Sobol_y)
+
+    t += dt
+```
+
+This code snippet assumes that the `PyWake` library is installed and configured properly. It propagates the flow field using the `propagate` method and computes the Sobol sensitivity using the `sobol_sensitivity` method. The resulting Sobol sensitivity values are saved to two files: `sobel_x.npy` and `sobel_y.npy`.

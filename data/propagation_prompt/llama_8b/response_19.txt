@@ -1,0 +1,93 @@
+To achieve this, we will use the pywake library for wake modeling and the SALib library for sensitivity analysis. Below is an example script that performs the sensitivity analysis using the Sobol' method.
+
+```python
+import numpy as np
+import pywake as pw
+import salib.analyze as sa
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+
+# Define the function to compute the wake field
+def compute_wake(x, y, inflow, WS_eff):
+    wake = pw.Wake(
+        x=x,
+        y=y,
+        inflow=inflow,
+        WS_eff=WS_eff,
+        num_points=1000,
+        grid_resolution=0.1,
+    )
+    wake.compute()
+    return wake
+
+# Define the bounds for the variables
+bounds = {
+    'x': (0, 100),
+    'y': (0, 100),
+    'WS_eff': (5, 20),
+}
+
+# Generate the Sobol' sample set
+problem = sa.SOBOL(
+    num_samples=1000,
+    num_vars=3,
+    bounds=bounds,
+)
+
+# Compute the wake field for each sample
+inflow = 10  # m/s
+x = np.linspace(bounds['x'][0], bounds['x'][1], 100)
+y = np.linspace(bounds['y'][0], bounds['y'][1], 100)
+x, y = np.meshgrid(x, y)
+WS_eff = np.linspace(bounds['WS_eff'][0], bounds['WS_eff'][1], 100)
+samples = problem.sample()
+wake_fields = np.zeros((100, 100, 100, 1000))
+for i, sample in enumerate(samples):
+    wake_field = compute_wake(x, y, inflow, sample['WS_eff'])
+    wake_fields[:, :, :, i] = wake_field.flow_field()
+
+# Compute the Sobol' sensitivity indices
+si_indices = sa.analyze(
+    wake_fields,
+    problem,
+    sobol_indices=True,
+    sobol_indices_type='S1',
+)
+
+# Plot the sensitivity indices
+plt.figure(figsize=(10, 6))
+plt.imshow(si_indices['S1'], cmap='hot', interpolation='nearest')
+plt.colorbar(label='S1 Index')
+plt.title('Sobol\' Sensitivity Indices')
+plt.xlabel('WS_eff')
+plt.ylabel('y')
+plt.show()
+
+# Create an animation of the flow field at different times
+def animate(i):
+    plt.clf()
+    plt.imshow(wake_fields[:, :, i, :].mean(axis=2), cmap='hot', interpolation='nearest')
+    plt.colorbar(label='Flow Field')
+    plt.title(f'Flow Field at t={i/100:.2f} s')
+    plt.xlabel('x (m)')
+    plt.ylabel('y (m)')
+
+ani = animation.FuncAnimation(
+    plt.gcf(),
+    animate,
+    frames=100,
+    interval=50,
+)
+
+plt.show()
+```
+
+This script computes the wake field at 1000 different points in the parameter space defined by `x`, `y`, and `WS_eff`. It then uses the SALib library to compute the Sobol' sensitivity indices of the wake field with respect to `WS_eff`. Finally, it creates an animation of the flow field at different times, with the average flow field at each time step.
+
+Please note that this script assumes that the `pywake` and `salib` libraries are installed. If not, you can install them using pip:
+
+```bash
+pip install pywake salib
+```
+
+Also, this script uses a simplified wake model and assumes a constant inflow velocity. You may need to modify the script to match your specific use case.

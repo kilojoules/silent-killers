@@ -1,0 +1,40 @@
+The error message indicates that the issue is with the file `worker_file` not being found. This is likely due to a problem with the joining operation that occurred during the optimization process.
+
+To diagnose this issue, you can try the following steps:
+
+1. Check the `worker_file` path: Verify that the path to the `worker_file` is correct and that the file exists. You can do this by printing the `worker_file` path before attempting to open it.
+
+2. Check the file format: Ensure that the `worker_file` is in the correct format. The error message suggests that the file signature is not found, which may indicate a problem with the file format.
+
+3. Check the joining operation: Investigate the joining operation that occurred during the optimization process. It's possible that the joining operation failed, causing the `worker_file` to become corrupted.
+
+4. Check for duplicate files: It's possible that there are duplicate files in the output directory, which can cause the joining operation to fail.
+
+To ensure that the script stops cleanly if any worker file is invalid, you can add a try-except block around the file opening code and raise an exception if the file cannot be opened.
+
+Here's an example of how you can modify the script to add error handling:
+
+```python
+import h5py
+import os
+
+def main():
+    #... (rest of the script remains the same)
+
+    for seed in seeds:
+        worker_file = os.path.join(output_dir, f"{farm}_{seed}.h5")
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                #... (rest of the code that uses the file remains the same)
+        except OSError as e:
+            print(f"Error opening file {worker_file}: {e}")
+            # You can also log the error or raise a custom exception here
+            raise ValueError(f"Error opening file {worker_file}")
+
+if __name__ == "__main__":
+    main()
+```
+
+By adding this try-except block, the script will stop cleanly if any worker file cannot be opened, and the error message will be printed or logged.
+
+As for recovering the missing data, it's unlikely that you can recover the data from the corrupted `worker_file`. The error message suggests that the file signature is not found, which means that the file is not in the correct format. In this case, the data is likely lost. However, you can try to recreate the missing files using the original data or by re-running the script with the correct file format.

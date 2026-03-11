@@ -1,0 +1,248 @@
+The code you've posted appears to be a complex optimization script for optimizing the parameters of a wind turbine wake model. Here are some thoughts on your approach:
+
+**Modularizing the code**: Breaking down the code into smaller functions or classes would make it easier to understand and maintain. For example, you could have separate functions for initializing the wake model, running the simulation, and evaluating the performance. This would also make it easier to reuse these functions in other scripts.
+
+**Reporting average and p90s of errors**: You're right that you should report the average and p90s of the errors, which are the differences between the observed and predicted wake deficits. This would provide a more comprehensive view of the performance of the optimization.
+
+**Flow field plots**: You're using contour plots to visualize the wake deficits, which is a good approach. However, you might consider using a more intuitive visualization, such as a 3D plot or a plot with different colors for different wake deficits.
+
+**Optimization approach**: The Bayesian optimization approach you're using is a good way to optimize the parameters of the wake model. However, you might want to consider using a different optimization algorithm or adjusting the hyperparameters to improve the performance.
+
+**Code organization**: The code is quite long and dense. You might consider breaking it down into separate sections or modules, each with a clear purpose. This would make it easier to understand and navigate the code.
+
+Here's a suggested refactoring of your code:
+
+```python
+import numpy as np
+
+import pandas as pd
+
+import matplotlib.pyplot as plt
+
+import matplotlib.animation as animation
+
+import xarray as xr
+
+from py_wake.rotor_avg_models.gaussian_overlap_model import GaussianOverlapAvgModel
+
+from py_wake.deficit_models.gaussian import TurboGaussianDeficit
+
+from py_wake.examples.data.dtu10mw import DTU10MW
+
+from py_wake.deficit_models.gaussian import BlondelSuperGaussianDeficit2020
+
+from py_wake import HorizontalGrid
+
+from py_wake.deflection_models import JimenezWakeDeflection
+
+from py_wake.turbulence_models import CrespoHernandez
+
+from py_wake.rotor_avg_models import RotorCenter
+
+from py_wake.deficit_models import SelfSimilarityDeficit2020
+
+from py_wake.wind_farm_models import PropagateDownwind, All2AllIterative
+
+from py_wake.superposition_models import LinearSum
+
+from py_wake.ground_models import Mirror
+
+from py_wake.examples.data.hornsrev1 import Hornsrev1Site
+
+from bayes_opt import BayesianOptimization
+
+from py_wake.deficit_models.utils import ct2a_mom1d
+
+def initialize_wake_model(site, turbine, flow_roi):
+    """
+    Initialize the wake model with the given site, turbine, and flow ROI.
+    """
+    # Initialize the wake deficit model
+    if MODEL == 1:
+        wake_deficitModel = BlondelSuperGaussianDeficit2020()
+    else:
+        wake_deficitModel = TurboGaussianDeficit(A=best_params['A'], cTI=[best_params['cti1'], best_params['cti2']],
+
+                                                    ctlim=best_params['ctlim'], ceps=best_params['ceps'],
+
+                                                    ct2a=ct2a_mom1d,
+
+                                                    groundModel=Mirror(),
+
+                                                    rotorAvgModel=GaussianOverlapAvgModel())
+
+    # Initialize the turbulence model
+    turbulenceModel = CrespoHernandez(**turb_args)
+
+    # Initialize the superposition model
+    superpositionModel = LinearSum()
+
+    # Initialize the deflection model
+    deflectionModel = None
+
+    # Initialize the blockage deficit model
+    blockage_deficitModel = SelfSimilarityDeficit2020(**blockage_args)
+
+    return wake_deficitModel, turbulenceModel, superpositionModel, deflectionModel, blockage_deficitModel
+
+def run_simulation(site, turbine, wake_deficitModel, turbulenceModel, superpositionModel, deflectionModel, blockage_deficitModel):
+    """
+    Run the simulation with the given site, turbine, and wake deficit model.
+    """
+    # Initialize the wake model
+    wfm = All2AllIterative(site, turbine,
+
+                                wake_deficitModel=wake_deficitModel,
+
+                                superpositionModel=superpositionModel, deflectionModel=deflectionModel,
+
+                                turbulenceModel=turbulenceModel,
+
+                                blockage_deficitModel=blockage_deficitModel)
+
+    # Run the simulation
+    sim_res = wfm([0], [0], ws=full_ws, TI=full_ti, wd=[270] * full_ti.size, time=True)
+
+    return sim_res
+
+def evaluate_performance(sim_res, flow_roi):
+    """
+    Evaluate the performance of the simulation.
+    """
+    # Get the predicted wake deficits
+    flow_map = sim_res.flow_map(HorizontalGrid(x=target_x, y=target_y))
+
+    # Get the observed wake deficits
+    observed_deficit = flow_roi.deficits.interp(ct=this_pred_sim.CT, ti=this_pred_sim.TI, z=0).isel(wt=0)
+
+    # Calculate the differences between the predicted and observed wake deficits
+    pred = (this_pred_sim.WS - flow_map.WS_eff.isel(h=0)) / this_pred_sim.WS
+
+    # Calculate the RMSE
+    rmse = float(np.sqrt(((all_obs - pred) ** 2).mean(['x', 'y'])).mean('time')
+
+    return rmse
+
+def optimize_params(site, turbine, flow_roi):
+    """
+    Optimize the parameters of the wake model using Bayesian optimization.
+    """
+    # Define the bounds for the parameters
+    if DOWNWIND:
+        pbounds = {
+            'a_s': (0.001, 0.5),
+            'b_s': (0.001, 0.01),
+            'c_s': (0.001, 0.5),
+            'b_f': (-2, 1),
+            'c_f': (0.1, 5),
+            'ch1': (-1, 2),
+            'ch2': (-1, 2),
+            'ch3': (-1, 2),
+            'ch4': (-1, 2),
+        }
+    else:
+        pbounds = {
+           'ss_alpha': (0.05, 3),
+           'ss_beta': (0.05, 3),
+            'rp1': (-2, 2),
+            'rp2': (-2, 2),
+            'ng1': (-3, 3),
+            'ng2': (-3, 3),
+            'ng3': (-3, 3),
+            'ng4': (-3, 3),
+            'fg1': (-2, 2),
+            'fg2': (-2, 2),
+            'fg3': (-2, 2),
+            'fg4': (-2, 2)
+        }
+
+    # Define the default parameters
+    defaults = {
+        'a_s': 0.17,
+        'b_s': 0.005,
+        'c_s': 0.2,
+        'b_f': -0.68,
+        'c_f': 2.41,
+        'ch1': 0.73,
+        'ch2': 0.8325,
+        'ch3': -0.0325,
+        'ch4': -0.32
+    }
+
+    # Run the optimization
+    optimizer = BayesianOptimization(f=evaluate_rmse, pbounds=pbounds, random_state=1)
+    optimizer.probe(params=defaults, lazy=True)
+    optimizer.maximize(init_points=50, n_iter=200)
+
+    # Get the best parameters and corresponding RMSE
+    best_params = optimizer.max['params']
+    best_rmse = -optimizer.max['target']
+
+    return best_params, best_rmse
+
+def plot_results(site, turbine, flow_roi, sim_res, best_params):
+    """
+    Plot the results of the simulation.
+    """
+    # Initialize the wake deficit model
+    wake_deficitModel, turbulenceModel, superpositionModel, deflectionModel, blockage_deficitModel = initialize_wake_model(site, turbine, flow_roi)
+
+    # Run the simulation
+    sim_res = run_simulation(site, turbine, wake_deficitModel, turbulenceModel, superpositionModel, deflectionModel, blockage_deficitModel)
+
+    # Evaluate the performance of the simulation
+    rmse = evaluate_performance(sim_res, flow_roi)
+
+    # Plot the results
+    plt.figure(figsize=(10, 6))
+    plt.plot(target_x, observed_deficit.T, label='Observed')
+    plt.plot(target_x, pred, label='Predicted')
+    plt.plot(target_x, diff, label='Diff')
+    plt.legend()
+    plt.show()
+
+    # Plot the RMSE
+    plt.plot(rmse_values)
+    plt.show()
+
+    # Plot the best parameters
+    keys = list(best_params.keys())
+    best_vals = []
+    default_vals = []
+    for key in keys:
+        best_vals.append(best_params[key])
+        default_vals.append(defaults[key])
+    plt.bar(keys, best_vals)
+    plt.bar(keys, default_vals, edgecolor='black', linewidth=2, color='none', capstyle='butt')
+    plt.title('Optimal RMSE: %.4f' % best_rmse)
+    plt.tight_layout()
+    plt.savefig('bar_LB_%i_UP_%i' % (X_LB, X_UB))
+
+    # Plot the flow field plots
+    fig, ax = plt.subplots(3, 1, figsize=(5, 15))
+    co = ax[0].contourf(target_x, target_y, observed_deficit.T)
+    cp = ax[1].contourf(target_x, target_y, pred)
+    cd = ax[2].contourf(target_x, target_y, diff)
+    for jj, c in enumerate([co, cp, cd]):
+        fig.colorbar(c, ax=ax[jj])
+    ax[0].set_ylabel('Observed')
+    ax[1].set_ylabel('Prediction')
+    ax[2].set_ylabel('Diff')
+    plt.tight_layout()
+    plt.savefig(f'figs/downsream_err_{t}')
+
+# Main function
+if DOWNWIND:
+    best_params, best_rmse = optimize_params(site, turbine, flow_roi)
+else:
+    best_params, best_rmse = optimize_params(site, turbine, flow_roi)
+
+# Plot the results
+plot_results(site, turbine, flow_roi, sim_res, best_params)
+
+# Print the results
+print(f"RMSE values per time step: {rmse_values}")
+print(f"Overall RMSE: {overall_rmse}")
+```
+
+This refactoring makes the code more modular and easier to understand. It also separates the different functions and variables into separate sections, which makes it easier to follow the code. The `initialize_wake_model`, `run_simulation`, `evaluate_performance`, and `plot_results` functions are all separate and can be reused in other scripts. The `optimize_params` function is also separated from the main code and can be reused to optimize the parameters of other wake models.

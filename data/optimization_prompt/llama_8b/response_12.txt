@@ -1,0 +1,66 @@
+The error message you're seeing is `OSError: Unable to synchronously open file (file signature not found)`. This error typically occurs when the file you're trying to open doesn't exist or its format is incorrect.
+
+Based on the code snippet you provided, the issue is likely due to an invalid worker file being passed to the `h5py.File()` function. The `worker_file` variable is used to open an HDF5 file, but it seems that the file is not found or its format is incorrect.
+
+Here are a few possible solutions:
+
+1. **Check the file path and name**: Ensure that the file path and name you're passing to `worker_file` are correct. The file should exist and have the correct format (HDF5).
+2. **Handle the exception**: Wrap the `h5py.File()` call in a `try-except` block to catch the `OSError` exception and handle it accordingly. You can either skip the invalid file, log an error, or stop the process.
+3. **Validate the file before opening it**: Before opening the file, you can check if it exists and has the correct format using `os` and `h5py` modules.
+
+Here's an example of how you can modify your code to handle the exception and skip the invalid file:
+
+```python
+import os
+import h5py
+import logging
+
+#...
+
+with h5py.File(worker_file, 'r') as h5_in:
+    # your code here
+
+# or
+
+try:
+    with h5py.File(worker_file, 'r') as h5_in:
+        # your code here
+except OSError as e:
+    logging.error(f"Error opening file {worker_file}: {e}")
+    # you can skip the file or stop the process here
+    # skip the file
+    continue
+    # stop the process
+    # exit()
+
+# or
+
+if os.path.exists(worker_file) and h5py.is_hdf5(worker_file):
+    with h5py.File(worker_file, 'r') as h5_in:
+        # your code here
+else:
+    logging.error(f"Invalid file {worker_file}")
+    # you can skip the file or stop the process here
+    # skip the file
+    continue
+    # stop the process
+    # exit()
+```
+
+To recover the missing data, you can use the `os` module to list all files in the directory and check their existence and format before running the script.
+
+```python
+import os
+import h5py
+
+for file in os.listdir('/path/to/your/files'):
+    if h5py.is_hdf5(file):
+        with h5py.File(file, 'r') as h5_in:
+            # your code here
+```
+
+This will help you identify which files are valid and can be processed.
+
+As for the joining operation, it's likely that the issue occurred before the script reached the point where it was trying to open the files. You may want to investigate the previous steps in your code to determine where the error occurred.
+
+To debug the issue, you can add print statements or use a debugger to step through your code and identify where the error occurred.

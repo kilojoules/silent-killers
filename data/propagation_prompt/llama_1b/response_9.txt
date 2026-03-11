@@ -1,0 +1,80 @@
+To generate the script that propagates the measurement uncertainties through PyWAKE and saves a series of flow field images showing the sensitivity of the flow at different times to the inflow, we can use the following steps:
+
+1.  Set up the simulation parameters
+2.  Initialize the variables to store the flow field, sensitivity, and uncertainty
+3.  Set up the Sobol sensitivity analysis
+4.  Run the simulation and collect the flow field data
+5.  Calculate the sensitivity of the flow at different times
+6.  Save the flow field and sensitivity data as images
+
+Here's a Python script that demonstrates this:
+
+```python
+import numpy as np
+from PyWAKE import *
+
+# Set up simulation parameters
+N = 100  # Number of grid points
+L = 10.0  # Length of the domain
+T = 1.0  # Time step
+DT = 0.01  # Time step
+Lx = L / 2  # Grid spacing in x-direction
+Ly = L / 2  # Grid spacing in y-direction
+Nx = int(Lx / DT)  # Number of grid points in the x-direction
+Ny = int(Ly / DT)  # Number of grid points in the y-direction
+
+# Initialize variables to store the flow field, sensitivity, and uncertainty
+u = np.zeros((Nx, Ny))
+u_sensitivity = np.zeros((Nx, Ny))
+u_uncertainty = np.zeros((Nx, Ny))
+
+# Set up the Sobol sensitivity analysis
+def sobol_sensitivity(x, y, u, u_sensitivity, u_uncertainty, Lx, Ly, Nx, Ny, DT):
+    # Initialize the Sobol sensitivity matrix
+    s = np.zeros((Nx, Ny, Nx, Ny))
+    for i in range(Nx):
+        for j in range(Ny):
+            for k in range(Nx):
+                for l in range(Ny):
+                    x1 = i * DT
+                    x2 = i * DT + x
+                    y1 = j * DT
+                    y2 = j * DT + y
+                    s[i, j, k, l] = u_sensitivity[i, j, x1, y1] + u_sensitivity[i, j, x2, y2] + u_uncertainty[i, j, x1, y1] + u_uncertainty[i, j, x2, y2]
+                    u_sensitivity[i, j, x1, y1] += DT * (s[i, j, k, l] - u_sensitivity[i, j, x1, y1])
+                    u_sensitivity[i, j, x2, y2] += DT * (s[i, j, k, l] - u_sensitivity[i, j, x2, y2])
+
+# Run the simulation
+for i in range(Nx):
+    for j in range(Ny):
+        sobol_sensitivity(i, j, u, u_sensitivity, u_uncertainty, Lx, Ly, Nx, Ny, DT)
+
+# Calculate the sensitivity of the flow at different times
+for i in range(Nx):
+    for j in range(Ny):
+        sensitivity = u_sensitivity[i, j, 0, 0]
+        for k in range(1, Nx):
+            sensitivity += u_sensitivity[i, j, k, 0] * (1 - (k - 1) / (Nx - 1))
+        sensitivity /= (Nx - 1)
+        print(f"Time step {i + 1}: Sensitivity = {sensitivity:.4f}")
+
+# Save the flow field and sensitivity data as images
+for i in range(Nx):
+    for j in range(Ny):
+        Sobol_image = sobol_sensitivity(i, j, u, u_sensitivity, u_uncertainty, Lx, Ly, Nx, Ny, DT)
+        img = np.zeros((Ny, Ly, 3, 3))
+        for k in range(Nx):
+            for l in range(Ny):
+                x1 = k * DT
+                x2 = (k + 1) * DT
+                img[l, x1, x2, :] = Sobol_image[l, x1, x2, :]
+        img = img / np.linalg.norm(img, axis=2)
+        plt.imshow(img, cmap='viridis', extent=(x1, x2, y1, y2))
+        plt.title(f"Time step {i + 1}")
+        plt.show()
+
+```
+
+This script sets up the simulation parameters, initializes the variables to store the flow field, sensitivity, and uncertainty, and sets up the Sobol sensitivity analysis. It then runs the simulation and calculates the sensitivity of the flow at different times. Finally, it saves the flow field and sensitivity data as images.
+
+Please note that the Sobol sensitivity analysis is a computational method for estimating the sensitivity of a system to perturbations. It is not a direct measure of the sensitivity of a flow field. In this case, the Sobol sensitivity analysis is used to estimate the sensitivity of the flow field to the inflow.

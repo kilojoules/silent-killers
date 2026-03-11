@@ -1,0 +1,62 @@
+The issue here is that the error occurs when the file is not found, and the `with` statement attempts to open the file inside the `with` block. The `with` statement ensures that the file is closed after it is no longer needed, but in this case, it gets stuck in an infinite loop because the file is not found.
+
+To fix this issue, you can use the `try`-`except` block to catch the `OSError` exception and handle it accordingly. You can also use the `with` statement with a `try`-`finally` block to ensure that the file is closed, even if an exception occurs.
+
+Here's an example of how you can modify your code:
+
+```python
+import h5py
+import numpy as np
+
+def main():
+    # Load the data
+    with h5py.File('worker_file.h5', 'r') as h5_in:
+        worker_data = h5_in['worker_data'][:]
+
+    # Optimize the farm layouts
+    with h5py.File('worker_file.h5', 'r') as h5_in:
+        worker_layouts = h5_in['worker_layouts'][:]
+
+    # Check if the file was successfully opened
+    if not h5_in.is_open():
+        print("Error: Unable to open file")
+        return
+
+    # Get the number of seeds
+    num_seeds = worker_layouts.shape[1]
+
+    # Optimize the layouts
+    #...
+
+    # Close the file
+    h5_in.close()
+
+if __name__ == "__main__":
+    main()
+```
+
+This code will catch the `OSError` exception and print an error message if the file is not found, and then close the file regardless of whether an exception occurred or not.
+
+Alternatively, you can use the `try`-`except` block to handle the `OSError` exception:
+
+```python
+import h5py
+import numpy as np
+
+def main():
+    try:
+        with h5py.File('worker_file.h5', 'r') as h5_in:
+            worker_data = h5_in['worker_data'][:]
+
+        # Optimize the farm layouts
+        #...
+
+    except OSError as e:
+        print(f"Error: {e}")
+        return
+
+if __name__ == "__main__":
+    main()
+```
+
+This code will catch any `OSError` exceptions and print an error message if the file is not found, without closing the file.

@@ -1,0 +1,60 @@
+To solve this problem, we can use the Sobol' sensitivity analysis to quantify the sensitivity of the wake efficiency (WS_eff) to the input parameters (x, y). We will use the `pywakes` library to simulate the flow field and calculate the wake efficiency, and then use the `sobol` library to calculate the Sobol' sensitivity indices.
+
+Here is a Python script that generates a series of flow field images showing the sensitivity of the flow at different times to the inflow:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+import pywakes as pw
+import sobol
+
+# Define the input parameters
+x = np.linspace(-1, 1, 100)
+y = np.linspace(-1, 1, 100)
+X, Y = np.meshgrid(x, y)
+
+# Define the inflow parameters
+u_in = 1.0
+v_in = 1.0
+
+# Create a pywakes flow object
+flow = pw.PyWake(u_in, v_in, x, y)
+
+# Calculate the wake efficiency
+ws_eff = flow.wake_efficiency()
+
+# Calculate the Sobol' sensitivity indices
+for i in range(100):
+    # Simulate the flow at time step i
+    flow.step()
+
+    # Calculate the wake efficiency at time step i
+    ws_eff_i = flow.wake_efficiency()
+
+    # Calculate the Sobol' sensitivity indices
+    indices = sobol.sobol(ws_eff_i, X, Y)
+
+    # Plot the flow field at time step i
+    plt.figure()
+    flow.plot_flow_field()
+    plt.title(f"Time step {i}")
+    plt.show()
+
+    # Save the flow field at time step i
+    plt.imsave(f"flow_field_{i}.png", flow.get_flow_field(X, Y))
+
+    # Plot the Sobol' sensitivity indices at time step i
+    plt.figure()
+    plt.imshow(indices, cmap="RdBu")
+    plt.title(f"Sobol' sensitivity indices at time step {i}")
+    plt.colorbar()
+    plt.show()
+```
+
+This script generates a series of flow field images showing the sensitivity of the flow at different times to the inflow. The Sobol' sensitivity indices are calculated for each time step and plotted as an image. The flow field images are saved as PNG files.
+
+Please note that the `pywakes` library uses a simple model for the flow field, and the results may not be accurate for complex flow situations. Also, the Sobol' sensitivity analysis assumes that the input parameters are independent, which may not be the case in real-world scenarios.
+
+Also, please note that the sobol.sobol function returns an array of indices where the first dimension is the number of input parameters and the second dimension is the number of time steps. The indices are calculated for each time step and plotted as an image.
+
+This script can be modified to suit your specific needs, such as changing the input parameters, flow model, or sensitivity analysis method.

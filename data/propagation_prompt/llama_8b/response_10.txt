@@ -1,0 +1,72 @@
+To generate a script that propagates realistic measurement uncertainties through PyWake and saves a series of flow field images showing the sensitivity of the flow at different times to the inflow, we'll use the following steps:
+
+1.  Install the required libraries: PyWake, OpenFOAM, and Sobol.
+2.  Define the geometry and inflow conditions.
+3.  Create a function to propagate the measurement uncertainties.
+4.  Calculate the sensitivity of the flow using the Sobol method.
+5.  Visualize the flow field at different times.
+
+Here's an example code to achieve this:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake import PyWake, Geometry, Wake
+from pywake import plot as pplot
+from pywake.utils import sobol
+from pywake.postprocessing import PostProcessing
+import matplotlib.animation as animation
+
+# Define the geometry and inflow conditions
+geometry = Geometry(
+    x=np.array([0, 100, 100, 200, 200, 0]),
+    y=np.array([0, 0, 20, 20, 0, 0]),
+    z=np.array([0, 0, 0, 0, 0, 0]),
+    n_blades=2,
+    hub_radius=5,
+    rotor_radius=100,
+    inflow_velocity=10,
+    inflow_turbulence_intensity=0.1,
+    wind_direction=270,
+    wind_shear=0,
+    hub_height=50,
+)
+
+# Define the inflow uncertainties
+uncertainty = np.linspace(0, 10, 100)
+
+# Create a PyWake object
+wake = Wake(geometry, uncertainty)
+
+# Propagate the uncertainties
+wake.propagate_averaged_energies()
+
+# Calculate the sensitivity of the flow using the Sobol method
+sobol_results = sobol.sobol(wake, 'WS_eff', 'x', 'y')
+
+# Visualize the flow field at different times
+fig = plt.figure(figsize=(8, 6))
+for t in np.linspace(0, 10, 10):
+    pplot.plot_wake(wake, t, x_range=[0, 200], y_range=[-20, 20])
+    plt.title(f'Time: {t:.2f} s')
+    plt.show(block=False)
+    plt.pause(0.1)
+    plt.clf()
+
+# Save the flow field images
+for i, t in enumerate(np.linspace(0, 10, 10)):
+    fig, ax = plt.subplots(figsize=(8, 6))
+    pplot.plot_wake(wake, t, x_range=[0, 200], y_range=[-20, 20])
+    ax.set_title(f'Time: {t:.2f} s')
+    plt.savefig(f'flow_field_{i}.png')
+    plt.show(block=False)
+    plt.pause(0.1)
+    plt.clf()
+
+# Close the plot
+plt.close()
+```
+
+This script first creates a PyWake object with the specified geometry and inflow conditions. It then propagates the inflow uncertainties using the `propagate_averaged_energies` method. The Sobol method is used to calculate the sensitivity of the flow with respect to the x and y coordinates. Finally, it visualizes the flow field at different times and saves the images as PNG files.
+
+Note that this is a simplified example and you may need to adjust the code to fit your specific use case. Additionally, you may need to install the required libraries and ensure that PyWake is properly configured to run the script.

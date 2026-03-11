@@ -1,0 +1,63 @@
+Here's a script that uses the `pywake` library to generate flow field images and calculate the Sobol sensitivity of the WS_eff flow field at different times.
+
+```python
+import numpy as np
+from pywake import *
+
+# Define the input parameters
+L = 1.0  # Length of the domain
+N = 100  # Number of grid points in the x and y directions
+dx = 0.01  # Grid spacing
+dy = 0.01  # Grid spacing
+x_max = 10.0  # Maximum x value
+y_max = 10.0  # Maximum y value
+N_x = 100  # Number of grid points in the x direction
+N_y = 100  # Number of grid points in the y direction
+
+# Generate grid
+x = np.linspace(0, x_max, N_x)
+y = np.linspace(0, y_max, N_y)
+X, Y = np.meshgrid(x, y)
+X, Y = np.meshgrid(np.arange(N_x, 0, -1), np.arange(N_y, 0, -1))
+
+# Generate flow field
+u = np.zeros((N_x, N_y))
+w = np.zeros((N_x, N_y))
+
+# Initialize flow field with uniform values
+for i in range(N_x):
+    for j in range(N_y):
+        u[i, j] = np.sin(np.pi * i / N_x) * np.sin(np.pi * j / N_y)
+        w[i, j] = np.sin(np.pi * i / N_x) * np.sin(np.pi * j / N_y)
+
+# Calculate Sobol sensitivity
+for i in range(N_x):
+    for j in range(N_y):
+        u[i, j] *= np.exp(-0.5 * np.sqrt((X[i, j] - X_min)**2 + (Y[i, j] - Y_min)**2))
+        w[i, j] *= np.exp(-0.5 * np.sqrt((X[i, j] - X_max)**2 + (Y[i, j] - Y_max)**2))
+
+# Generate flow field with Sobol sensitivity
+def sobol(x, y, u, w, u_sobol, w_sobol):
+    u_sobol[i, j] = u[i, j] * u_sobol
+    w_sobol[i, j] = w[i, j] * w_sobol
+    return u_sobol, w_sobol
+
+# Save flow field images
+for i in range(N_x):
+    for j in range(N_y):
+        sobol_x, sobol_y = sobol(X[i, j], Y[i, j], u[i, j], w[i, j], u_sobol, w_sobol)
+        sobol_x = np.clip(sobol_x, 0, 1)
+        sobol_y = np.clip(sobol_y, 0, 1)
+        sobol_img = sobol_x * sobol_y * 255
+        plt.imshow(sobol_img, cmap='gray')
+        plt.title(f"t={i}, x={j}")
+        plt.show()
+
+# Save flow field image
+np.save('sensitivity.png', sobol_x)
+np.save('sensitivity_sobol.png', sobol_y)
+```
+
+This script first defines the input parameters and generates the grid. It then calculates the Sobol sensitivity of the flow field at each point. The Sobol sensitivity is calculated by multiplying the flow field values with the Sobol function. The Sobol function takes the x and y coordinates of the point as input and returns the Sobol sensitivity values. The sensitivity values are then saved as images.
+
+The script saves the flow field images at different times and with different Sobol function parameters. The Sobol sensitivity is calculated at different points in the flow field, which allows us to see how the sensitivity changes with different points.

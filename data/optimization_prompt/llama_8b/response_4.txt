@@ -1,0 +1,87 @@
+The error you're experiencing is due to the fact that the worker files you're trying to read are not valid HDF5 files, likely because they were not properly closed or written.
+
+The error message "file signature not found" indicates that the file does not start with the expected HDF5 signature, which is a 4-byte signature indicating that the file is an HDF5 file.
+
+Here are some suggestions on how to modify the script to ensure this error is detected reliably and stops the process cleanly if any worker file is invalid:
+
+1.  **Validate HDF5 files before reading them**:
+
+   Before attempting to read a file, check if it has the correct HDF5 signature. You can use the `h5py` library's `is_hdf5` function to do this.
+
+   ```python
+import h5py
+
+def is_hdf5(file_path):
+    with open(file_path, 'rb') as f:
+        return f.read(4) == b'HDF5'
+
+#...
+
+if not is_hdf5(worker_file):
+    print(f"Error: {worker_file} is not a valid HDF5 file.")
+    sys.exit(1)
+```
+
+2.  **Use a try-except block**:
+
+   Wrap the code that reads the worker files in a try-except block to catch any exceptions that occur during the reading process. If an exception is caught, print an error message and exit the process.
+
+   ```python
+try:
+    with h5py.File(worker_file, 'r') as h5_in:
+        # code that uses h5_in
+except OSError as e:
+    print(f"Error reading {worker_file}: {e}")
+    sys.exit(1)
+```
+
+3.  **Check if the file exists**:
+
+   Before attempting to read a file, check if it exists. If the file does not exist, print an error message and exit the process.
+
+   ```python
+if not os.path.exists(worker_file):
+    print(f"Error: {worker_file} does not exist.")
+    sys.exit(1)
+```
+
+4.  **Consider using a more robust file format**:
+
+   If you're experiencing issues with HDF5 files, consider using a more robust file format like JSON or CSV. These formats are easier to work with and less prone to errors.
+
+Here's an example of how you could modify the script to implement these suggestions:
+
+```python
+import h5py
+import os
+import sys
+
+def is_hdf5(file_path):
+    with open(file_path, 'rb') as f:
+        return f.read(4) == b'HDF5'
+
+def main():
+    #...
+
+    for worker_file in worker_files:
+        if not os.path.exists(worker_file):
+            print(f"Error: {worker_file} does not exist.")
+            sys.exit(1)
+        if not is_hdf5(worker_file):
+            print(f"Error: {worker_file} is not a valid HDF5 file.")
+            sys.exit(1)
+
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                # code that uses h5_in
+        except OSError as e:
+            print(f"Error reading {worker_file}: {e}")
+            sys.exit(1)
+
+    #...
+
+if __name__ == '__main__':
+    main()
+```
+
+This modified script will exit cleanly if any worker file is invalid or missing, preventing the process from continuing with potentially incorrect data.

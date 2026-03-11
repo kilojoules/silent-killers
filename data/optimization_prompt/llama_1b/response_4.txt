@@ -1,0 +1,83 @@
+The issue you're experiencing is due to the fact that the data files are not properly formatted, and the H5Py library is unable to read the data due to a mismatch in file signatures.
+
+The `OSError` is raised because the file signature is not found, which indicates that the file does not contain valid H55F_FAT files. 
+
+To resolve this issue, you need to ensure that the data files are properly formatted. Here are a few things you can check:
+
+1.  **Data File Format:** The data files are in the `.h5` format. You can use the `h5py` library to check the format of your files.
+
+2.  **File Signature:** The H5Py library has a built-in function to check the file signature. You can use the `h5py.h5f.info()` function to check the file signature.
+
+3.  **Data Type:** Make sure that the data types are correct. The data types in the files should match the types specified in the H5Py documentation.
+
+Here's an example of how you can modify your script to check the file signature and handle any errors:
+
+```python
+import h5py
+
+def load_data(file_path):
+    try:
+        with h5py.File(file_path, 'r') as h5_in:
+            # Check the file signature
+            h5_in.info()
+            if h5_in.info()['h5_fat_signature']!= 'H5F_FAT':
+                raise ValueError("File is not a valid H5 file")
+            
+            # Check the data types
+            data_types = [x[0] for x in h5_in.keys()]
+            if not all(x[0] in ['i32', 'u32', 'i64', 'u64', 'f32', 'f64'] for x in data_types):
+                raise ValueError("Invalid data type in the file")
+            
+            # Rest of your code here
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        return None
+    return h5_in
+
+# Load the data
+file_path = 'path_to_your_file.h5'
+if load_data(file_path) is not None:
+    # Now you can proceed with the rest of your code
+else:
+    print("Failed to load data")
+```
+
+In your case, you can modify the script to handle the specific errors that are raised by the H5Py library. Here's an updated version of your script:
+
+```python
+import h5py
+
+def load_data(file_path):
+    try:
+        with h5py.File(file_path, 'r') as h5_in:
+            # Check the file signature
+            h5_in.info()
+            if h5_in.info()['h5_fat_signature']!= 'H5F_FAT':
+                raise ValueError("File is not a valid H5 file")
+            
+            # Check the data types
+            data_types = [x[0] for x in h5_in.keys()]
+            if not all(x[0] in ['i32', 'u32', 'i64', 'u64', 'f32', 'f64'] for x in data_types):
+                raise ValueError("Invalid data type in the file")
+            
+            # Rest of your code here
+    except OSError as e:
+        if e.errno == 2:
+            # File does not exist
+            print(f"File does not exist: {file_path}")
+        else:
+            # Other errors
+            print(f"An error occurred: {e}")
+    except Exception as e:
+        print(f"An error occurred: {e}")
+    return None
+
+# Load the data
+file_path = 'path_to_your_file.h5'
+if load_data(file_path) is not None:
+    # Now you can proceed with the rest of your code
+else:
+    print("Failed to load data")
+```
+
+This modified script will catch any errors that occur during the file reading process and provide a more informative error message.

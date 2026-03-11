@@ -1,0 +1,79 @@
+To generate a script that propagates realistic measurement uncertainties through PyWake and saves a series of flow field images showing the sensitivity of the flow at different times to the inflow, you can use the following Python script. This script uses the PyWake library to calculate the wake function and the Sobol sensitivity analysis.
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake import WakeFunction
+from pywake import WakeField
+
+# Define the wake function parameters
+wake_length = 10  # length of the wake in meters
+wake_halfwidth = 5  # half-width of the wake in meters
+wake_angle = 30  # angle of the wake in degrees
+inflow_speed = 5  # speed of the inflow in m/s
+
+# Create a WakeFunction object
+wake = WakeFunction(wake_length, wake_halfwidth, wake_angle, inflow_speed)
+
+# Create a WakeField object
+field = WakeField(wake, resolution=100)
+
+# Define the measurement uncertainties
+sigma_x = 0.1  # standard deviation of the measurement uncertainties in x direction
+sigma_y = 0.1  # standard deviation of the measurement uncertainties in y direction
+
+# Define the number of time steps
+num_steps = 10
+
+# Initialize the time array
+t = np.linspace(0, 10, num_steps)
+
+# Initialize the Sobol sensitivity arrays
+sens_x = np.zeros((num_steps, wake_length, wake_halfwidth))
+sens_y = np.zeros((num_steps, wake_length, wake_halfwidth))
+
+# Calculate the Sobol sensitivity
+for i in range(num_steps):
+    # Calculate the wake field at the current time step
+    field_at_t = field(t[i])
+    
+    # Calculate the measurement uncertainties at the current time step
+    u_x = wake_x + np.random.normal(0, sigma_x, size=(wake_length, wake_halfwidth))
+    u_y = wake_y + np.random.normal(0, sigma_y, size=(wake_length, wake_halfwidth))
+    
+    # Calculate the sensitivity of the wake field to the inflow
+    sens_x[i] = field_at_t.sensitivity(u_x)
+    sens_y[i] = field_at_t.sensitivity(u_y)
+
+# Save the Sobol sensitivity images
+for i in range(num_steps):
+    plt.figure(figsize=(10, 5))
+    plt.imshow(sens_x[i], cmap='RdYlGn', interpolation='nearest')
+    plt.title(f'Sobol Sensitivity at t = {t[i]}')
+    plt.xlabel('x')
+    plt.ylabel('y')
+    plt.colorbar()
+    plt.savefig(f'sens_x_{i}.png')
+    plt.close()
+    
+    plt.figure(figsize=(10, 5))
+    plt.imshow(sens_y[i], cmap='RdYlGn', interpolation='nearest')
+    plt.title(f'Sobol Sensitivity at t = {t[i]}')
+    plt.xlabel('x')
+    plt.ylabel('y')
+    plt.colorbar()
+    plt.savefig(f'sens_y_{i}.png')
+    plt.close()
+```
+
+This script first creates a WakeFunction object with the specified parameters, then creates a WakeField object to calculate the wake field at different time steps. It then calculates the measurement uncertainties at each time step and propagates these uncertainties through the wake field to calculate the Sobol sensitivity. Finally, it saves the Sobol sensitivity images for each time step.
+
+Please note that this script assumes that the wake field is given by a Gaussian distribution, which may not be realistic for all scenarios. You may need to modify the script to use a more realistic wake function.
+
+Also, this script assumes that the measurement uncertainties are Gaussian and independent. If the measurement uncertainties have a different distribution or correlation structure, you may need to modify the script accordingly.
+
+Please make sure you have the necessary libraries installed, including PyWake and Matplotlib. If not, you can install them using pip:
+
+```bash
+pip install pywake matplotlib
+```

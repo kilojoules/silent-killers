@@ -1,0 +1,59 @@
+The error you're experiencing is due to the inability to open one or more of your worker files. The error message `OSError: Unable to synchronously open file (file signature not found)` indicates that the file does not exist or is corrupted.
+
+The likely cause of this issue is that the worker files are not being processed in the correct order or some of the files are missing. The fact that you're running for 50 seeds, but the script is only processing 2999 out of 3000 optimizations suggests that one of the worker files is missing.
+
+Here are a few suggestions to modify your script to ensure this error is detected reliably and to stop the process cleanly if any worker file is invalid:
+
+1.  **Validate the worker files before processing**: Before attempting to open a worker file, check if it exists and has the correct signature. You can use the `os` module to check if a file exists and `h5py` to check the file signature.
+
+    ```python
+import os
+import h5py
+
+# Check if the file exists and has the correct signature
+if not os.path.exists(worker_file) or not h5py.is_hdf5(worker_file):
+    print(f"Skipping invalid file: {worker_file}")
+    continue
+```
+
+2.  **Use a try-except block**: Wrap the code that opens the worker files in a try-except block to catch the `OSError` exception and handle it accordingly.
+
+    ```python
+try:
+    with h5py.File(worker_file, 'r') as h5_in:
+        # Process the file
+except OSError as e:
+    print(f"Error processing file: {worker_file} - {e}")
+    continue
+```
+
+3.  **Log the worker files that cause issues**: Keep track of the worker files that cause issues and log them. This can help you identify the problematic files and take corrective action.
+
+Here's an example of how you can modify your script to incorporate these suggestions:
+
+```python
+import os
+import h5py
+import logging
+
+logging.basicConfig(level=logging.INFO)
+
+# List of worker files
+worker_files = ["worker_file1.h5", "worker_file2.h5",...]
+
+for worker_file in worker_files:
+    # Check if the file exists and has the correct signature
+    if not os.path.exists(worker_file) or not h5py.is_hdf5(worker_file):
+        logging.info(f"Skipping invalid file: {worker_file}")
+        continue
+
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Process the file
+            #...
+    except OSError as e:
+        logging.error(f"Error processing file: {worker_file} - {e}")
+        continue
+```
+
+By implementing these changes, you'll be able to detect any issues with the worker files and handle them cleanly, ensuring that your script doesn't crash due to invalid or missing files.

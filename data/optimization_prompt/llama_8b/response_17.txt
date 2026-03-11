@@ -1,0 +1,56 @@
+The error message you're seeing indicates that the script is trying to open an HDF5 file, but the file signature is not found. This suggests that the file is either corrupted, invalid, or does not exist.
+
+The script is using the `h5py` library to read the HDF5 files. The error occurs when it tries to open one of the files specified in the `worker_file` variable.
+
+To diagnose this issue, you can try the following:
+
+1.  **Check the file existence and integrity**: Verify that the HDF5 files exist and are not corrupted. You can use the `h5py` library to check the file existence and integrity before trying to open them.
+
+2.  **Print the worker files**: Before opening the files, print the `worker_file` variable to ensure it contains the expected file paths.
+
+3.  **Add error handling**: Wrap the file opening code in a `try-except` block to catch the `OSError` exception and handle it accordingly.
+
+Here's an example of how you can modify your script to handle the error:
+
+```python
+import h5py
+
+def main():
+    # Your existing code here...
+
+    worker_files = [...]  # Your list of worker files
+    for worker_file in worker_files:
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                # Your existing code here...
+        except OSError as e:
+            print(f"Error opening file: {worker_file}. Error: {e}")
+            # You can also add a flag to stop the process if an error occurs
+            raise
+
+    # If no errors occurred, continue with the rest of the script
+    # Your existing code here...
+
+if __name__ == "__main__":
+    main()
+```
+
+To recover the missing data, you can try the following:
+
+1.  **Check the HDF5 file format**: Ensure that the HDF5 files are in the correct format and structure. You can use the `h5py` library to inspect the files and their contents.
+
+2.  **Re-run the process**: If the HDF5 files are valid but the data is missing, you can try re-running the process that generated the files.
+
+3.  **Recover data from logs**: If the process that generated the HDF5 files logged the data, you can try recovering the data from the logs.
+
+4.  **Manually inspect the HDF5 files**: If the above steps do not work, you can try manually inspecting the HDF5 files using a tool like `h5dump` or `h5ls` to see if the data is present but not accessible due to some issue.
+
+Here's an example of how you can use `h5dump` to inspect the HDF5 files:
+
+```bash
+h5dump -l /path/to/your/file.h5
+```
+
+This will list the contents of the HDF5 file, and you can inspect the data and its structure.
+
+If the issue persists, you may want to investigate the specific error messages and logs to determine the root cause of the problem.

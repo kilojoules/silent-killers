@@ -1,0 +1,166 @@
+Your code is quite complex and well-structured. Here are some suggestions for improvement:
+
+1. **Modularization**: You are correct that the code can be modularized to better instantiate the wfm. This would make the code more readable and maintainable. You could create separate functions for each part of the optimization process, such as creating the site and turbine, defining the wake deficit and blockage models, and running the optimization.
+
+2. **Consistent naming conventions**: You are using both camelCase and underscore notation for variable and function names. It's better to stick to a single convention throughout the code.
+
+3. **Type hints**: You are not using type hints for function parameters and return types. This can make it harder for others to understand the code and can lead to errors.
+
+4. **Comments**: While you have some comments, it would be beneficial to add more to explain the purpose of each section of the code.
+
+5. **Variable naming**: Some variable names are quite long and could be shortened.
+
+6. **Code repetition**: There are some repeated code blocks, such as the creation of the `pbounds` and `defaults` dictionaries. You could create functions to generate these dictionaries to avoid repetition.
+
+7. **Magic numbers**: There are some magic numbers in the code, such as the values for the `pbounds` and `defaults` dictionaries. It would be better to define these numbers as constants.
+
+Here is a simplified version of your code, following some of the above suggestions:
+
+```python
+import numpy as np
+import xarray as xr
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+from py_wake import HorizontalGrid
+from py_wake.deficit_models.gaussian import BlondelSuperGaussianDeficit2020
+from py_wake.deficit_models.gaussian import TurboGaussianDeficit
+from py_wake.rotor_avg_models.gaussian_overlap_model import GaussianOverlapAvgModel
+from py_wake.turbulence_models import CrespoHernandez
+from py_wake.deflection_models import JimenezWakeDeflection
+from py_wake.wind_farm_models import PropagateDownwind, All2AllIterative
+from py_wake.superposition_models import LinearSum
+from py_wake.ground_models import Mirror
+from py_wake.examples.data.hornsrev1 import Hornsrev1Site
+from bayes_opt import BayesianOptimization
+from py_wake.deficit_models.utils import ct2a_mom1d
+
+def create_site():
+    site = Hornsrev1Site()
+    return site
+
+def create_turbine():
+    turbine = DTU10MW()
+    return turbine
+
+def create_wake_deficit_model(MODEL, DOWNWIND):
+    if MODEL == 1:
+        if DOWNWIND:
+            return BlondelSuperGaussianDeficit2020(
+                a_s=0.17, b_s=0.005, c_s=0.2, b_f=-0.68, c_f=2.41,
+                ch1=0.73, ch2=0.8325, ch3=-0.0325, ch4=-0.32
+            )
+        else:
+            return BlondelSuperGaussianDeficit2020(
+                a_s=0.001, b_s=0.001, c_s=0.001, b_f=-2, c_f=1,
+                ch1=-1, ch2=-1, ch3=-1, ch4=-1
+            )
+    else:
+        return TurboGaussianDeficit(
+            A=0.04, cTI=[1.5, 0.8], ctlim=0.999, ceps=0.25,
+            ct2a=ct2a_mom1d, groundModel=Mirror(), rotorAvgModel=GaussianOverlapAvgModel()
+        )
+
+def create_blockage_model(MODEL, DOWNWIND):
+    if MODEL == 2:
+        if DOWNWIND:
+            return {}
+        else:
+            return {
+               'ss_alpha': 0.8888888888888888,
+               'ss_beta': 1.4142135623730951,
+                'r12p': [-0.672, 0.4897],
+                'ngp': [-1.381, 2.627, -1.524, 1.336]
+            }
+    else:
+        return {}
+
+def evaluate_rmse(**kwargs):
+    # Define the wake deficit model
+    wake_deficitModel = create_wake_deficit_model(MODEL, DOWNWIND)
+
+    # Define the blockage model
+    blockage_args = create_blockage_model(MODEL, DOWNWIND)
+
+    # Define the turbulence model
+    turb_args = {
+        'c': np.array([kwargs['ch1'], kwargs['ch2'], kwargs['ch3'], kwargs['ch4']])
+    }
+
+    # Create the wind farm model
+    wfm = All2AllIterative(
+        site, turbine,
+        wake_deficitModel=wake_deficitModel,
+        superpositionModel=LinearSum(), deflectionModel=None,
+        turbulenceModel=CrespoHernandez(**turb_args),
+        blockage_deficitModel=SelfSimilarityDeficit2020(**blockage_args)
+    )
+
+    # Run the simulation
+    sim_res = wfm([0], [0], ws=full_ws, TI=full_ti, wd=[270] * full_ti.size, time=True)
+
+    # Compute the RMSE
+    flow_map = sim_res.flow_map(HorizontalGrid(x=target_x, y=target_y))
+    pred = (sim_res.WS - flow_map.WS_eff.isel(h=0)) / sim_res.WS
+    rmse = float(np.sqrt(((all_obs - pred) ** 2).mean(['x', 'y'])).mean('time'))
+
+    return -rmse
+
+def run_optimization(MODEL, DOWNWIND):
+    # Define the bounds for the parameters
+    pbounds = {
+        'a_s': (0.001, 0.5),
+        'b_s': (0.001, 0.01),
+        'c_s': (0.001, 0.5),
+        'b_f': (-2, 1),
+        'c_f': (0.1, 5),
+        'ch1': (-1, 2),
+        'ch2': (-1, 2),
+        'ch3': (-1, 2),
+        'ch4': (-1, 2)
+    }
+
+    if MODEL == 2:
+        pbounds = {
+            'A': (0.001, 0.5),
+            'cti1': (0.01, 5),
+            'cti2': (0.01, 5),
+            'ceps': (0.01, 3),
+            'ctlim': (0.01, 1),
+            'ch1': (-1, 2),
+            'ch2': (-1, 2),
+            'ch3': (-1, 2),
+            'ch4': (-1, 2)
+        }
+
+    # Create the optimizer
+    optimizer = BayesianOptimization(f=evaluate_rmse, pbounds=pbounds, random_state=1)
+
+    # Run the optimization
+    optimizer.probe(params={'a_s': 0.17, 'b_s': 0.005, 'c_s': 0.2, 'b_f': -0.68, 'c_f': 2.41,
+                          'ch1': 0.73, 'ch2': 0.8325, 'ch3': -0.0325, 'ch4': -0.32}, lazy=True)
+
+    optimizer.maximize(init_points=50, n_iter=200)
+
+    return optimizer
+
+# Create the site and turbine
+site = create_site()
+turbine = create_turbine()
+
+# Define the flow map
+dat = xr.load_dataset('./DTU10MW.nc')
+target_x = dat.x
+target_y = dat.y
+
+# Run the optimization
+optimizer = run_optimization(MODEL, DOWNWIND)
+
+# Print the best parameters
+print(optimizer.max['params'])
+
+# Save the best parameters to a file
+with open('best_params.txt', 'w') as f:
+    f.write(str(optimizer.max['params']))
+```
+
+This code is a simplified version of your original code and should be easier to understand and maintain. Note that some parts of the code may still need to be adapted to your specific needs.

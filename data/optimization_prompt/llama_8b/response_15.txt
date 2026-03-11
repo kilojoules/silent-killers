@@ -1,0 +1,40 @@
+The issue you're facing is due to a corrupted or invalid HDF5 file. The error message "file signature not found" indicates that the file is not a valid HDF5 file, which is required by the `h5py` library.
+
+To detect this issue reliably and stop the process cleanly, you can add error handling to check if the file exists and is valid before attempting to open it. Here's a modified version of your code snippet:
+
+```python
+import h5py
+
+def is_valid_hdf5_file(file_path):
+    """Check if a file is a valid HDF5 file."""
+    try:
+        with h5py.File(file_path, 'r') as h5_in:
+            return True
+    except OSError:
+        return False
+
+def main():
+    # Your code here...
+    for seed in range(50):  # Assuming you want to run for 50 seeds
+        worker_file = f'worker_file_{seed}.h5'
+        if not is_valid_hdf5_file(worker_file):
+            print(f"Skipping invalid file: {worker_file}")
+            continue
+        # Your code here...
+    # Your code here...
+
+if __name__ == "__main__":
+    main()
+```
+
+In this modified version, the `is_valid_hdf5_file` function checks if a file is a valid HDF5 file by attempting to open it with `h5py`. If the file is not valid, the function returns `False`. If the file is valid, it returns `True`.
+
+In the `main` function, we use this `is_valid_hdf5_file` function to check each worker file before attempting to open it. If a file is invalid, we print a message indicating that it's being skipped and continue to the next iteration.
+
+To recover the missing data, you can try the following:
+
+1. Check the file system to see if the corrupted file is still present. If it is, you can try to recover it by copying it from a backup or re-running the job that generated it.
+2. If the file is missing, you can try to regenerate it by re-running the code that generated it.
+3. If you're unable to recover the file, you may need to re-run the entire job, which could be time-consuming.
+
+To prevent similar issues in the future, consider implementing additional checks and error handling in your code to detect and handle corrupted or invalid files before attempting to process them.

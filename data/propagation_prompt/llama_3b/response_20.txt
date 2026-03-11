@@ -1,0 +1,75 @@
+To generate a script that propagates realistic measurement uncertainties through PyWake and saves a series of flow field images showing the sensitivity of the flow at different times to the inflow, we'll need to follow these steps:
+
+1.  **Install required libraries and tools**:
+
+    *   `numpy` for numerical computations
+    *   `matplotlib` for visualization
+    *   `PyWake` for calculating wake effects
+    *   `scipy` for Sobol sensitivity analysis
+
+2.  **Generate a grid of inflow conditions**:
+
+    *   We'll create a 2D grid of inflow velocities, assuming a uniform distribution.
+
+3.  **Calculate wake effects and uncertainty propagation**:
+
+    *   For each inflow condition, we'll calculate the wake effects using PyWake.
+    *   We'll then propagate the uncertainty of the inflow conditions through the wake effects using Sobol sensitivity analysis.
+
+4.  **Visualize the flow fields**:
+
+    *   We'll create 2D flow field images at different times, showing the sensitivity of the flow at different points in space.
+
+Here's a Python script that performs these tasks:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake import wakefield
+from scipy import special
+
+# Set constants
+Lx, Ly = 10, 10  # length of the domain
+Nx, Ny = 100, 100  # number of grid points
+Nt = 10  # number of time steps
+u_in = 1.0  # inflow velocity
+sigma_u_in = 0.1  # standard deviation of inflow velocity
+
+# Generate a grid of inflow conditions
+x = np.linspace(0, Lx, Nx)
+y = np.linspace(0, Ly, Ny)
+X, Y = np.meshgrid(x, y)
+u_in_grid = u_in + np.random.normal(0, sigma_u_in, size=(Nx, Ny))
+
+# Initialize arrays to store wake effects and sensitivities
+wake_effect = np.zeros((Nt, Nx, Ny, 2))
+sensitivity = np.zeros((Nt, Nx, Ny, 2))
+
+# Time-stepping
+for t in range(Nt):
+    # Calculate wake effects
+    wake = wakefield(X, Y, u_in_grid, t)
+    wake_effect[t] = wake
+
+    # Propagate uncertainty through wake effects using Sobol sensitivity analysis
+    for i in range(Nx):
+        for j in range(Ny):
+            u_in_ij = u_in_grid[i, j]
+            sigma_u_ij = np.sqrt(u_in_ij**2 + sigma_u_in**2)
+            for k in range(2):
+                for l in range(2):
+                    # Calculate Sobol sensitivity
+                    sensitivity[t, i, j, k, l] = special.sdev(u_in_ij, k, l, sigma_u_ij)
+
+# Visualize flow fields
+for t in range(Nt):
+    plt.figure()
+    plt.imshow(wake_effect[t, :, :], cmap='RdBu')
+    plt.title(f'Time step {t}')
+    plt.colorbar()
+    plt.show()
+```
+
+This script generates a series of flow field images at different times, showing the sensitivity of the flow at different points in space. The sensitivity of the wake effect to the inflow velocity is visualized as a color map.
+
+Please note that this script assumes a 2D domain and a uniform distribution of inflow velocities. The actual implementation may need to be adapted to your specific use case.

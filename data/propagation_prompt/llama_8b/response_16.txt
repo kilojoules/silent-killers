@@ -1,0 +1,105 @@
+To solve this problem, we'll use the following steps:
+
+1.  Propagate the uncertainties through PyWake.
+2.  Calculate the Sobol' sensitivity indices.
+3.  Save the flow field images at different times.
+
+First, we need to install the required packages:
+
+```bash
+pip install pywake
+```
+
+Here's the Python code to solve the problem:
+
+```python
+import pywake as pw
+import numpy as np
+import matplotlib.pyplot as plt
+import pickle
+import pandas as pd
+
+# Set the parameters
+case_name = 'example_case'
+turbulence_intensity = 0.1
+turbulence_length_scale = 10
+num_wake = 1
+num_inflow_uncertainties = 2
+
+# Define the wind farm layout
+layout = {
+    'x': [0],
+    'y': [0],
+    'z': [80],
+    'yaw': [0],
+    'rotor_diameter': [80],
+    'rotor_speed': [10],
+    'turbulence_intensity': [turbulence_intensity],
+    'turbulence_length_scale': [turbulence_length_scale]
+}
+
+# Define the inflow uncertainties
+inflow_uncertainties = {
+    'x': np.linspace(-10, 10, num_inflow_uncertainties),
+    'y': np.linspace(-10, 10, num_inflow_uncertainties)
+}
+
+# Initialize the PyWake object
+pywake_obj = pw.PyWake(layout, inflow_uncertainties)
+
+# Set the inflow conditions
+pywake_obj.set_inflow(
+    x=pywake_obj.layout['x'],
+    y=pywake_obj.layout['y'],
+    U_hub=pywake_obj.layout['rotor_speed'],
+    I hub=pywake_obj.layout['turbulence_intensity'],
+    L_hub=pywake_obj.layout['turbulence_length_scale']
+)
+
+# Calculate the flow field at different times
+times = np.linspace(0, 100, 10)
+
+# Initialize the lists to store the flow fields and sensitivity indices
+flow_fields = []
+sensitivity_indices = []
+
+# Loop over the times
+for t in times:
+    # Calculate the flow field at the current time
+    flow_field = pywake_obj.calculate_flow_field(t, num_points=1000)
+    
+    # Save the flow field image
+    plt.figure(figsize=(8, 8))
+    plt.imshow(flow_field, cmap='viridis')
+    plt.title(f'Flow field at time {t}')
+    plt.savefig(f'flow_field_{t}.png')
+    plt.close()
+    
+    # Calculate the sensitivity indices using Sobol'
+    sensitivity_index = pywake_obj.calculate_sobol_indices('WS_eff', ['x', 'y'], t)
+    sensitivity_indices.append(sensitivity_index)
+
+    # Save the sensitivity indices to a pickle file
+    with open('sensitivity_indices.pkl', 'wb') as f:
+        pickle.dump(sensitivity_indices, f)
+
+# Save the flow field images
+plt.figure(figsize=(8, 8))
+plt.imshow(flow_field, cmap='viridis')
+plt.title('Flow field at the end time')
+plt.savefig('flow_field_end_time.png')
+plt.close()
+```
+
+This code first sets up a PyWake object with the given wind farm layout and inflow uncertainties. It then calculates the flow field at different times and saves the flow field images as PNG files. Finally, it calculates the Sobol' sensitivity indices for the WS_eff variable and saves them to a pickle file.
+
+Note that this is a basic example, and you may need to adjust the parameters and the code to fit your specific use case.
+
+**Requirements**
+
+*   PyWake (0.9.0 or higher)
+*   NumPy (1.20.0 or higher)
+*   Matplotlib (3.5.1 or higher)
+*   Pickle (for saving the sensitivity indices)
+
+**Note**: This is a basic example and may need to be adjusted based on the specific requirements of your project.

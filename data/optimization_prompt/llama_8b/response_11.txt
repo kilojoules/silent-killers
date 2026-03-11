@@ -1,0 +1,61 @@
+The error message indicates that the file signature was not found, which means that the file is not a valid HDF5 file. This could be due to a corrupted file, a missing or invalid file path, or an issue with the file's metadata.
+
+To diagnose the issue and ensure the script stops cleanly if any worker file is invalid, you can modify the script to:
+
+1. Check if the file exists before attempting to open it.
+2. Use a try-except block to catch the `OSError` exception and handle it accordingly.
+3. Provide more informative error messages to help with debugging.
+
+Here's an example of how you can modify your script:
+
+```python
+import os
+import h5py
+
+def load_data(worker_file):
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Your code to load data from the HDF5 file
+            pass
+    except OSError as e:
+        if 'file signature not found' in str(e):
+            print(f"Error: Invalid file signature in {worker_file}")
+            return None
+        else:
+            raise
+
+def main():
+    # Your code to iterate over worker files
+    for worker_file in your_worker_files:
+        data = load_data(worker_file)
+        if data is None:
+            print(f"Skipping {worker_file} due to invalid file")
+            continue
+        # Your code to process the loaded data
+
+if __name__ == "__main__":
+    main()
+```
+
+In this modified script, the `load_data` function attempts to open the HDF5 file and load the data. If the file is invalid, it catches the `OSError` exception and provides an informative error message. If the file is valid but an error occurs during data loading, it re-raises the exception.
+
+You can also add more checks to ensure that the file exists and is a valid HDF5 file:
+
+```python
+def load_data(worker_file):
+    if not os.path.exists(worker_file):
+        print(f"Error: File {worker_file} does not exist")
+        return None
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Your code to load data from the HDF5 file
+            pass
+    except OSError as e:
+        if 'file signature not found' in str(e):
+            print(f"Error: Invalid file signature in {worker_file}")
+            return None
+        else:
+            raise
+```
+
+This will stop the script from running if any worker file is invalid or missing.

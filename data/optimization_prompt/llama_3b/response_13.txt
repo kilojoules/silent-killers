@@ -1,0 +1,44 @@
+The issue you're encountering is due to the way you're joining the output of the `mp_main` script, which is likely written to a file for each seed. The `h5py` library is unable to read the file because it doesn't contain a valid file signature, which is necessary for it to identify the file format.
+
+The error message indicates that the file signature is not found, which suggests that the file was not written correctly or the `mp_main` script did not write a valid file.
+
+Here's a modified version of your script that includes error checking to ensure that each worker file is valid before trying to read it:
+
+```python
+import h5py
+import os
+
+def is_valid_h5_file(file_path):
+    try:
+        with h5py.File(file_path, 'r') as h5_in:
+            return True
+    except OSError as e:
+        return False
+
+def main():
+    # Your existing code here...
+
+    for seed in seeds:
+        worker_file = f"farm_{seed}.h5"
+        if not os.path.exists(worker_file):
+            print(f"File {worker_file} does not exist. Skipping...")
+            continue
+
+        if not is_valid_h5_file(worker_file):
+            print(f"File {worker_file} is not valid. Skipping...")
+            continue
+
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Your existing code here...
+
+if __name__ == "__main__":
+    main()
+```
+
+In this modified version, the `is_valid_h5_file` function checks if a file is valid by trying to open it with `h5py`. If the file does not exist or is not valid, it returns `False`, and the script skips that file.
+
+You can also consider adding a retry mechanism to handle cases where the file is temporarily not readable or is corrupted. You can use a loop to retry opening the file a few times before giving up.
+
+Additionally, you can consider adding some logging or monitoring to track which files are causing issues, so you can investigate further and identify the root cause of the problem.
+
+As for recovering the missing data, it's difficult to say without knowing more about the specific data and how it was written. However, if the data was written to a file that is not valid, it's unlikely that you can recover it. You may need to recreate the data or contact the person who wrote the `mp_main` script to see if they can provide you with the missing data.

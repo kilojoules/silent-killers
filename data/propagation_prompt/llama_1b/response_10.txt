@@ -1,0 +1,153 @@
+Here's an example of how you can achieve this using PyWake, a Python library for numerical fluid dynamics simulations. This script will generate a flow field and save images of the flow at different times to visualize the sensitivity of the flow to the inflow.
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from PyWake import *
+
+# Define the domain and parameters
+dx = 0.1
+dy = 0.1
+Lx = 10.0
+Ly = 10.0
+Nx = 1000
+Ny = 1000
+Lx_val = Lx / 2.0
+Ly_val = Ly / 2.0
+u0 = 0.0
+u1 = 0.5
+u2 = 0.5
+u3 = 0.5
+u4 = 0.5
+u5 = 0.5
+
+# Create a 2D grid
+u = np.zeros((Ny, Nx))
+v = np.zeros((Ny, Nx))
+w = np.zeros((Ny, Nx))
+wz = np.zeros((Ny, Nx))
+U = np.zeros((Ny, Nx, 3))
+V = np.zeros((Ny, Nx, 3))
+W = np.zeros((Ny, Nx, 3))
+Z = np.zeros((Ny, Nx, 3))
+
+# Set the inflow velocity
+u[0, 0, :] = u0
+v[0, 0, :] = u1
+w[0, 0, :] = u2
+wz[0, 0, :] = u3
+U[0, 0, :] = u4
+V[0, 0, :] = u5
+W[0, 0, :] = u6
+Z[0, 0, :] = u7
+
+# Generate the flow field
+for i in range(1, Ny):
+    for j in range(1, Nx):
+        for k in range(1, 3):
+            u[i, j, k] = U[i, j, k] + np.random.normal(0.0, 0.01)
+            v[i, j, k] = V[i, j, k] + np.random.normal(0.0, 0.01)
+            w[i, j, k] = W[i, j, k] + np.random.normal(0.0, 0.01)
+            wz[i, j, k] = W[i, j, k] + np.random.normal(0.0, 0.01)
+            U[i, j, k] = U[i, j, k] + u[i, j, k]
+            V[i, j, k] = V[i, j, k] + v[i, j, k]
+            W[i, j, k] = W[i, j, k] + w[i, j, k]
+            Z[i, j, k] = Z[i, j, k] + wz[i, j, k]
+
+# Set the boundary conditions
+U[0, 0, :] = u1
+v[0, 0, :] = u2
+w[0, 0, :] = u3
+wz[0, 0, :] = u4
+U[Ny-1, 0, :] = u5
+v[Ny-1, 0, :] = u6
+w[Ny-1, 0, :] = u7
+wz[Ny-1, 0, :] = u8
+U[Ny, 0, :] = u9
+v[Ny, 0, :] = u10
+w[Ny, 0, :] = u11
+wz[Ny, 0, :] = u12
+
+# Set the grid boundaries
+for i in range(1, Ny):
+    U[0, i, :] = U[Nx-1, i, :]
+    V[0, i, :] = V[Nx-1, i, :]
+    W[0, i, :] = W[Nx-1, i, :]
+    Z[0, i, :] = Z[Nx-1, i, :]
+    U[Ny-1, i, :] = U[0, i, :]
+    V[Ny-1, i, :] = V[0, i, :]
+    W[Ny-1, i, :] = W[0, i, :]
+    Z[Ny-1, i, :] = Z[0, i, :]
+
+# Generate the Sobol sensitivity
+for j in range(1, Ny):
+    for k in range(1, 3):
+        for i in range(1, Ny):
+            u[i, j, k] = Sobol(x = i, y = j, n_sobol = 3)
+            v[i, j, k] = Sobol(x = i, y = j, n_sobol = 3)
+            w[i, j, k] = Sobol(x = i, y = j, n_sobol = 3)
+            wz[i, j, k] = Sobol(x = i, y = j, n_sobol = 3)
+            U[i, j, k] = Sobol(x = i, y = j, n_sobol = 3)
+            V[i, j, k] = Sobol(x = i, y = j, n_sobol = 3)
+            W[i, j, k] = Sobol(x = i, y = j, n_sobol = 3)
+            Z[i, j, k] = Sobol(x = i, y = j, n_sobol = 3)
+
+# Save the flow field
+for i in range(1, Ny):
+    for j in range(1, Ny):
+        plt.figure()
+        plt.imshow(U[i, j, :])
+        plt.title(f"U at ({i}, {j})")
+        plt.colorbar()
+        plt.show()
+
+for i in range(1, Ny):
+    for j in range(1, Ny):
+        plt.figure()
+        plt.imshow(V[i, j, :])
+        plt.title(f"V at ({i}, {j})")
+        plt.colorbar()
+        plt.show()
+
+for i in range(1, Ny):
+    for j in range(1, Ny):
+        plt.figure()
+        plt.imshow(W[i, j, :])
+        plt.title(f"W at ({i}, {j})")
+        plt.colorbar()
+        plt.show()
+
+for i in range(1, Ny):
+    for j in range(1, Ny):
+        plt.figure()
+        plt.imshow(Z[i, j, :])
+        plt.title(f"Z at ({i}, {j})")
+        plt.colorbar()
+        plt.show()
+
+for i in range(1, Ny):
+    for j in range(1, Ny):
+        plt.figure()
+        plt.imshow(wz[i, j, :])
+        plt.title(f"wz at ({i}, {j})")
+        plt.colorbar()
+        plt.show()
+
+for i in range(1, Ny):
+    for j in range(1, Ny):
+        plt.figure()
+        plt.imshow(w[i, j, :])
+        plt.title(f"Wz at ({i}, {j})")
+        plt.colorbar()
+        plt.show()
+
+for i in range(1, Ny):
+    for j in range(1, Ny):
+        plt.figure()
+        plt.imshow(w[i, j, :])
+        plt.title(f"Wz at ({i}, {j})")
+        plt.colorbar()
+        plt.show()
+```
+
+This script first generates a 2D grid of velocities using the given parameters. Then it sets the inflow velocities at the boundaries and generates the flow field at all other grid points. The Sobol sensitivity is then calculated at each grid point and saved as a series of images. Finally, the flow field is displayed as a series of images showing the sensitivity of the flow to the inflow.

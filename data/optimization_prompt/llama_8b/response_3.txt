@@ -1,0 +1,66 @@
+The error message indicates that the script is trying to open an HDF5 file, but it's unable to find the file signature, which suggests that the file is not a valid HDF5 file. This could be due to a corrupted file or a file that is not in the correct format.
+
+To detect this issue reliably and stop the process cleanly, you can add a try-except block around the code that opens the HDF5 file. Here's how you can modify your script:
+
+```python
+import h5py
+
+#...
+
+for worker_file in worker_files:
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Process the file
+            print(f"Processing {worker_file}")
+            #...
+    except OSError as e:
+        if "file signature not found" in str(e):
+            print(f"Error: Invalid HDF5 file {worker_file}. Skipping.")
+            continue
+        else:
+            print(f"Error: Unable to process {worker_file}. {str(e)}")
+            raise
+    except Exception as e:
+        print(f"Error: Unexpected error processing {worker_file}. {str(e)}")
+        raise
+```
+
+This code will catch the `OSError` exception that's raised when trying to open an invalid HDF5 file, and skip it. If any other exception is raised, it will be caught and re-raised.
+
+To recover the missing data, you can try to re-run the script with the valid files. If some files are still missing, you can try to investigate why they are missing, e.g., by checking the file system, the script's output, or the logs.
+
+To prevent the joining operation from killing the process, you can add a check before joining the files:
+
+```python
+import h5py
+import numpy as np
+
+#...
+
+for worker_file in worker_files:
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Process the file
+            print(f"Processing {worker_file}")
+            #...
+    except OSError as e:
+        if "file signature not found" in str(e):
+            print(f"Error: Invalid HDF5 file {worker_file}. Skipping.")
+            continue
+        else:
+            print(f"Error: Unable to process {worker_file}. {str(e)}")
+            raise
+    except Exception as e:
+        print(f"Error: Unexpected error processing {worker_file}. {str(e)}")
+        raise
+
+# Join the files
+if len(valid_files) == len(worker_files):
+    print("All files are valid. Joining them...")
+    # Join the files
+    #...
+else:
+    print(f"Not all files are valid. Skipping joining.")
+```
+
+This way, the script will only join the files if all of them are valid, preventing the process from crashing due to invalid files.

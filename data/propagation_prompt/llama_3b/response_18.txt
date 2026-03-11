@@ -1,0 +1,50 @@
+To solve this problem, we will use the PyWake library and Matplotlib to visualize the flow field. The script will first generate a 2D grid of points with random inflow velocities, then use PyWake to calculate the flow field at these points. We will then calculate the Sobol sensitivity of the wake efficiency (WS_eff) at each point in the grid.
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake import Wake
+from pywake import WakeField
+
+# Define the grid of points
+x = np.linspace(-10, 10, 100)
+y = np.linspace(-10, 10, 100)
+X, Y = np.meshgrid(x, y)
+
+# Define the inflow velocities
+U_in = np.random.uniform(-1, 1, size=(len(x), len(y))
+
+# Create a Wake object
+wake = Wake()
+
+# Calculate the wake field at each point in the grid
+wake_field = wake.calculate_wake_field(X, Y, U_in)
+
+# Calculate the wake efficiency (WS_eff)
+WS_eff = wake_field.WS_eff
+
+# Calculate the Sobol sensitivity of WS_eff
+Sobol_sensitivity = wake_field.sobol_sensitivity()
+
+# Create a figure and axis
+fig, ax = plt.subplots()
+
+# Plot the wake field
+ax.contourf(X, Y, WS_eff, cmap='RdYlGn')
+ax.colorbar(label='Wake Efficiency (WS_eff)')
+
+# Plot the Sobol sensitivity
+im = ax.contourf(X, Y, Sobol_sensitivity, cmap='RdYlGn')
+ax.colorbar(label='Sobol Sensitivity')
+
+# Annotate the plot
+ax.set_xlabel('x')
+ax.set_ylabel('y')
+
+# Show the plot
+plt.show()
+```
+
+This script will generate a 2D contour plot of the wake efficiency (WS_eff) at each point in the grid, along with a 2D contour plot of the Sobol sensitivity of WS_eff. The x and y axes represent the distance from the cylinder, with negative values representing distances to the left of the cylinder and positive values representing distances to the right of the cylinder.
+
+Please note that the PyWake library is still a developing library and might not be as robust as more established libraries like OpenFOAM or OpenFOAM. Also, the wake field calculations can be computationally expensive, so this script might take some time to run.

@@ -1,0 +1,57 @@
+Here's a Python script that uses the `pywake` library to simulate the flow field and generate images of the sensitivity of the flow to the inflow. This script assumes you have `pywake` installed and have the necessary dependencies installed.
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake import Simulation
+from pywake.sobol import SobolSensitivity
+
+# Define the parameters
+L = 1.0  # Length of the domain
+N = 100  # Number of grid points
+x = np.linspace(0, L, N)  # Grid points in x direction
+y = np.linspace(0, L, N)  # Grid points in y direction
+X, Y = np.meshgrid(x, y)  # Create a meshgrid of x and y values
+x_grid = X.flatten()  # Flatten the x grid
+y_grid = Y.flatten()  # Flatten the y grid
+
+# Define the inflow parameters
+U = 1.0  # Inflow velocity (m/s)
+U_mean = U  # Mean velocity (m/s)
+U_std = 0.1  # Standard deviation of the inflow velocity (m/s)
+x_grid_sobol = x_grid.copy()  # Create a copy of the x grid for Sobol sensitivity
+
+# Create a Sobol sensitivity object
+sensitivity = SobolSensitivity(L, x_grid_sobol)
+
+# Initialize the flow field
+U_field = np.zeros((N, N))  # Initialize the flow field (m/s)
+
+# Set the inflow velocity
+U_field[0, :] = U  # Set the inflow velocity at the first grid point
+
+# Simulate the flow
+sim = Simulation()
+for i in range(N):
+    for j in range(N):
+        sim.solve(U_field, U_field[i, j], U, U_mean, U_std)
+        U_field[i, j] = sim.get_solution(U_field[i, j])
+
+# Plot the flow field at different times
+for i in range(N):
+    U_field[i, :]  # Plot the flow field at this time
+    plt.imshow(U_field[i, :], extent=(0, L, 0, L), cmap='RdYlBu', origin='lower')
+    plt.colorbar()
+    plt.title(f'Time = {i} seconds')
+    plt.show()
+
+# Plot the Sobol sensitivity
+for i in range(N):
+    for j in range(N):
+        sobol = sensitivity(x_grid_sobol[i, j])
+        print(f'x = {X[i, j]:.3f}, y = {Y[i, j]:.3f}, Sobol sensitivity = {sobol:.3f}')
+```
+
+This script first defines the parameters of the simulation (domain size, number of grid points, inflow velocity, and standard deviation). It then creates a meshgrid of x and y values, sets the inflow velocity at the first grid point, and simulates the flow using the `pywake` library. The flow field is then plotted at different times. Finally, it calculates the Sobol sensitivity at each grid point and prints the x, y coordinates and the Sobol sensitivity value.
+
+Note that the Sobol sensitivity is calculated using the `SobolSensitivity` object, which is created with the domain size and the meshgrid of x and y values. The `solve` method of the `Simulation` object is used to simulate the flow, and the `get_solution` method is used to get the flow field at each grid point. The Sobol sensitivity is calculated by multiplying the flow field with the Sobol sensitivity function `x_grid_sobol[i, j]`, which is created by flattening the x grid and y grid, and then taking the dot product of the flow field with the Sobol sensitivity function.

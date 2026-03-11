@@ -1,0 +1,76 @@
+To create a Python script that propagates measurement uncertainties through pywake and saves a series of flow field images showing the sensitivity of the flow at different times to the inflow, we can use the following steps:
+
+1. Install required libraries:
+   - `pywake` for wave propagation and sensitivity analysis
+   - `numpy` for numerical computations
+   - `matplotlib` for visualization
+
+2. Define the problem parameters:
+   - Wave frequency and wavelength
+   - Inflow time series (representing the wave source)
+   - Grid dimensions
+   - Time step for wave propagation
+   - Time span for analysis
+
+3. Create a function to propagate the wave and compute the wavefield and sensitivity at each time step
+
+4. Use Sobol sensitivity analysis to compute the sensitivity of the wave efficiency (WS_eff) to the inflow at each grid point and time step
+
+5. Visualize the flow field and sensitivity fields at each time step
+
+Here's an example Python script that accomplishes this:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake import Wake
+
+# Problem parameters
+wavelength = 10  # wavelength of the wave
+wave_speed = 1  # wave speed
+time_step = 0.01  # time step for wave propagation
+time_span = 10  # time span for analysis
+inflow_time_series = np.sin(2 * np.pi * 1 * time_step)  # example inflow time series
+
+# Grid dimensions
+nx = 100
+ny = 100
+
+# Create a Wake object
+wake = Wake(wavelength=wavelength, wave_speed=wave_speed)
+
+# Create a grid
+x = np.linspace(-10, 10, nx)
+y = np.linspace(-10, 10, ny)
+X, Y = np.meshgrid(x, y)
+
+# Initialize wavefield and sensitivity fields
+wavefield = np.zeros((ny, nx, len(time_span)))
+sensitivity = np.zeros((ny, nx, len(time_span)))
+
+# Propagate the wave and compute wavefield and sensitivity at each time step
+for t in range(len(time_span)):
+    wake.update(inflow_time_series)
+    wavefield[:, :, t] = wake.get_wavefield(X, Y)
+    sensitivity[:, :, t] = wake.get_sensitivity(X, Y)
+
+# Sobol sensitivity analysis
+for i in range(ny):
+    for j in range(nx):
+        ws_eff = wake.get_ws_eff(X[i, j], Y[i, j])
+        for k in range(len(time_span)):
+            sensitivity[i, j, k] = wake.get_sensitivity(X[i, j], Y[i, j], ws_eff)
+
+# Visualize the flow field and sensitivity fields at each time step
+fig, axes = plt.subplots(2, len(time_span), figsize=(20, 10))
+for t in range(len(time_span)):
+    axes[0, t].imshow(wavefield[:, :, t], cmap='viridis')
+    axes[0, t].set_title(f'Time step {t}')
+    axes[0, t].set_title(f'Time step {t}')
+    axes[1, t].imshow(sensitivity[:, :, t], cmap='viridis')
+    axes[1, t].set_title(f'Sensitivity at time step {t}')
+    axes[1, t].set_title(f'Sensitivity at time step {t}')
+plt.show()
+```
+
+This script creates a wavefield and sensitivity fields at each time step and visualizes the flow field and sensitivity fields at each time step. The flow field shows the wave propagation, and the sensitivity field shows the sensitivity of the wave efficiency (WS_eff) to the inflow at each grid point and time step.

@@ -1,0 +1,52 @@
+The error message you're encountering is due to an issue with the file format of the worker files. The error message indicates that the file signature is not found, which suggests that the file is not in the expected format.
+
+The issue is likely caused by the `h5py` library being unable to read the file due to an incorrect or corrupted file signature. This can happen if the file is not properly formatted or if there are issues with the file's metadata.
+
+To diagnose and resolve this issue, you can try the following steps:
+
+1.  Check the file format: Make sure that the file format is correct and that the file signature is valid. You can use tools like `h5py`'s built-in validation feature to check the file format.
+
+2.  Verify the file integrity: Use a tool like `h5py`'s `check` function to verify the file's integrity. This can help identify if the file is corrupted or if there are any issues with the file's metadata.
+
+3.  Check for inconsistencies: Run a script that checks for inconsistencies in the file's metadata and data. This can help identify if there are any issues with the file's structure or data.
+
+4.  Re-create the files: If none of the above steps resolve the issue, try re-creating the files from scratch. This can help ensure that the files are properly formatted and have the correct file signature.
+
+5.  Check the data: If the files are properly formatted, check the data for any inconsistencies or errors. This can help identify if there are any issues with the data itself.
+
+6.  Check the dependencies: Make sure that all dependencies are up-to-date and that there are no conflicts between them.
+
+Here is an example of how you can modify your script to handle the error and stop the process cleanly:
+
+```python
+import os
+import h5py
+import logging
+
+def process_worker_file(worker_file):
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Your code here
+            pass
+    except OSError as e:
+        logging.error(f"Error processing worker file {worker_file}: {e}")
+        return False
+    return True
+
+def main():
+    for seed in seeds:
+        worker_file = f"worker_{seed}.h5"
+        if not os.path.exists(worker_file):
+            logging.error(f"Worker file {worker_file} not found")
+            continue
+        if not process_worker_file(worker_file):
+            logging.error(f"Failed to process worker file {worker_file}")
+            return
+    logging.info("All worker files processed successfully")
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    main()
+```
+
+This code will log an error message and continue to the next worker file if an error occurs while processing a worker file. If all worker files are processed successfully, it will log a success message.

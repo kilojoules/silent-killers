@@ -1,0 +1,73 @@
+The error you're encountering is due to an issue with the file format of one of the worker files. The `h5py` library is unable to open the file because it doesn't recognize the file signature.
+
+This error can occur when the `h5py` library is unable to read the file due to corrupted or invalid data. In your case, it seems like the issue is with the joining operation.
+
+To reliably detect and stop the process if any worker file is invalid, you can add a try-except block around the file opening code to catch the `OSError` exception. Here's an example of how you can modify your code to achieve this:
+
+```python
+import h5py
+
+def open_worker_file(file_path):
+    try:
+        with h5py.File(file_path, 'r') as h5_in:
+            # Your code here
+            pass
+    except OSError as e:
+        print(f"Error opening file {file_path}: {e}")
+        return None
+
+def main():
+    #... rest of your code...
+
+    for seed in range(50):
+        worker_file = f"worker_{seed}.h5"
+        worker_file_path = os.path.join(worker_dir, worker_file)
+        if os.path.exists(worker_file_path):
+            worker_file_data = open_worker_file(worker_file_path)
+            if worker_file_data is not None:
+                # Process the data
+                pass
+        else:
+            print(f"Worker file {worker_file_path} not found or invalid")
+```
+
+However, if you want to stop the process cleanly when an invalid file is encountered, you can use a more robust way to handle the exception. You can use a queue to store the invalid files and have a separate thread or process to handle the invalid files. Here's an example using a queue and a separate thread:
+
+```python
+import h5py
+import queue
+import threading
+
+def process_invalid_files(queue):
+    while True:
+        file_path = queue.get()
+        try:
+            with h5py.File(file_path, 'r') as h5_in:
+                # Process the data
+                pass
+        except OSError as e:
+            print(f"Error processing file {file_path}: {e}")
+        finally:
+            queue.task_done()
+
+def main():
+    #... rest of your code...
+
+    invalid_file_queue = queue.Queue()
+    invalid_file_thread = threading.Thread(target=process_invalid_files, args=(invalid_file_queue,))
+    invalid_file_thread.daemon = True
+    invalid_file_thread.start()
+
+    for seed in range(50):
+        worker_file = f"worker_{seed}.h5"
+        worker_file_path = os.path.join(worker_dir, worker_file)
+        if os.path.exists(worker_file_path):
+            worker_file_data = worker_file_path
+            invalid_file_queue.put(worker_file_path)
+        else:
+            print(f"Worker file {worker_file_path} not found or invalid")
+
+    invalid_file_queue.join()
+```
+
+In this example, the `process_invalid_files` function is run in a separate thread and it processes the files in the queue. If a file cannot be opened, it is added to the queue and the main thread continues processing the other files.

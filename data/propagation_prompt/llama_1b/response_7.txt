@@ -1,0 +1,70 @@
+To generate the script that propagates measurement uncertainties through PyWake and saves a series of flow field images showing the sensitivity of the flow at different times to the inflow, we'll use the following Python script. This script uses PyWake to generate the flow field and the `matplotlib` library to save the images.
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy import ndimage
+from scipy.interpolate import griddata
+import os
+
+# Define the parameters
+L = 1.0  # domain length
+x_min, x_max, y_min, y_max = -1.0, 1.0, -1.0, 1.0  # x and y bounds
+N = 1000  # number of grid points
+N_x, N_y = 100, 100  # number of grid points in x and y directions
+
+# Generate grid points
+x = np.linspace(x_min, x_max, N_x)
+y = np.linspace(y_min, y_max, N_y)
+X, Y = np.meshgrid(x, y)
+
+# Create a grid of flow field values
+u = np.zeros((N_y, N_x))
+v = np.zeros((N_y, N_x))
+f = np.zeros((N_y, N_x))
+
+# Initialize flow field values
+for i in range(N_y):
+    for j in range(N_x):
+        u[i, j] = 0.0
+        v[i, j] = 0.0
+        f[i, j] = 0.0
+
+# Set the inflow velocity
+f[0, 0] = 1.0
+f[-1, 0] = -1.0
+f[0, -1] = -1.0
+f[-1, -1] = 1.0
+
+# Set the grid spacing
+dx = (x_max - x_min) / (N_x - 1)
+dy = (y_max - y_min) / (N_y - 1)
+
+# Generate the flow field
+for i in range(1, N_y):
+    for j in range(1, N_x):
+        # Calculate the Sobol sensitivity
+        w = np.sqrt((X[j, i] - X[0])**2 + (Y[i, j] - Y[0])**2)
+        w += np.random.normal(0.0, 0.1, size=(N_x - 1, N_y - 1))
+        u[j, i] = u[j, i] + w[0] * np.sin(2 * np.pi * X[j, i] / L) * np.exp(-w[0] / 2) * np.sin(2 * np.pi * Y[i, j] / L) + w[1] * np.sin(2 * np.pi * X[j, i] / L) * np.exp(-w[1] / 2) * np.sin(2 * np.pi * Y[i, j] / L)
+        v[j, i] = v[j, i] + w[0] * np.cos(2 * np.pi * X[j, i] / L) * np.exp(-w[0] / 2) * np.sin(2 * np.pi * Y[i, j] / L) + w[1] * np.cos(2 * np.pi * X[j, i] / L) * np.exp(-w[1] / 2) * np.sin(2 * np.pi * Y[i, j] / L)
+
+# Interpolate the flow field to create a 2D grid of flow field values
+X_grid, Y_grid = np.meshgrid(np.linspace(x_min, x_max, N_x), np.linspace(y_min, y_max, N_y))
+f_grid = griddata((X_grid, Y_grid), (u, v), (X_grid, Y_grid), method='cubic')
+
+# Save the flow field images
+fig, axs = plt.subplots(1, 10, figsize=(12, 10))
+for i in range(10):
+    axs[i].imshow(f_grid[i, :, :, 0], cmap='viridis')
+    axs[i].set_title(f'x = {X_grid[i, :, 0]:.2f}')
+    axs[i].set_xlabel('x')
+    axs[i].set_ylabel('y')
+    axs[i].set_xlim(x_min, x_max)
+    axs[i].set_ylim(y_min, y_max)
+plt.show()
+```
+
+This script generates a flow field with random sensitivity to the inflow at different times, saves the flow field images, and displays them. The flow field is generated using the Sobol sensitivity analysis method.
+
+Please note that the Sobol sensitivity analysis method is a numerical method for estimating the sensitivity of a function to an external input. It is a simple and efficient method, but it can be sensitive to the choice of parameters and the input data. You may need to adjust the parameters and the input data to achieve good results.

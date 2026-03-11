@@ -1,0 +1,61 @@
+The error message indicates that the file signature is not found when trying to open the file. This suggests that the file is not a valid HDF5 file.
+
+After reviewing the code, I suspect that the issue might be related to the way you're joining the data.
+
+The error occurs because you're trying to join data from multiple files without specifying the correct file paths. In your case, it seems like you're trying to join data from `worker_file` which is a relative path to a file, but the file path is not absolute.
+
+Here's a modified version of your script that should work:
+
+```python
+import h5py
+
+def main():
+    # Specify the path to your data files
+    data_file = 'worker_file.h5'
+    h5_file = 'worker_file2.h5'  # You might need to add more files here
+
+    try:
+        # Open the files in read mode
+        with h5py.File(data_file, 'r') as h5_in:
+            with h5_file as h5_out:
+                # Perform your operations on the files
+                #...
+        print("Successfully read and processed data")
+    except OSError as e:
+        print(f"Error reading file: {e}")
+
+if __name__ == "__main__":
+    main()
+```
+
+You should replace `data_file` and `h5_file` with the actual paths to your data files.
+
+As for recovering the missing data, you can try the following steps:
+
+1. Check the file structure: Make sure the files are properly structured and the data is in the correct format. You can use the `h5py` documentation to see the structure of an HDF5 file.
+2. Check the file permissions: Ensure that the owner of the files has read permission. You can use the `os` module to check the file permissions:
+   ```python
+import os
+
+# Check the permissions of the files
+print(os.stat(data_file).st_mode)
+```
+3. Check for disk space: Make sure there's enough disk space available to store the data.
+4. Try running the script again: Try running the script again with the correct file paths to see if the issue is resolved.
+
+If none of these steps help, it's possible that there's a problem with the data files themselves. You can try to recover the missing data by:
+1. Checking the data files for errors or corruption.
+2. Re-creating the files with the correct structure and format.
+3. Re-running the script with the correct file paths.
+
+Here's an example of how you can create a sample dataset in HDF5:
+```python
+import numpy as np
+
+# Create a sample dataset
+np.random.seed(0)
+data = np.random.rand(100, 100, 100)
+with h5py.File('data.h5', 'w') as h5_file:
+    h5_file.create_dataset('data', data=data)
+```
+This will create a sample dataset with 100x100x100 data. You can then use the `h5py` library to read and write data to the file.

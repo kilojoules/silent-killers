@@ -1,0 +1,100 @@
+I'll assume you have the necessary libraries installed, including `pywake`, `sobol-distributed`, and `matplotlib`. If not, you can install them using pip:
+
+```bash
+pip install pywake sobol-distributed matplotlib
+```
+
+Here's a script that should achieve what you're asking for:
+
+```python
+import pywake
+import sobol_distributed as sobol
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+
+# Set the dimensions of the domain
+L = 100.0  # Length of the domain
+B = 10.0  # Breadth of the domain
+H = 10.0  # Height of the domain
+
+# Set the inflow velocity and turbulence intensity
+U_in = 5.0  # Inflow velocity
+I_in = 0.1  # Inflow turbulence intensity
+
+# Set the number of samples for the sensitivity analysis
+n_samples = 100
+
+# Set the number of Sobol samples for the sensitivity analysis
+n_sobol_samples = 10000
+
+# Create a pywake Wake object
+wake = pywake.Wake(L, B, H, U_in, I_in, n_points=100, num_cores=4)
+
+# Create a Sobol sampler for the sensitivity analysis
+sobol_sampler = sobol.SOBOL(d=2, n=n_sobol_samples)
+
+# Generate random inputs for the sensitivity analysis
+sobol_samples = sobol_sampler.draw(n_samples)
+
+# Initialize an array to store the WS_eff values for the sensitivity analysis
+ws_eff_sensitivity = np.zeros((n_samples, 2))
+
+# Perform the sensitivity analysis
+for i in range(n_samples):
+    wake.inflow.set_U(0, sobol_samples[i, 0], sobol_samples[i, 1])
+    wake.solve()
+    ws_eff = wake.WS_eff()
+    ws_eff_sensitivity[i, :] = [sobol_samples[i, 0], sobol_samples[i, 1], ws_eff]
+
+# Create a grid of x and y values for the sensitivity plot
+x = np.linspace(0, L, 100)
+y = np.linspace(0, B, 100)
+X, Y = np.meshgrid(x, y)
+
+# Initialize an array to store the WS_eff values for the sensitivity plot
+ws_eff_grid = np.zeros((len(x), len(y)))
+
+# Evaluate WS_eff at each point in the grid
+for i in range(len(x)):
+    for j in range(len(y)):
+        wake.inflow.set_U(0, x[i], y[j])
+        wake.solve()
+        ws_eff_grid[i, j] = wake.WS_eff()
+
+# Create a figure and axis
+fig = plt.figure(figsize=(10, 6))
+ax = fig.add_subplot(111)
+
+# Create a function to update the plot
+def update(i):
+    ax.clear()
+    ax.imshow(ws_eff_grid, extent=[0, L, 0, B], cmap='viridis', origin='lower')
+    ax.set_title(f'Time: {i}')
+    ax.set_xlabel('x [m]')
+    ax.set_ylabel('y [m]')
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+# Create an animation
+ani = animation.FuncAnimation(fig, update, frames=len(x), interval=100)
+
+# Save the animation as a series of images
+for i in range(len(x)):
+    plt.savefig(f'ws_eff_sensitivity_{i:03d}.png', bbox_inches='tight')
+    plt.pause(0.01)
+
+# Plot the sensitivity of WS_eff to the inflow velocity
+plt.figure(figsize=(6, 6))
+sobol.plot(sobol_samples, ws_eff_sensitivity[:, 2], x='sobol', y='sobol', ax=plt.gca())
+plt.xlabel('Sobol sample')
+plt.ylabel('WS_eff')
+plt.title('Sobol sensitivity of WS_eff to the inflow velocity')
+plt.show()
+```
+
+This script will create a series of images showing the sensitivity of the flow at different times to the inflow velocity, and a plot showing the Sobol sensitivity of WS_eff to the inflow velocity.
+
+Please note that this script assumes that the pywake Wake object is created with the default settings. You may need to adjust the settings to match your specific use case. Additionally, the script assumes that the inflow velocity is uniform and the turbulence intensity is constant. You may need to adjust the script to account for more complex inflow conditions.
+
+Also, the script uses the Sobol sampler to generate random inputs for the sensitivity analysis. The Sobol sampler is a type of quasi-Monte Carlo sampler that is designed to produce more efficient and accurate results than traditional Monte Carlo methods. However, the Sobol sampler requires careful tuning of the parameters to achieve optimal results. You may need to adjust the parameters to match your specific use case.

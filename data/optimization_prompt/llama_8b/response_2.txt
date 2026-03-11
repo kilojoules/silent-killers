@@ -1,0 +1,64 @@
+The error message "file signature not found" indicates that the script is trying to open an HDF5 file that is not a valid HDF5 file. This can happen if the worker file is not a valid HDF5 file, or if it has been corrupted during the execution of the script.
+
+To detect this issue reliably and stop the process cleanly, you can add error handling around the `h5py.File` constructor. Here's an example of how you can modify your script:
+
+```python
+import h5py
+
+def load_hdf5_file(file_path):
+    try:
+        with h5py.File(file_path, 'r') as h5_in:
+            return h5_in
+    except OSError as e:
+        if "file signature not found" in str(e):
+            print(f"Warning: Invalid HDF5 file '{file_path}'. Skipping.")
+            return None
+        else:
+            raise
+
+# Usage:
+with h5py.File(worker_file, 'r') as h5_in:
+    # your code here
+```
+
+However, since you are experiencing repeated attempts to load the same worker file, it's likely that the issue is not with the file itself, but with the way the script is being run or the way the worker files are being generated.
+
+Here are a few suggestions to help you recover the missing data and prevent this issue in the future:
+
+1. **Check the worker file generation process**: Make sure that the worker files are being generated correctly and are valid HDF5 files. You can use the `h5dump` command to inspect the contents of the files.
+
+2. **Add error handling in the main loop**: Wrap the main loop where you load the worker files in a try-except block to catch any exceptions that occur when loading the files. If an exception occurs, print an error message and continue to the next worker file.
+
+3. **Use a more robust way to handle worker files**: Instead of using a fixed list of worker files, consider using a more dynamic approach to load the files. For example, you can use a loop to load the files from a directory.
+
+Here's an example of how you can modify your script to add error handling and load worker files dynamically:
+
+```python
+import os
+
+def load_worker_files(directory):
+    worker_files = [f for f in os.listdir(directory) if f.endswith('.hdf5')]
+    for file in worker_files:
+        file_path = os.path.join(directory, file)
+        h5_in = load_hdf5_file(file_path)
+        if h5_in is not None:
+            # your code here
+        else:
+            print(f"Warning: Skipping invalid worker file '{file_path}'.")
+
+def load_hdf5_file(file_path):
+    try:
+        with h5py.File(file_path, 'r') as h5_in:
+            return h5_in
+    except OSError as e:
+        if "file signature not found" in str(e):
+            print(f"Warning: Invalid HDF5 file '{file_path}'. Skipping.")
+            return None
+        else:
+            raise
+
+directory = '/path/to/worker/files'
+load_worker_files(directory)
+```
+
+This will load the worker files from the specified directory and skip any files that are not valid HDF5 files.

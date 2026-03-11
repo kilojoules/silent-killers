@@ -1,0 +1,59 @@
+The issue you're experiencing is due to an invalid or corrupted file in your dataset. The error message indicates that the file signature is not found, which means that the file does not match the expected format.
+
+The `h5py` library is unable to read the file because it can't verify the file signature, which is used to identify the file format. This is likely due to the joining operation that occurred earlier, as you suspected.
+
+To diagnose and recover from this issue, you can try the following steps:
+
+1.  Check the file integrity: Verify that the file is not corrupted by checking its size, modification time, and contents. You can use tools like `md5sum` or `sha256sum` to check the file's integrity.
+2.  Re-create the file: Try re-creating the file from scratch using the same parameters and settings that were used to create the original file. This may help to recreate the file with the correct signature.
+3.  Check the dataset structure: Verify that the dataset structure is correct and complete. Check that the dataset is not corrupted or truncated.
+4.  Use a different file format: If the above steps don't work, try using a different file format that is more robust, such as HDF5 or CSV.
+5.  Check for file system issues: Make sure that the file system is not experiencing issues that could cause the file to become corrupted.
+
+To modify your script to stop the process cleanly when an invalid file is encountered, you can add a try-except block around the code that opens the file. Here's an example:
+
+```python
+try:
+    with h5py.File(worker_file, 'r') as h5_in:
+        # Your code here
+except OSError as e:
+    print(f"Error: Unable to open file {worker_file}. Error: {e}")
+    sys.exit(1)
+```
+
+This will catch any `OSError` exceptions that occur when trying to open the file and print an error message before exiting the program.
+
+To ensure that the process stops cleanly when an invalid file is encountered, you can also consider using a more robust way to handle file errors, such as using a try-except-finally block:
+
+```python
+try:
+    with h5py.File(worker_file, 'r') as h5_in:
+        # Your code here
+finally:
+    print(f"Cleaning up...")
+    # Clean up any resources here
+    sys.exit(0)
+```
+
+This will ensure that the program exits cleanly even if an error occurs while opening the file.
+
+In your case, you can modify the `main` function to include a try-except block around the code that opens the file, and use a try-except-finally block to clean up any resources:
+
+```python
+def main():
+    for seed in seeds:
+        worker_file = f"worker_{seed}.h5"
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                # Your code here
+        except OSError as e:
+            print(f"Error: Unable to open file {worker_file}. Error: {e}")
+            sys.exit(1)
+        finally:
+            print(f"Cleaning up...")
+            # Clean up any resources here
+
+    sys.exit(0)
+```
+
+This will ensure that the program exits cleanly even if an error occurs while opening a file.

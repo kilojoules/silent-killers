@@ -1,0 +1,76 @@
+Below is a Python script that uses PyWake to simulate the flow field and calculate the Sobol sensitivity of WS_eff as a function of x and y. This script assumes that you have the necessary dependencies installed, including PyWake and NumPy.
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from PyWake import *
+from PyWake import FlowField, SobolSensitivity
+
+# Parameters
+Lx = 1.0
+Ly = 1.0
+Nx = 100
+Ny = 100
+L = 0.1
+Nx_sobol = 10
+Ny_sobol = 10
+x_sobol = np.linspace(0, L, Nx_sobol)
+y_sobol = np.linspace(0, L, Ny_sobol)
+X_sobol, Y_sobol = np.meshgrid(x_sobol, y_sobol)
+
+# Create a flow field
+def create_flow_field(x, y):
+    # Define the parameters
+    sigma = 0.01
+    alpha = 0.01
+    mu = 0.01
+    sigma_turbulence = 0.01
+    sigma_sobol = 0.01
+    alpha_sobol = 0.01
+    mu_sobol = 0.01
+    Pr = 1.0
+    N = 10
+    Lx_sobol = 1.0
+    Ly_sobol = 1.0
+    t = np.linspace(0, 10, N)
+
+    # Create a Sobol grid
+    sobol_grid = SobolGrid(x, y, sigma, alpha, mu, sigma_turbulence, sigma_sobol, alpha_sobol, mu_sobol, Pr, N, Lx_sobol, Ly_sobol, t)
+
+    # Compute the flow field
+    flow_field = FlowField(sobol_grid, sigma, alpha, mu, sigma_turbulence, sigma_sobol, alpha_sobol, mu_sobol, Pr, N, Lx_sobol, Ly_sobol, t)
+
+    return flow_field
+
+# Create flow fields for different Sobol grid sizes
+fs = 1.0
+for N_sobol in [10, 50, 100]:
+    for sobol in [1, 5, 10]:
+        X_sobol, Y_sobol = np.meshgrid(x_sobol, y_sobol)
+        flow_field = create_flow_field(X_sobol, Y_sobol)
+        fig, ax = plt.subplots(figsize=(12, 6))
+        ax.imshow(flow_field, cmap='viridis', extent=[X_sobol.min(), X_sobol.max(), Y_sobol.min(), Y_sobol.max()])
+        ax.set_title(f'Sobol Sensitivity for {N_sobol}x{N_sobol}')
+        plt.show()
+
+# Calculate the Sobol sensitivity
+def sobol_sensitivity(flow_field, sobol, N_sobol):
+    # Compute the Sobol sensitivity
+    sobol_sens = np.zeros_like(flow_field)
+    for i in range(N_sobol):
+        sobol_sens[:, :, i] = SobolSensitivity.sobol_sensitivity(flow_field, sobol, N_sobol, i)
+    return sobol_sens
+
+# Calculate Sobol sensitivity for different flow fields
+for N_sobol in [10, 50, 100]:
+    for sobol in [1, 5, 10]:
+        X_sobol, Y_sobol = np.meshgrid(x_sobol, y_sobol)
+        flow_field = create_flow_field(X_sobol, Y_sobol)
+        sobol_sens = sobol_sensitivity(flow_field, sobol, N_sobol)
+        fig, ax = plt.subplots(figsize=(12, 6))
+        ax.imshow(sobol_sens, cmap='viridis', extent=[X_sobol.min(), X_sobol.max(), Y_sobol.min(), Y_sobol.max()])
+        ax.set_title(f'Sobol Sensitivity for {N_sobol}x{N_sobol}')
+        plt.show()
+```
+
+This script first creates a flow field for different Sobol grid sizes (1, 10, and 100) and Sobol parameters (1, 5, and 10) using the `create_flow_field` function. It then calculates the Sobol sensitivity for each flow field using the `sobol_sensitivity` function. Finally, it plots the Sobol sensitivity for each Sobol grid size and Sobol parameter.

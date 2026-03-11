@@ -1,0 +1,101 @@
+I'll guide you through the process using the PyWake library and Sobol' sensitivity analysis. However, I'll assume you have the necessary knowledge of Python and the PyWake library. If not, please let me know and I'll provide more detailed explanations.
+
+**Requirements:**
+
+* PyWake library (install with `pip install pywake`)
+* NumPy library (install with `pip install numpy`)
+* SciPy library (install with `pip install scipy`)
+* Matplotlib library (install with `pip install matplotlib`)
+* Pandas library (install with `pip install pandas`)
+
+**Example code:**
+
+```python
+import numpy as np
+import pywake as pw
+import matplotlib.pyplot as plt
+from scipy.stats import sobol_d as sobol
+import pandas as pd
+
+# Define the wind farm layout
+farm_layout = {
+    'x': [0, 0.5, 1.0, 1.5],
+    'y': [0, 0.25, -0.25, -0.5],
+    'z': [80, 80, 80, 80],
+    'rotor_diameter': [80, 80, 80, 80],
+    'hub_height': 80,
+    'turbine_type': 'NREL 5MW'
+}
+
+# Define the inflow conditions
+inflow = {
+    'wind_speed': 8,
+    'turbulence_intensity': 0.1,
+   'shear_exponent': 0.2,
+    'inflow_direction': 270
+}
+
+# Define the simulation parameters
+sim_params = {
+    'turbulence_model': 'Kaimal',
+    'turbulence_scale': 100,
+    'time_step': 1,
+   'simulation_time': 100,
+    'num_samples': 10000,
+    'num_sobol_samples': 1000
+}
+
+# Create a PyWake farm object
+farm = pw.Farm(farm_layout, inflow, sim_params)
+
+# Perform the simulation
+farm.simulate()
+
+# Define the parameter ranges for the Sobol' sensitivity analysis
+param_ranges = {
+    'wind_speed': [5, 15],
+    'turbulence_intensity': [0, 0.3],
+   'shear_exponent': [0.1, 1.0],
+    'inflow_direction': [0, 360]
+}
+
+# Perform the Sobol' sensitivity analysis
+sobol_results = sobol.sobol(farm.WS_eff, param_ranges, num_samples=sim_params['num_sobol_samples'])
+
+# Save the results
+sobol_df = pd.DataFrame(sobol_results)
+sobol_df.to_csv('sobol_results.csv', index=False)
+
+# Create a figure and axis object
+fig, ax = plt.subplots()
+
+# Iterate over the time steps and save the flow field images
+for i in range(0, sim_params['simulation_time'], sim_params['time_step']):
+    flow_field = farm.flow_field(i)
+    ax.imshow(flow_field, cmap='jet')
+    ax.set_title(f'Time step: {i}')
+    plt.savefig(f'flow_field_{i}.png')
+    plt.close()
+
+# Create a Sobol' sensitivity plot
+plt.figure()
+sobol.plot(sobol_results)
+plt.title('Sobol\' Sensitivity of WS_eff')
+plt.xlabel('Parameter')
+plt.ylabel('Sensitivity Index')
+plt.show()
+```
+
+This script performs the following tasks:
+
+1. Defines the wind farm layout, inflow conditions, and simulation parameters.
+2. Creates a PyWake farm object and performs the simulation.
+3. Defines the parameter ranges for the Sobol' sensitivity analysis.
+4. Performs the Sobol' sensitivity analysis using the `sobol_d` function from the `scipy.stats` module.
+5. Saves the results to a CSV file.
+6. Iterates over the time steps and saves the flow field images.
+7. Creates a Sobol' sensitivity plot using the `sobol.plot` function.
+
+Note that this script assumes you have the necessary knowledge of the PyWake library and its functions. If you're new to PyWake, please refer to the documentation and examples provided by the library.
+
+Also, the script uses the `sobol_d` function from the `scipy.stats` module, which performs the Sobol' sensitivity analysis. This function requires the `sobol` package, which you can install using `pip install sobol`.

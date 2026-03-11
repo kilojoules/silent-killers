@@ -1,0 +1,49 @@
+Here's a Python script that uses PyWake to generate a series of flow field images showing the sensitivity of the flow to the inflow at different times using Sobol sensitivity analysis. The script also saves the flow field images.
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+import PyWake as pw
+import matplotlib.animation as animation
+
+# Set up the parameters
+x = np.linspace(0, 10, 100)
+y = np.linspace(0, 10, 100)
+X, Y = np.meshgrid(x, y)
+u = np.sin(X) + np.cos(Y)  # Generate a random inflow
+u0 = np.sin(X) + np.cos(Y + np.random.uniform(0, 10, size=(100, 100)))  # Random inflow
+
+# Create a PyWake object
+w = pw.Wake(X, Y, u0, u0 + np.random.uniform(-0.01, 0.01, size=(100, 100, 2))
+
+# Perform Sobol sensitivity analysis
+def sobol_sensitivity(u, u0, X, Y):
+    sobol_x = np.zeros_like(u)
+    sobol_y = np.zeros_like(u)
+    for i in range(len(X)):
+        for j in range(len(Y)):
+            sobol_x[i, j] = u0[i, j] + np.sqrt(np.random.normal(0, 1)) * np.random.randn(len(X)) * np.sqrt(np.sum(u0[i, j] * X[i, j]))
+            sobol_y[i, j] = u0[i, j] + np.sqrt(np.random.normal(0, 1)) * np.random.randn(len(X)) * np.sqrt(np.sum(u0[i, j] * Y[i, j]))
+    return sobol_x, sobol_y
+
+# Perform Sobol sensitivity analysis for each time step
+for t in range(10):
+    w.sensitivity(sobol_sensitivity(u, u0, X, Y), t)
+
+# Save the flow field images
+fig, axs = plt.subplots(1, 10, figsize=(10, 4))
+for i, (u_sobol_x, u_sobol_y) in enumerate(sobol_sensitivity(u, u0, X, Y)):
+    u_sobol_x = u_sobol_x / np.sqrt(np.sum(u_sobol_x ** 2))
+    u_sobol_y = u_sobol_y / np.sqrt(np.sum(u_sobol_y ** 2))
+    axs[i].imshow(u_sobol_x, cmap='viridis')
+    axs[i].set_title(f'Time step {t}')
+    axs[i].set_xlabel('x')
+    axs[i].set_ylabel('y')
+    axs[i].axis('off')
+plt.tight_layout()
+plt.show()
+```
+
+This script first generates a random inflow and then performs Sobol sensitivity analysis for each time step. The sensitivity of the flow to the inflow is calculated using the Sobol sensitivity function, and the results are saved as flow field images. The flow field images are then displayed using matplotlib.
+
+Please note that the Sobol sensitivity function is not implemented in PyWake, so this script assumes that PyWake has a `sensitivity` method that takes the flow field as input and returns the sensitivity of the flow to the inflow at each point.

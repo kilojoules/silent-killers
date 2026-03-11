@@ -1,0 +1,89 @@
+Your code is quite extensive and well-structured. I'll provide some general feedback and suggestions on how to improve the code and implement the requested changes.
+
+**Modularizing the instantiating of the wake model**
+
+To make the code more modular and easier to maintain, you can create a separate function that instantiates the wake model based on the chosen `MODEL` variable. Here's an example of how you can refactor the code:
+```python
+def instantiate_wake_model(MODEL):
+    if MODEL == 1:
+        return BlondelSuperGaussianDeficit2020()
+    elif MODEL == 2:
+        return TurboGaussianDeficit(
+            A=0.04,  # default value for A
+            cTI=[1.5, 0.8],  # default values for cTI
+            ctlim=0.999,  # default value for ctlim
+            ceps=0.25,  # default value for ceps
+            ct2a=ct2a_mom1d,  # default value for ct2a
+            groundModel=Mirror(),  # default value for groundModel
+            rotorAvgModel=GaussianOverlapAvgModel()  # default value for rotorAvgModel
+        )
+    else:
+        raise ValueError("Invalid MODEL value")
+```
+You can then use this function to instantiate the wake model in the `evaluate_rmse` function:
+```python
+wake_deficitModel = instantiate_wake_model(MODEL)
+```
+**Reporting average and p90s of the errors**
+
+To report the average and p90s of the errors, you can calculate these values in the `evaluate_rmse` function and print them at the end:
+```python
+def evaluate_rmse(**kwargs):
+    #... (rest of the function remains the same)
+
+    rmse_values = []
+
+    for t in range(flow_map.time.size):
+        #... (rest of the code remains the same)
+
+    # Calculate average and p90s of the errors
+    avg_rmse = np.mean(rmse_values)
+    p90_rmse = np.percentile(rmse_values, [25, 75])
+
+    print(f"Average RMSE: {avg_rmse:.4f}")
+    print(f"P90 RMSE: {p90_rmse:.4f}")
+
+    return -avg_rmse
+```
+**Flow field plots**
+
+To plot the flow field, you can use the `flow_map` variable, which is already calculated in the main code. You can add a plot to the `update_plot` function to display the flow field at each time step:
+```python
+def update_plot(frame):
+    #... (rest of the function remains the same)
+
+    # Plot flow field
+    fig, ax = plt.subplots(3, 1, figsize=(5, 15))
+    co = ax[0].contourf(target_x, target_y, flow_map.WS_eff)
+    ax[0].set_title("Flow Field")
+    ax[0].set_ylabel("x")
+    ax[0].set_xlabel("y")
+    fig.colorbar(co, ax=ax[0])
+    plt.tight_layout()
+    plt.savefig(f"figs/flow_field_{frame}.png")
+    plt.clf()
+```
+You can also add a separate plot to display the observed and predicted flow fields:
+```python
+def update_plot(frame):
+    #... (rest of the function remains the same)
+
+    # Plot observed and predicted flow fields
+    fig, ax = plt.subplots(3, 1, figsize=(5, 15))
+    co = ax[0].contourf(target_x, target_y, flow_map.WS_eff)
+    cp = ax[1].contourf(target_x, target_y, flow_map.WS)
+    cd = ax[2].contourf(target_x, target_y, flow_map.WS - flow_map.WS_eff)
+    for jj, c in enumerate([co, cp, cd]):
+        fig.colorbar(c, ax=ax[jj])
+    ax[0].set_title("Flow Field")
+    ax[0].set_ylabel("x")
+    ax[0].set_xlabel("y")
+    ax[1].set_title("Predicted Flow Field")
+    ax[2].set_title("Difference")
+    plt.tight_layout()
+    plt.savefig(f"figs/flow_fields_{frame}.png")
+    plt.clf()
+```
+Note that I've used the `flow_map.WS_eff` variable to plot the observed flow field, and `flow_map.WS` to plot the predicted flow field. The difference between the two is plotted in the third subplot.
+
+Overall, your code is well-structured and easy to follow. With these suggestions, you should be able to improve the code and make it more modular and maintainable.

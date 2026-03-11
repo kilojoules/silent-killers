@@ -1,0 +1,84 @@
+It seems like you are using PyWake, a Python package for simulating wind turbine wakes. To achieve the desired outcome, you will need to use the `pywake` package along with `sobol`, a library for sensitivity analysis.
+
+First, ensure you have both packages installed:
+
+```bash
+pip install pywake sobol
+```
+
+Here's a sample script that uses the `sobol` package to perform a sensitivity analysis on the wake effect (`WS_eff`) as a function of the inflow (`x` and `y` coordinates) and saves a series of flow field images showing the sensitivity at different times:
+
+```python
+import numpy as np
+import pywake as pw
+import sobol
+from pywake import WakeModel
+import matplotlib.pyplot as plt
+from matplotlib import cm
+from pywake.plotting import plot_wake
+import os
+
+# Define the parameters for the wind farm and the inflow
+# Inflow parameters
+u_hub = 10.0  # m/s
+T = 100.0  # seconds
+x = np.linspace(0, 1000, 1000)  # m
+y = np.linspace(-500, 500, 1000)  # m
+x, y = np.meshgrid(x, y)
+x = x.flatten()
+y = y.flatten()
+
+# Wind turbine parameters
+D = 90.0  # m
+C_t = 0.8
+C_r = 0.8
+rho = 1.225  # kg/m^3
+
+# Create a wake model
+wake_model = WakeModel(
+    D=D, C_t=C_t, C_r=C_r, rho=rho, u_hub=u_hub, T=T, x=x, y=y
+)
+
+# Define the number of samples for the sensitivity analysis
+N = 1000
+
+# Perform the sensitivity analysis
+sobol_indices = sobol.sobol_indices(
+    wake_model, "WS_eff", N, random_state=0, verbose=False
+)
+
+# Extract the sensitivities
+sens = sobol_indices.get_sensitivities()
+
+# Save the flow field images
+for t in np.linspace(0, T, 10):
+    plot_wake(
+        wake_model,
+        t,
+        cmap=cm.RdYlGn,
+        show=False,
+        savefig=True,
+        filename=f"flow_field_{t:.0f}.png",
+    )
+
+# Plot the sensitivity as a function of x and y
+plt.contourf(x, y, sens, cmap=cm.RdYlGn)
+plt.colorbar(label="Sensitivity")
+plt.xlabel("x [m]")
+plt.ylabel("y [m]")
+plt.title("Sensitivity of WS_eff")
+plt.savefig("sensitivity.png")
+plt.close()
+```
+
+This script performs the following steps:
+
+1.  It sets the parameters for the wind farm and the inflow.
+2.  It creates a wake model using the `WakeModel` class from `pywake`.
+3.  It defines the number of samples for the sensitivity analysis.
+4.  It performs the sensitivity analysis using the `sobol_indices` function from `sobol`.
+5.  It extracts the sensitivities from the sensitivity analysis.
+6.  It saves the flow field images at different times using the `plot_wake` function from `pywake`.
+7.  It plots the sensitivity as a function of `x` and `y` using `matplotlib`.
+
+Make sure to adjust the parameters and the number of samples according to your specific needs.

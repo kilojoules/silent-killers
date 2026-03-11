@@ -1,0 +1,99 @@
+To accomplish this task, we'll need to use the following libraries:
+
+- `pywake`: for wake modeling
+- `sobol`: for sensitivity analysis
+- `numpy`: for numerical operations
+- `matplotlib`: for plotting
+
+Here's a basic example of how you can achieve this:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+import pywake as pw
+from sobol import Sobol, generate_sobol_samples
+
+# Define the wind turbine characteristics
+hub_height = 80  # m
+rotor_diameter = 100  # m
+turbine_rating = 3.0  # MW
+
+# Define the inflow conditions
+wind_speed = 10  # m/s
+inflow_direction = 270  # degrees
+inflow_shear_exp = 1 / 7  # power law exponent
+
+# Create a wind turbine object
+turbine = pw.WindTurbine(hub_height, rotor_diameter, turbine_rating)
+
+# Define the time array for the simulation
+time = np.linspace(0, 120, 121)
+
+# Define the number of samples for the Sobol sensitivity analysis
+num_samples = 1000
+
+# Generate Sobol samples
+sobol = Sobol(num_samples, 2)
+sobol_samples = sobol.generate()
+
+# Initialize an array to store the flow field images
+flow_fields = np.zeros((num_samples, len(time), 101, 101))
+
+# Propagate the flow fields for each sample
+for i in range(num_samples):
+    # Generate a random inflow condition for this sample
+    wind_speed_sample = wind_speed + sobol_samples[i, 0]
+    inflow_direction_sample = inflow_direction + sobol_samples[i, 1] * 360
+    inflow_shear_exp_sample = inflow_shear_exp + sobol_samples[i, 0] * 0.5  # arbitrary perturbation
+
+    # Create a wind field object with the sample inflow conditions
+    wind_field = pw.WindField(
+        wind_speed=wind_speed_sample,
+        wind_direction=inflow_direction_sample,
+        wind_shear_exponent=inflow_shear_exp_sample,
+    )
+
+    # Initialize the flow fields for this sample
+    flow_fields[i] = np.zeros((len(time), 101, 101))
+
+    # Propagate the flow field for each time step
+    for j, t in enumerate(time):
+        # Get the flow field at this time step
+        flow_field = wind_field.get_flow_field(t)
+
+        # Save the flow field
+        flow_fields[i, j] = flow_field
+
+# Calculate the WS_eff for each sample at each time step
+ws_eff = np.zeros((num_samples, len(time)))
+for i in range(num_samples):
+    for j, t in enumerate(time):
+        ws_eff[i, j] = np.mean(flow_fields[i, j, :, :])
+
+# Calculate the Sobol sensitivity indices
+sensitivity = np.zeros((2, len(time)))
+for j, t in enumerate(time):
+    # Perform the Sobol sensitivity analysis
+    indices, _ = sobol.sensitivity(ws_eff[:, j], 2)
+
+    # Store the sensitivity indices
+    sensitivity[:, j] = indices
+
+# Plot the sensitivity indices
+for i in range(2):
+    plt.plot(time, sensitivity[i], label=f'Sobol sensitivity index of WS_eff with respect to sample dimension {i+1}')
+plt.xlabel('Time')
+plt.ylabel('Sobol sensitivity index')
+plt.legend()
+plt.show()
+
+# Plot the flow fields at different times
+for j, t in enumerate(time):
+    plt.imshow(flow_fields[:, j, :, :].mean(axis=0), cmap='viridis')
+    plt.title(f'Flow field at time {t:.1f} s')
+    plt.show()
+```
+
+This script first generates a series of random inflow conditions using the Sobol sequence, then propagates the flow fields for each sample using the `pywake` library. It calculates the WS_eff for each sample at each time step and performs a Sobol sensitivity analysis to determine the sensitivity of WS_eff with respect to the inflow conditions. Finally, it plots the sensitivity indices and the flow fields at different times.
+
+Note that this is a basic example and may need to be modified to suit your specific needs. You may also need to adjust the parameters and the number of samples to achieve the desired level of accuracy.

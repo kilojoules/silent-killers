@@ -1,0 +1,63 @@
+The error you're experiencing is due to the inability to open one of the worker files, which is likely due to a corrupted or non-existent file. The error message "file signature not found" suggests that the file is not a valid HDF5 file.
+
+To detect this issue reliably and stop the process cleanly, you can add error handling around the file opening operation. Here's a modified version of the script:
+
+```python
+import h5py
+
+def load_worker_file(worker_file):
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            return h5_in
+    except OSError as e:
+        if 'file signature not found' in str(e):
+            print(f"Error: Unable to open {worker_file}. Skipping.")
+            return None
+        else:
+            raise
+
+# Replace this with your existing code
+with h5py.File(worker_file, 'r') as h5_in:
+    #...
+
+# with the following
+worker_files = [...]  # list of worker files
+for worker_file in worker_files:
+    worker_h5 = load_worker_file(worker_file)
+    if worker_h5 is None:
+        continue  # skip the current worker file if it's invalid
+    # process the worker file
+```
+
+Alternatively, you can use a more robust approach by using a `try-except` block around the entire processing loop and handle the error globally:
+
+```python
+for worker_file in worker_files:
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # process the worker file
+    except OSError as e:
+        if 'file signature not found' in str(e):
+            print(f"Error: Unable to open {worker_file}. Skipping.")
+        else:
+            raise
+```
+
+To recover the missing data, you can inspect the list of worker files and check which ones are missing or corrupted. You may need to re-run the computation for those files or investigate why they were not generated correctly in the first place.
+
+As for the joining operation, it's not clear from the provided code snippet where the issue lies. However, if the joining operation is the one causing the problem, you can add error handling around that part as well:
+
+```python
+import h5py
+
+#...
+
+with h5py.File(worker_file, 'r') as h5_in:
+    try:
+        # perform the joining operation
+    except OSError as e:
+        if 'file signature not found' in str(e):
+            print(f"Error: Unable to open {worker_file}. Skipping.")
+        else:
+            raise
+```

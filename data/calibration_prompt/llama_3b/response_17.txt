@@ -1,0 +1,114 @@
+Your code is quite extensive and complex, but I'll try to provide a high-level overview of your approach and offer some suggestions for improvement.
+
+**Overall Approach:**
+
+Your code appears to be a Bayesian optimization workflow for optimizing the parameters of a wake deficit model for a wind turbine. You're using the `py_wake` library to simulate the wake deficit and compare the predicted and observed values. You're also visualizing the results using matplotlib animations and plots.
+
+**Modularization:**
+
+Your code is not entirely modular, but you're making a good effort to separate different components, such as the simulation setup, optimization, and visualization. However, there are some areas where the code can be further modularized to improve maintainability and scalability.
+
+Here are some suggestions:
+
+1. Create separate modules for each component:
+	* `simulation.py`: This module can contain the simulation setup, including the turbine, wind farm, and wake deficit model.
+	* `optimization.py`: This module can contain the Bayesian optimization workflow, including the objective function, bounds, and optimization algorithm.
+	* `visualization.py`: This module can contain the visualization code, including the animation and plotting functions.
+2. Use classes to encapsulate complex data structures:
+	* Create a `WakeDeficitModel` class that encapsulates the wake deficit model and its parameters.
+	* Create a `Simulation` class that encapsulates the simulation setup, including the turbine, wind farm, and wake deficit model.
+	* Create a `Visualization` class that encapsulates the visualization code, including the animation and plotting functions.
+
+**Flow Field Plots:**
+
+To change the flow field plots, you can modify the `simulation.py` module to generate the flow field at different times and compare the observed and predicted values.
+
+Here's an example of how you can modify the `simulation.py` module to generate the flow field plots:
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+
+class Simulation:
+    def __init__(self, turbine, wake_deficit_model, superposition_model, turbulence_model, blockage_deficit_model):
+        self.turbine = turbine
+        self.wake_deficit_model = wake_deficit_model
+        self.superposition_model = superposition_model
+        self.turbulence_model = turbulence_model
+        self.blockage_deficit_model = blockage_deficit_model
+
+    def simulate(self, ws, ti, wd):
+        # Simulate the wake deficit and superposition
+        wake_deficit = self.wake_deficit_model.simulate(ws, ti, wd)
+        superposition = self.superposition_model.simulate(wake_deficit)
+
+        # Calculate the turbulence and blockage deficit
+        turbulence = self.turbulence_model.simulate(superposition)
+        blockage_deficit = self.blockage_deficit_model.simulate(superposition)
+
+        # Generate the flow field
+        flow_field = self.turbine.generate_flow_field(wake_deficit, superposition, turbulence, blockage_deficit)
+
+        return flow_field
+
+    def plot_flow_field(self, flow_field, observed_deficit, predicted_deficit):
+        # Plot the flow field
+        plt.contourf(flow_field.x, flow_field.y, flow_field.z, cmap='viridis')
+        plt.colorbar(label='Flow Field')
+
+        # Plot the observed and predicted deficits
+        plt.contourf(observed_deficit.x, observed_deficit.y, observed_deficit.z, cmap='viridis', alpha=0.5)
+        plt.contourf(predicted_deficit.x, predicted_deficit.y, predicted_deficit.z, cmap='viridis', alpha=0.5)
+        plt.colorbar(label='Deficit')
+```
+You can then modify the `optimization.py` module to use the `Simulation` class to generate the flow field plots and compare the observed and predicted values:
+```python
+import numpy as np
+from simulation import Simulation
+
+class Optimization:
+    def __init__(self, simulation, optimization_algorithm):
+        self.simulation = simulation
+        self.optimization_algorithm = optimization_algorithm
+
+    def optimize(self, ws, ti, wd):
+        # Run the optimization algorithm
+        best_params = self.optimization_algorithm.optimize(ws, ti, wd)
+
+        # Generate the flow field plots
+        flow_field = self.simulation.simulate(ws, ti, wd)
+        observed_deficit = self.simulation.blockage_deficit_model.generate_deficit(flow_field, ws, ti, wd)
+        predicted_deficit = self.simulation.wake_deficit_model.generate_deficit(flow_field, ws, ti, wd)
+
+        # Plot the flow field and deficits
+        self.simulation.plot_flow_field(flow_field, observed_deficit, predicted_deficit)
+```
+**Reporting Average and p90s of Errors:**
+
+To report the average and p90s of errors, you can modify the `optimization.py` module to calculate the errors and report them in the optimization results:
+```python
+class Optimization:
+    def optimize(self, ws, ti, wd):
+        # Run the optimization algorithm
+        best_params = self.optimization_algorithm.optimize(ws, ti, wd)
+
+        # Calculate the errors
+        errors = self.calculate_errors(ws, ti, wd, best_params)
+
+        # Report the errors
+        self.optimization_algorithm.report_results(errors)
+
+    def calculate_errors(self, ws, ti, wd, best_params):
+        # Calculate the observed and predicted deficits
+        observed_deficit = self.simulation.blockage_deficit_model.generate_deficit(self.simulation.flow_field, ws, ti, wd)
+        predicted_deficit = self.simulation.wake_deficit_model.generate_deficit(self.simulation.flow_field, ws, ti, wd)
+
+        # Calculate the errors
+        errors = observed_deficit - predicted_deficit
+
+        # Calculate the average and p90s of errors
+        avg_error = np.mean(errors)
+        p90_error = np.percentile(errors, 90)
+
+        return avg_error, p90_error
+```
+These are just some suggestions for improving the code organization and structure. You can further modularize the code to make it more maintainable and scalable.

@@ -1,0 +1,59 @@
+The error you're experiencing suggests that one or more of the worker files you're trying to open are not valid HDF5 files. The error message "file signature not found" indicates that the files are not properly formatted as HDF5 files.
+
+To diagnose this issue, you can add some error handling to your code to catch the `OSError` exception and provide more information about which file is causing the issue.
+
+Here's an example of how you can modify your code to add error handling:
+
+```python
+import h5py
+
+#... (rest of your code)
+
+for seed in seeds:
+    worker_file = f'{output_dir}/worker_{seed}.h5'
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Process the file
+            print(f"Successfully opened file {worker_file}")
+    except OSError as e:
+        print(f"Error opening file {worker_file}: {e}")
+        # You can also log the error or take any other action you want
+        # If you want to stop the process, you can use sys.exit()
+        # sys.exit(1)
+```
+
+To ensure that the script stops cleanly if any worker file is invalid, you can use the `sys.exit()` function to exit the script with a non-zero status code.
+
+```python
+import sys
+
+#... (rest of your code)
+
+for seed in seeds:
+    worker_file = f'{output_dir}/worker_{seed}.h5'
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Process the file
+            print(f"Successfully opened file {worker_file}")
+    except OSError as e:
+        print(f"Error opening file {worker_file}: {e}")
+        sys.exit(1)
+```
+
+The `sys.exit(1)` call will exit the script with a status code of 1, indicating that an error occurred.
+
+As for recovering the missing data, you can try the following:
+
+1.  Check the worker files: Verify that the worker files exist and are properly formatted as HDF5 files. You can use the `h5ls` command to list the contents of the files and check if they contain the expected data.
+
+    ```bash
+h5ls /path/to/worker_file.h5
+```
+
+2.  Check the file permissions: Make sure that the files have the correct permissions and are not corrupted.
+
+3.  Check the file size: Verify that the files are not empty or truncated.
+
+4.  Check the file format: Ensure that the files are in the correct HDF5 format.
+
+If none of these suggestions help, you may want to investigate further to determine why the files are not being opened correctly.

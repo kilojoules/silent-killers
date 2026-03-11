@@ -1,0 +1,47 @@
+The error you're experiencing is due to a mismatch between the file signature of the H5File object and the file you're trying to open.
+
+The issue is with the `worker_file` variable in your script. The file signature seems to be different from the expected one.
+
+The file signature is a 4-byte integer that represents the magic number of the file, followed by a 4-byte integer representing the major version, and then the number of files (in this case, 50). However, in your code, you're passing `worker_file` as `worker_file, 'r'` which seems incorrect.
+
+Here's a modified version of your script that should work:
+
+```python
+import h5py
+
+def main():
+    # Define the file paths
+    h5_file = h5py.File('worker_file.h5', 'r')
+    h5_file2 = h5py.File('worker_file2.h5', 'r')
+
+    # Read the data from the files
+    with h5_file as h5_in, h5_file2 as h5_out:
+        print(h5_in.keys())
+        print(h5_out.keys())
+
+        # Get the data from the files
+        data = h5_in['data'][:]
+        data2 = h5_out['data'][:]
+
+        # Merge the data
+        merged_data = h5_in['merged_data'][:]
+        merged_data2 = h5_out['merged_data'][:]
+
+        # Calculate the points
+        points = merged_data2 - merged_data
+
+        # Calculate the weight
+        weight = h5_in['weight'][:]
+        weight2 = h5_out['weight'][:]
+
+        # Print the results
+        print(f'Points: {points}')
+        print(f'Weight: {weight}')
+
+if __name__ == '__main__':
+    main()
+```
+
+In this modified version, `h5_file` is opened as a regular file, and `h5_file2` is opened as a separate file. The data is then read from both files and merged. The weights are calculated by subtracting the old data from the new data.
+
+You can replace `'worker_file.h5'` and `'worker_file2.h5'` with your actual file paths.

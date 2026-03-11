@@ -1,0 +1,57 @@
+Below is a Python script that uses the `pywake` library to generate flow field images of the sensitivity of the flow to the inflow using the Sobol sensitivity function `WS_eff`. The script assumes that you have already installed `pywake` and the necessary dependencies.
+
+```python
+import numpy as np
+from pywake import FlowField, WS_eff, Sobol
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+
+# Define the domain
+Lx = 10
+Ly = 10
+Nx = 100
+Ny = 100
+
+# Generate the grid
+x = np.linspace(0, Lx, Nx)
+y = np.linspace(0, Ly, Ny)
+X, Y = np.meshgrid(x, y)
+
+# Create a flow field
+u = np.sin(np.sqrt(X**2 + Y**2))
+
+# Create a Sobol grid
+X_sobol = np.linspace(0, Lx, Nx)
+Y_sobol = np.linspace(0, Ly, Ny)
+X_sobol, Y_sobol = np.meshgrid(X_sobol, Y_sobol)
+
+# Calculate WS_eff
+ws = WS_eff(u, X_sobol, Y_sobol, Lx, Ly, tol=1e-6, max_iter=1000)
+
+# Create a 3D plot
+fig = plt.figure(figsize=(10, 8))
+ax = fig.add_subplot(111, projection='3d')
+ax.plot_surface(X, Y, ws, cmap='viridis', alpha=0.5)
+ax.set_title('Sobol sensitivity of WS_eff')
+ax.set_xlabel('X')
+ax.set_ylabel('Y')
+ax.set_zlabel('WS_eff')
+
+# Plot the Sobol sensitivity at different times
+for i in range(1, Nx):
+    u_sobol = u.copy()
+    u_sobol[i] += 1e-6 * np.sin(np.sqrt(X_sobol[i]**2 + Y_sobol[i]**2))
+    ws_sobol = WS_eff(u_sobol, X_sobol, Y_sobol, Lx, Ly, tol=1e-6, max_iter=1000)
+    ax.plot_surface(X, Y, ws_sobol, cmap='viridis', alpha=0.5, color='r')
+    plt.cla()
+    plt.title(f'Sobol sensitivity at time step {i}')
+    plt.show()
+
+plt.show()
+```
+
+This script generates a 3D plot of the flow field and the Sobol sensitivity of the flow at different times. The Sobol sensitivity is represented as a red surface on the plot. The x and y coordinates of the surface are the same as the grid, and the z-coordinate is the Sobol sensitivity.
+
+The script also includes a loop that updates the flow field and the Sobol sensitivity at different times, showing the sensitivity at each time step.
+
+Please note that you may need to adjust the domain size, number of grid points, and other parameters to get the desired results.

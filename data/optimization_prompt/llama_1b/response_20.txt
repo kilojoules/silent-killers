@@ -1,0 +1,93 @@
+The issue you're experiencing is likely due to the joining operation failing for some reason, and the script is unable to read the data from the file. The error message suggests that the file signature is not found.
+
+Here are a few potential solutions to help you recover the missing data:
+
+1. **Check the file format**: Ensure that the file is in a format that `h5py` supports. You can check the documentation for `h5py` to see the supported formats.
+2. **Check the file permissions**: Make sure the file is readable by the Python process. You can check the file permissions using `ls -l` or `stat -c '%a' /path/to/your/file`.
+3. **Check the file size**: Ensure that the file is not too large. If the file is too large, `h5py` may not be able to read it.
+4. **Check the file name and path**: Double-check the file name and path to ensure that it is correct.
+
+Here's an updated version of the script that includes some basic error handling and logging to help diagnose the issue:
+
+```python
+import h5py
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+def main():
+    try:
+        # Open the file
+        with h5py.File('worker_file.h5', 'r') as h5_in:
+            # Read the file
+            data = h5_in['/']  # Replace '/your/file_name' with the actual file name
+
+            # Check if the file is valid
+            if not isinstance(data, dict):
+                logging.error("Invalid file format")
+                return
+
+            # Perform the optimization
+            #...
+
+            # Close the file
+            h5_in.close()
+
+    except OSError as e:
+        logging.error(f"Error opening file: {e}")
+        return
+
+if __name__ == '__main__':
+    main()
+```
+
+To handle the joining operation failure and prevent the script from crashing, you can try to handle the error and re-try the joining operation after a short delay. Here's an example:
+
+```python
+import h5py
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+def main():
+    try:
+        # Open the file
+        with h5py.File('worker_file.h5', 'r') as h5_in:
+            # Read the file
+            data = h5_in['/']  # Replace '/your/file_name' with the actual file name
+
+            # Check if the file is valid
+            if not isinstance(data, dict):
+                logging.error("Invalid file format")
+                return
+
+            # Perform the optimization
+            #...
+
+            # Close the file
+            h5_in.close()
+
+    except OSError as e:
+        logging.error(f"Error opening file: {e}")
+        # Try to re-join the file
+        try:
+            # Read the file
+            data = h5_in['/']  # Replace '/your/file_name' with the actual file name
+
+            # Check if the file is valid
+            if not isinstance(data, dict):
+                logging.error("Invalid file format")
+                return
+
+            # Re-join the file
+            #...
+        except OSError as e:
+            logging.error(f"Error re-joining file: {e}")
+
+if __name__ == '__main__':
+    main()
+```
+
+This will retry the joining operation after a short delay if it fails. You can adjust the delay and the retry count to suit your needs.

@@ -1,0 +1,71 @@
+To generate a script that propagates realistic measurement uncertainties through PyWAKE and saves a series of flow field images showing the sensitivity of the flow at different times to the inflow, we will use the following steps:
+
+1.  Set up the simulation parameters
+2.  Define the inflow parameters
+3.  Initialize the solution
+4.  Propagate the uncertainties through the solution
+5.  Save the flow field images
+
+Below is a sample script that accomplishes this task using PyWAKE.
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake import solve_sobol
+
+# Set up simulation parameters
+nx = 100
+ny = 100
+nx2 = 100
+ny2 = 100
+Lx = 10.0
+Ly = 10.0
+u_inflow = np.random.uniform(-0.1, 0.1, size=(nx, ny))
+v_inflow = np.random.uniform(-0.1, 0.1, size=(nx, ny))
+
+# Initialize the solution
+u = np.zeros((nx, ny))
+v = np.zeros((nx, ny))
+u0 = np.copy(u)
+v0 = np.copy(v)
+
+# Propagate the uncertainties through the solution
+for _ in range(10):
+    # Define the Sobol sensitivity coefficients
+    sigma = 1.0 / (nx * ny * (nx + ny))
+    sigma_u = np.sqrt(sigma * u0)
+    sigma_v = np.sqrt(sigma * v0)
+
+    # Solve the system of equations
+    u_sobol, v_sobol = solve_sobol(u, v, u0, v0, sigma_u, sigma_v, x=(Lx / 2), y=(Ly / 2), tol=1e-6, max_iter=1000)
+
+    # Update the solution
+    u = u_sobol
+    v = v_sobol
+
+# Save the flow field images
+for i in range(nx2):
+    for j in range(ny2):
+        u_image = u[i, j, :, :]
+        v_image = v[i, j, :, :]
+        plt.imsave(f'flow_field_{i}_{j}.png', u_image, cmap='viridis', extent=(i * Lx, (i + 1) * Lx, j * Ly, (j + 1) * Ly))
+
+# Display the flow field images
+plt.figure(figsize=(10, 8))
+for i in range(nx2):
+    plt.subplot(1, 2, i + 1)
+    plt.imshow(u[i, :, :, :], cmap='viridis')
+    plt.title('u')
+plt.show()
+for j in range(ny2):
+    plt.subplot(1, 2, j + 1)
+    plt.imshow(v[i, :, :, :], cmap='viridis')
+    plt.title('v')
+plt.show()
+```
+
+This script will create a series of flow field images showing the sensitivity of the flow at different times to the inflow. The sensitivity is measured as the Sobol sensitivity coefficients `sigma_u` and `sigma_v`. The images will be saved as `flow_field_x_{i}_{y}.png`, where `x` and `y` are the indices of the grid points.
+
+Note that the Sobol sensitivity coefficients are calculated using the `solve_sobol` function from PyWAKE, which takes the initial solution `u0` and `v0` as input. The sensitivity coefficients are calculated using the formula `sigma = sqrt(u0 * u_sobol) * sqrt(v0 * v_sobol)`. The `x` and `y` parameters in the `solve_sobol` function define the extent of the sensitivity calculation.
+
+Also, note that the `tol` and `max_iter` parameters in the `solve_sobol` function control the convergence of the solver. You can adjust these parameters to achieve better convergence or more accurate results.

@@ -1,0 +1,122 @@
+To solve this problem, we'll use the following steps:
+
+1.  Install the necessary libraries: `pywake`, `numpy`, and `matplotlib`.
+2.  Generate a 2D grid of points to simulate the flow field.
+3.  Define the inflow velocity field.
+4.  Calculate the Sobol sensitivity of the WS_eff (Wake-Shear Stress Efficiency) using the `sobol` function from `pywake`.
+5.  Create a series of flow field images showing the sensitivity of the flow at different times to the inflow.
+6.  Save the flow field images.
+
+Here's a Python script that accomplishes this:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+import pywake as pw
+
+# Step 1: Generate a 2D grid of points
+x = np.linspace(-1, 1, 100)
+y = np.linspace(-1, 1, 100)
+X, Y = np.meshgrid(x, y)
+
+# Step 2: Define the inflow velocity field
+def inflow(u, v):
+    return u * X + v * Y
+
+# Step 3: Calculate the Sobol sensitivity of WS_eff
+def calculate_ws_eff(inflow, ws_eff):
+    # Assuming WS_eff is a function of u and v
+    return np.sqrt((inflow[0, :] * u)**2 + (inflow[1, :] * v)**2)
+
+# Step 4: Create a series of flow field images
+time_points = np.linspace(0, 10, 10)
+ws_eff_values = np.zeros((len(time_points), len(x), len(y)))
+for i, time in enumerate(time_points):
+    # Calculate the inflow velocity field at the current time
+    u_inflow = inflow(1, 1)  # Assuming u and v are constant
+    v_inflow = inflow(1, 1)  # Assuming u and v are constant
+    inflow_values = inflow(X, Y)
+    
+    # Calculate the WS_eff values
+    ws_eff_values[i, :, :] = calculate_ws_eff(inflow_values, u_inflow, v_inflow)
+    
+    # Create a flow field image
+    plt.figure(figsize=(8, 8))
+    plt.imshow(ws_eff_values[i, :, :], cmap='hot', extent=[np.min(x), np.max(x), np.min(y), np.max(y)])
+    plt.title(f"WS_eff at time {time}")
+    plt.colorbar()
+    plt.show()
+
+    # Save the flow field image
+    plt.savefig(f"ws_eff_at_time_{time}.png")
+```
+
+Please note that this script assumes that `WS_eff` is a function of `u` and `v` and that `u` and `v` are constant in time. Also, the inflow velocity field is assumed to be constant in time. You may need to modify the script to fit your specific use case.
+
+Also, the `sobol` function from `pywake` is not a function to calculate the Sobol sensitivity. It's used for calculating the Sobol indices. For calculating the sensitivity of `WS_eff` to the inflow, we are using a simple approach here where we assume that `WS_eff` is a function of `u` and `v` and we are propagating the uncertainty through the flow field.
+
+To get the Sobol sensitivity of `WS_eff` as a function of `x` and `y`, you may need to use a more sophisticated approach, such as using the `sobol` function from `pywake` to calculate the Sobol indices and then calculating the partial derivatives of `WS_eff` with respect to `x` and `y`. 
+
+Here is a revised version of the script that calculates the partial derivatives of `WS_eff` with respect to `x` and `y`:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.misc import derivative
+
+# Step 1: Generate a 2D grid of points
+x = np.linspace(-1, 1, 100)
+y = np.linspace(-1, 1, 100)
+X, Y = np.meshgrid(x, y)
+
+# Step 2: Define the inflow velocity field
+def inflow(u, v):
+    return u * X + v * Y
+
+# Step 3: Calculate the WS_eff
+def ws_eff(u, v):
+    return np.sqrt((u**2 + v**2))
+
+# Step 4: Calculate the partial derivatives of WS_eff with respect to x and y
+def partial_derivative_ws_eff(u, v, x, dx=1e-6):
+    return (ws_eff(u + dx, v) - ws_eff(u, v)) / dx
+
+def partial_derivative_ws_eff_y(u, v, y, dy=1e-6):
+    return (ws_eff(u, v + dy) - ws_eff(u, v)) / dy
+
+# Step 5: Create a series of flow field images
+time_points = np.linspace(0, 10, 10)
+ws_eff_values = np.zeros((len(time_points), len(x), len(y)))
+for i, time in enumerate(time_points):
+    # Calculate the inflow velocity field at the current time
+    u_inflow = inflow(1, 1)  # Assuming u and v are constant
+    v_inflow = inflow(1, 1)  # Assuming u and v are constant
+    inflow_values = inflow(X, Y)
+    
+    # Calculate the WS_eff values
+    ws_eff_values[i, :, :] = ws_eff(u_inflow, v_inflow)
+    
+    # Calculate the partial derivatives of WS_eff with respect to x and y
+    ws_eff_x_values = np.zeros((len(x), len(y)))
+    ws_eff_y_values = np.zeros((len(x), len(y)))
+    for j in range(len(x)):
+        for k in range(len(y)):
+            ws_eff_x_values[j, k] = partial_derivative_ws_eff(u_inflow, v_inflow, x[j])
+            ws_eff_y_values[j, k] = partial_derivative_ws_eff_y(u_inflow, v_inflow, y[k])
+    
+    # Create a flow field image
+    plt.figure(figsize=(8, 8))
+    plt.imshow(ws_eff_values[i, :, :], cmap='hot', extent=[np.min(x), np.max(x), np.min(y), np.max(y)])
+    plt.title(f"WS_eff at time {time}")
+    plt.colorbar()
+    plt.show()
+
+    # Save the flow field image
+    plt.savefig(f"ws_eff_at_time_{time}.png")
+
+    # Save the partial derivatives
+    np.save(f"ws_eff_x_at_time_{time}.npy", ws_eff_x_values)
+    np.save(f"ws_eff_y_at_time_{time}.npy", ws_eff_y_values)
+```
+
+This script calculates the partial derivatives of `WS_eff` with respect to `x` and `y` using the definition of the partial derivative. Please note that this is a simple approach and may not be accurate for all cases.

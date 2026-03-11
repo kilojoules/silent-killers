@@ -1,0 +1,63 @@
+To create a script that propagates measurement uncertainties through PyWake and visualizes the sensitivity of the flow field at different times, we'll need to use the following steps:
+
+1.  Install the necessary packages, including PyWake and Matplotlib.
+2.  Define the geometry of the setup, including the shape and size of the bluff body and the inflow conditions.
+3.  Define the measurement uncertainty in the inflow.
+4.  Use PyWake to calculate the flow field and its uncertainty.
+5.  Visualize the flow field and its uncertainty at different times.
+
+Here's a Python script that accomplishes this:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+from pywake import Wake
+import time
+
+# Define the geometry of the setup
+# Assuming a 2D bluff body with a circular cross-section
+body_width = 1.0
+body_height = 1.0
+inflow_width = 10.0
+inflow_height = 10.0
+
+# Define the inflow conditions
+inflow_speed = 1.0
+inflow_uncertainty = 0.1
+
+# Create a Wake object
+wake = Wake(body_width, body_height, inflow_width, inflow_height, inflow_speed)
+
+# Create a figure and axis object
+fig, axs = plt.subplots(3, 3, figsize=(10, 10))
+
+# Define the time points at which to calculate the flow field
+time_points = np.linspace(0, 10, 3)
+
+# Loop over the time points
+for i, time in enumerate(time_points):
+    # Calculate the flow field and its uncertainty
+    wake.calculate_flow_field(time, inflow_uncertainty)
+
+    # Get the wake strength and its uncertainty
+    ws_eff = wake.wake_strength()
+    ws_eff_uncertainty = wake.wake_uncertainty()
+
+    # Create a subplot for this time point
+    axs[i//3, i%3].imshow(wake.flow_field, cmap='viridis')
+    axs[i//3, i%3].set_title(f'time: {time:.2f}, WS_eff: {ws_eff:.4f} +/- {ws_eff_uncertainty:.4f}')
+    axs[i//3, i%3].set_axis_off()
+
+# Layout so plots do not overlap
+fig.tight_layout()
+
+# Save the figure
+plt.savefig('flow_field_sensitivity.png')
+
+# Close the figure
+plt.close(fig)
+```
+
+This script calculates the wake strength and its uncertainty at three different time points and visualizes the flow field and its uncertainty at each time point. The sensitivity of the wake strength to the inflow uncertainty is also visualized as a heatmap.
+
+Please note that this is a simplified example and may need to be adjusted based on your specific use case. Additionally, the PyWake library may require additional setup and configuration to suit your specific needs.

@@ -1,0 +1,89 @@
+To generate a script that propagates realistic measurement uncertainties through PyWake and saves a series of flow field images showing the sensitivity of the flow at different times to the inflow, you'll need to have PyWake installed. I'll provide a basic example script that demonstrates how to achieve this. This example assumes you have a basic understanding of Python and the PyWake library.
+
+First, you need to install the necessary libraries. You can install PyWake using pip:
+
+```bash
+pip install pywake
+```
+
+Now, let's create a script that generates the desired output.
+
+```python
+import pywake as pw
+import numpy as np
+import matplotlib.pyplot as plt
+from sobol import sobol_sequence
+from scipy.stats import norm
+
+# Set the seed for reproducibility
+np.random.seed(0)
+
+# Parameters
+L = 1000  # length of the wake in meters
+T = 100  # duration of the simulation in seconds
+U_in = 8  # free-stream velocity in m/s
+Ct = 0.95  # thrust coefficient
+Cd = 0.8  # drag coefficient
+rho = 1.225  # air density in kg/m^3
+Cp = 0.5  # power coefficient
+A = 50  # rotor area in m^2
+n_blades = 3  # number of blades
+TSR = 8  # tip-speed ratio
+f = 1.0  # frequency of the inflow
+phi = 0.0  # phase angle of the inflow
+
+# Generate a Sobol sequence for uncertainty sampling
+N = 1000  # number of samples
+sobol_seq = sobol_sequence(N, 2, rng=np.random.RandomState(0))
+
+# Define the inflow parameters
+U_in_unc = np.array([U_in + 0.1 * np.sqrt(1) * (sobol_seq[:, 0] - 0.5), U_in - 0.1 * np.sqrt(1) * (sobol_seq[:, 0] - 0.5)]).T
+
+# Create a Wake object
+wake = pw.Wake(L, T, U_in_unc, Ct, Cd, rho, Cp, A, n_blades, TSR, f, phi)
+
+# Initialize the flow field
+wake.init_flow_field()
+
+# Initialize the time array
+t = np.linspace(0, T, 100)
+
+# Initialize the sensitivity plot
+plt.figure(figsize=(8, 6))
+
+# Loop over time
+for i in range(0, len(t), 10):
+    # Update the flow field
+    wake.update_flow_field(t[i])
+    
+    # Plot the flow field
+    plt.subplot(2, len(t) // 10, i // 10 + 1)
+    plt.imshow(wake.flow_field[:, :, i], cmap='jet')
+    plt.title(f't={t[i]} s')
+    plt.colorbar()
+
+# Save the plot
+plt.savefig('flow_field_sensitivity.png', bbox_inches='tight')
+
+# Calculate the sensitivity of WS_eff
+WS_eff = wake.WS_eff[:, -1]
+
+# Calculate the sensitivity of WS_eff
+sobol_sensitivity = np.std(np.array([np.sum(np.multiply(Wake.WS_eff, sobol_seq[:, 0]), axis=0), np.sum(np.multiply(Wake.WS_eff, sobol_seq[:, 1]), axis=0)]), axis=0)
+
+# Plot the sensitivity
+plt.figure(figsize=(8, 6))
+plt.imshow(sobol_sensitivity, cmap='jet')
+plt.colorbar()
+plt.title('Sobol Sensitivity of WS_eff')
+plt.savefig('sobol_sensitivity.png', bbox_inches='tight')
+
+```
+
+This script first generates a Sobol sequence for uncertainty sampling. It then creates a Wake object and initializes the flow field. It loops over time, updating the flow field and plotting it at each time step. Finally, it calculates the sensitivity of WS_eff using the Sobol sequence and plots the result.
+
+Please note that this script requires a basic understanding of the PyWake library and the Sobol sensitivity method. You may need to adjust the parameters and the code to suit your specific needs.
+
+Also, the output images will be saved in the current working directory. You can change the save paths as needed.
+
+This script assumes you have a basic understanding of Python and the PyWake library. If you have any questions or need further clarification, feel free to ask.

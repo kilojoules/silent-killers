@@ -1,0 +1,125 @@
+Your code is quite extensive, and I'll provide a high-level overview of the changes you're looking to make. 
+
+**Modularization of Instantiation**
+
+You're correct that your code can be modularized. You're currently instantiating the models and setting parameters within a single block. Here's a suggested way to refactor your code to make it more modular:
+
+```python
+# Define the models and their parameters
+from py_wake.deficit_models import BlondelSuperGaussianDeficit2020, TurboGaussianDeficit, SelfSimilarityDeficit2020, GaussianOverlapAvgModel, CrespoHernandez
+from py_wake.rotor_avg_models import RotorCenter
+
+# Define the rotor average models
+BLONDEL SuperGaussianDeficit = BlondelSuperGaussianDeficit2020
+TURBO_GAUSSIAN Deficit = TurboGaussianDeficit
+SELF SIMILARITY Deficit = SelfSimilarityDeficit2020
+
+# Define the rotor average models with parameters
+ROTOR_AVERAGE_DEFICIT = RotorCenter
+```
+
+**Changes to Data Assimilation**
+
+In your current code, you're using `xarray` to manipulate the data. Here's a suggested way to refactor your code to use `xr` for data manipulation:
+
+```python
+# Load the data
+dat = xr.load_dataset('./DTU10MW.nc')
+turbine = DTU10MW()
+D = turbine.diameter()
+
+# Calculate the coordinates
+dat = dat.assign_coords(x=dat.x * D, y=dat.y * D)
+
+# Set the model settings
+MODEL = 2
+if MODEL not in [1, 2]:
+    raise Exception("Bad Model Number")
+
+# Set the wind direction
+DOWNWIND = True
+if MODEL == 1:
+    X_LB = 2
+    X_UB = 10
+else:
+    X_LB = -2
+    X_UB = -1
+
+# Set the ROI
+roi_x = slice(X_LB * D, X_UB * D)
+roi_y = slice(-2 * D, 2 * D)
+
+# Filter the data
+flow_roi = dat.sel(x=roi_x, y=roi_y)
+
+# Set the target coordinates
+target_x = flow_roi.x
+target_y = flow_roi.y
+```
+
+**Changes to Error Calculation**
+
+Your current code calculates the error in the `evaluate_rmse` function. Here's a suggested way to refactor your code to use a more Pythonic way of calculating the error:
+
+```python
+def calculate_error(a_s, b_s, c_s, b_f, c_f, ch1, ch2, ch3, ch4):
+    return np.sqrt(((a_s - b_s) ** 2).mean() + (c_s - c_f) ** 2)
+```
+
+**Changes to Data Assimilation for Turbines**
+
+In your current code, you're using `All2AllIterative` to perform the data assimilation. Here's a suggested way to refactor your code to use a more Pythonic way of performing the data assimilation:
+
+```python
+def update_data(t, sim_res, site, turbine, ws, TI, wd, time):
+    # Perform the data assimilation
+    #...
+    return sim_res
+
+def main():
+    # Initialize the data assimilation
+    #...
+    # Run the simulation
+    sim_res = update_data(time, sim_res, site, turbine, ws, TI, wd, time)
+
+    # Calculate the error
+    error = calculate_error(*sim_res.WS, *sim_res.WS_eff, *sim_res.CT, *sim_res.TI)
+
+    #...
+```
+
+**Changes to Plotting**
+
+Your current code plots the results in a series of plots. Here's a suggested way to refactor your code to use a more Pythonic way of plotting:
+
+```python
+def plot_results(t, best_params, best_rmses, all_observed, all_pred):
+    # Plot the results
+    #...
+    plt.tight_layout()
+    plt.savefig(f'figs/downsream_err_{t}')
+```
+
+**Changes to Data Assimilation for Upstream**
+
+In your current code, you're using `All2AllIterative` to perform the data assimilation. Here's a suggested way to refactor your code to use a more Pythonic way of performing the data assimilation:
+
+```python
+def update_data_upstream(t, site, turbine, ws, TI, wd, time):
+    # Perform the data assimilation
+    #...
+    return sim_res
+
+def main():
+    # Initialize the data assimilation
+    #...
+    # Run the simulation
+    sim_res = update_data_upstream(time, site, turbine, ws, TI, wd, time)
+
+    # Calculate the error
+    error = calculate_error(*sim_res.WS, *sim_res.WS_eff, *sim_res.CT, *sim_res.TI)
+
+    #...
+```
+
+I hope this helps! Let me know if you have any questions or if there's anything else I can help with.

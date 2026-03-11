@@ -1,0 +1,52 @@
+The error message "OSError: Unable to synchronously open file (file signature not found)" indicates that the file being opened by `h5py` does not exist or is not a valid HDF5 file.
+
+Based on the log, it seems like the script is trying to open multiple files in a loop, but one of them is causing the issue.
+
+Here are a few suggestions to diagnose and modify the script to ensure the error is detected reliably and stops the process cleanly if any worker file is invalid:
+
+1. **Verify the file existence and validity**:
+
+   Add a check before opening each file to verify its existence and validity. You can use `os.path.exists()` and `h5py.File()` constructor's `exist` parameter to achieve this.
+
+2. **Use a try-except block**:
+
+   Wrap the file opening code in a try-except block to catch the `OSError` exception and handle it accordingly. This will prevent the script from crashing due to the error.
+
+Here's an example of how you can modify the script:
+
+```python
+import os
+import h5py
+
+def load_worker_file(worker_file):
+    try:
+        with h5py.File(worker_file, 'r', exist=True) as h5_in:
+            # do something with the file
+            return h5_in
+    except OSError as e:
+        print(f"Error loading {worker_file}: {e}")
+        return None
+
+def main():
+    # your code here
+    for seed in range(50):  # assuming you want to run for 50 seeds
+        worker_file = f"worker_file_{seed}.h5"  # replace with your actual file name pattern
+        h5_in = load_worker_file(worker_file)
+        if h5_in is not None:
+            # do something with the loaded file
+        else:
+            print(f"Skipping {worker_file} due to error")
+
+if __name__ == "__main__":
+    main()
+```
+
+This modified script will print an error message and skip the current worker file if it's invalid. You can adjust the `load_worker_file` function to suit your actual file loading requirements.
+
+As for recovering the missing data, you can try the following:
+
+1. **Check the file creation and saving process**: Verify that the files are being created and saved correctly. Make sure the file format is compatible with `h5py`.
+2. **Inspect the file contents**: Use a tool like `h5ls` or `h5dump` to inspect the contents of the invalid files and see if they're corrupted or incomplete.
+3. **Re-run the script**: If the issue is intermittent, try re-running the script to see if the files are generated correctly.
+
+If you're still having trouble, please provide more details about your script, the file format, and the environment where the script is running.

@@ -1,0 +1,38 @@
+The issue appears to be a file signature mismatch, which is a common problem when working with HDF5 files. The error message "file signature not found" indicates that the file does not have the expected signature, which is required for HDF5 files.
+
+To diagnose the issue, we can examine the files you've provided to see if there are any issues with the worker files. However, since you haven't shared the files, I'll provide a general approach to modify the script to handle this error and ensure a clean exit if any worker file is invalid.
+
+Here's an updated version of your script that includes error handling and logging to help diagnose the issue:
+
+```python
+import logging
+import h5py
+import os
+
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+def load_worker_file(worker_file):
+    try:
+        with h5py.File(worker_file, 'r') as h5_in:
+            # Your code to process the file goes here
+            return h5_in
+    except OSError as e:
+        logging.error(f"Error loading worker file: {worker_file} - {e}")
+        return None
+
+def main():
+    # Your existing code to load worker files goes here
+    worker_files = [worker_file1, worker_file2,...]  # List of worker files
+    for worker_file in worker_files:
+        if not load_worker_file(worker_file):
+            logging.error(f"Invalid worker file: {worker_file}")
+            return  # Exit the function if any worker file is invalid
+
+    # Rest of your code to process the loaded files goes here
+
+if __name__ == "__main__":
+    main()
+```
+
+In this updated script, the `load_worker_file` function attempts to load a worker file using `h5py`. If the file cannot be loaded due to a signature mismatch or any other error, it logs the error and returns `None`. The `main` function checks the return value of `load_worker_file` for each worker file. If any file is invalid, it logs the error and exits the function.

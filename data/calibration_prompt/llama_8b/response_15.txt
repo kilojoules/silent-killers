@@ -1,0 +1,82 @@
+Your code is quite complex and extensive, but I'll provide a general review and suggestions for improvement. 
+
+**Modularize Instantiating the wfm**
+
+You're right; the code can be improved by modularizing the instantiation of the `wfm` (wake farm model) to make it more reusable and easier to maintain.
+
+Here's a simplified example of how you can achieve this:
+
+```python
+def instantiate_wfm(site, turbine, wake_deficitModel, superpositionModel, deflectionModel, turbulenceModel, blockage_deficitModel, groundModel, rotorAvgModel):
+    return All2AllIterative(site, turbine,
+                            wake_deficitModel=wake_deficitModel,
+                            superpositionModel=superpositionModel,
+                            deflectionModel=deflectionModel,
+                            turbulenceModel=turbulenceModel,
+                            blockage_deficitModel=blockage_deficitModel,
+                            groundModel=groundModel)
+
+# Then, when creating the wfm, you can do:
+wfm = instantiate_wfm(site, turbine,
+                      wake_deficitModel=wake_deficitModel,
+                      superpositionModel=LinearSum(),
+                      deflectionModel=None,
+                      turbulenceModel=CrespoHernandez(**turb_args),
+                      blockage_deficitModel=SelfSimilarityDeficit2020(**blockage_args),
+                      groundModel=Mirror(),
+                      rotorAvgModel=GaussianOverlapAvgModel())
+```
+
+**Flow Field Plots and Reporting Average and P90s of Errors**
+
+To create flow field plots and report average and P90s of errors, you can use the following code:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+import xarray as xr
+
+# Create a figure and axis
+fig, ax = plt.subplots()
+
+# Create a contour plot of the flow field
+contours = ax.contourf(target_x, target_y, flow_map.WS_eff)
+
+# Add a color bar
+fig.colorbar(contours, ax=ax)
+
+# Add a title and labels
+ax.set_title('Flow Field')
+ax.set_xlabel('x')
+ax.set_ylabel('y')
+
+# Show the plot
+plt.show()
+
+# To report average and P90s of errors, you can use the following code:
+errors = (observed_deficit.T - pred).T
+
+# Calculate the average error
+avg_error = np.mean(errors)
+
+# Calculate the P90 error
+p90_error = np.percentile(errors, 90)
+
+print(f'Average Error: {avg_error:.4f}')
+print(f'P90 Error: {p90_error:.4f}')
+
+# Plot the errors
+plt.hist(errors, bins=50)
+plt.title('Error Distribution')
+plt.xlabel('Error')
+plt.ylabel('Frequency')
+plt.show()
+```
+
+**Other Suggestions**
+
+1. Use consistent naming conventions: You're using both camelCase and underscore notation for variable and function names. It's better to stick to a single convention throughout the code.
+2. Use docstrings: Add docstrings to your functions to explain what they do, what inputs they expect, and what outputs they produce.
+3. Use type hints: Add type hints to your function parameters and return types to make the code more readable and self-documenting.
+4. Consider using a more efficient way to create the `flow_map` variable. Instead of concatenating `fm` in a loop, you can use `xr.concat` with a list of DataArrays.
+5. Use a more robust way to handle NaN values in the `evaluate_rmse` function. Instead of checking if `rmse` is NaN and returning a default value, you can use `np.nan_to_num` to replace NaN values with a specific value (e.g., 0).

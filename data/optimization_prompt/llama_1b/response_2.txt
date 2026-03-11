@@ -1,0 +1,54 @@
+The error message indicates that the file being read (worker_file) does not have a valid file signature. In this case, it seems that the file is not a valid HDF5 file.
+
+The joining operation in your code is likely the culprit. When you read a file using `h5py.File(worker_file, 'r')`, it will try to read the file in a way that allows for multiple files to be joined together. However, HDF5 does not support joining multiple files in this way.
+
+To fix this issue, you need to read the files separately and then join them together in memory. Here's an updated version of your code:
+
+```python
+import h5py
+import numpy as np
+
+def join_hdf5_files(file1, file2, file3):
+    # Read the first file
+    with h5py.File(file1, 'r') as f1:
+        data1 = f1['key']  # Replace 'key' with the actual key of the first file
+
+    # Read the second file
+    with h5py.File(file2, 'r') as f2:
+        data2 = f2['key']  # Replace 'key' with the actual key of the second file
+
+    # Read the third file
+    with h5py.File(file3, 'r') as f3:
+        data3 = f3['key']  # Replace 'key' with the actual key of the third file
+
+    # Join the files
+    joined_data = np.concatenate((data1, data2, data3), axis=0)  # Use 'axis=0' to join along the first axis
+
+    return joined_data
+
+def main():
+    # Define the file paths
+    worker_file = '/path/to/worker_file.h5'
+    seed_file = '/path/to/seed_file.h5'
+    layout_file = '/path/to/layout_file.h5'
+
+    # Read the files
+    with h5py.File(worker_file, 'r') as f1, h5py.File(seed_file, 'r') as f2, h5py.File(layout_file, 'r') as f3:
+        joined_data = join_hdf5_files(f1, f2, f3)
+
+    # Perform the optimization
+    joined_data = joined_data[:, 0, :, :]
+
+    # Save the optimized data to a new file
+    with h5py.File('optimized_layouts.h5', 'w') as f:
+        f.create_dataset('layout', data=joined_data)
+
+if __name__ == '__main__':
+    main()
+```
+
+This code reads the three files separately and then joins them together along the first axis. It then saves the resulting data to a new file.
+
+Make sure to replace '/path/to/worker_file.h5', '/path/to/seed_file.h5', and '/path/to/layout_file.h5' with the actual file paths of your files.
+
+Also, note that this code assumes that the files are in the same directory as the script. If they are in a different directory, you'll need to specify the full path to the files.

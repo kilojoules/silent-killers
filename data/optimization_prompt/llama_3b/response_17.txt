@@ -1,0 +1,54 @@
+The error message indicates that the file signature is not found when trying to open a worker file. This is likely due to the joining operation causing the file to become corrupted or incomplete.
+
+To diagnose this issue, we need to investigate how the joining operation is being performed and ensure that it's being done correctly. Here are some steps to help you recover the missing data and modify the script to stop the process cleanly if any worker file is invalid:
+
+1.  **Verify the joining operation**: Check the code that performs the joining operation to ensure it's being done correctly. The code should be able to handle cases where the file is not found or is corrupted.
+
+2.  **Implement error handling**: Add try-except blocks to catch any errors that occur when opening the worker files. This will allow you to handle the error and stop the process cleanly.
+
+3.  **Check the file existence and integrity**: Before attempting to open a worker file, check if it exists and is not corrupted. You can use the `os.path.exists()` function to check if the file exists, and the `os.path.getsize()` function to check its size. If the file is empty or corrupted, you can skip it.
+
+4.  **Use a more robust file format**: Consider using a more robust file format that can handle errors and corruption better. For example, you can use the `h5py` library's `H5P` (High-Level Parallel) API, which provides a more robust way of working with HDF5 files.
+
+Here's an example of how you can modify the script to implement error handling and check the file existence and integrity:
+
+```python
+import os
+import h5py
+
+def main():
+    # Define the list of worker files
+    worker_files = ['worker_file_1.h5', 'worker_file_2.h5',...]
+
+    for seed in range(50):
+        # Construct the output file name
+        output_file = f"output_{seed}.h5"
+
+        # Initialize the output file
+        try:
+            with h5py.File(output_file, 'w') as h5_out:
+                # Perform the joining operation here
+                #...
+        except OSError as e:
+            print(f"Error joining worker file {seed}: {e}")
+            continue
+
+        # Check if the worker file exists and is not corrupted
+        worker_file = f"worker_file_{seed}.h5"
+        if not os.path.exists(worker_file) or os.path.getsize(worker_file) == 0:
+            print(f"Skipping worker file {seed} as it does not exist or is empty")
+            continue
+
+        try:
+            with h5py.File(worker_file, 'r') as h5_in:
+                # Perform the joining operation here
+                #...
+        except OSError as e:
+            print(f"Error opening worker file {seed}: {e}")
+            continue
+
+if __name__ == "__main__":
+    main()
+```
+
+This modified script will skip any worker files that do not exist, are empty, or are corrupted, and stop the process cleanly if any errors occur during the joining operation.

@@ -1,0 +1,89 @@
+The error message indicates that the file being used by the H5py library (`worker_file`) does not have the correct file signature, which is necessary for H5py to function properly. 
+
+It seems like the issue is related to the joining operation in your code. When you're reading and writing data to the H5py file, H5py expects the file to have a specific structure, which is maintained by the `h5f.open` function. 
+
+The error message suggests that the file signature is not found, which could be due to the way you're joining the files. 
+
+To fix this, you can try the following approaches:
+
+1. **Read the file manually**: Instead of using `h5py`, you can read the data from the files manually. This can be more memory-efficient and flexible.
+
+2. **Use a different file format**: If your data is in a format that H5py can't handle (e.g., a CSV file), you might need to convert it to H5py format before joining.
+
+3. **Write the data to a temporary file**: If you can't convert the data to a format that H5py can handle, you can write it to a temporary file, then read it back into H5py.
+
+Here's an example of how you can modify your code to read the files manually:
+
+```python
+import h5py
+
+def read_file(filename):
+    try:
+        with open(filename, 'r') as f:
+            data = f.read()
+        return data
+    except FileNotFoundError:
+        print(f"File '{filename}' not found.")
+        return None
+
+def write_to_h5(data, filename):
+    with h5py.File(filename, 'w') as f:
+        f.create_dataset('data', data=data)
+
+def main():
+    # Read the first file
+    with open('worker_file.h5', 'r') as f:
+        data = read_file(f.read())
+        if data is not None:
+            # Write the data to the H5 file
+            write_to_h5(data, 'worker_file.h5')
+
+    # Read the second file
+    with open('worker_file2.h5', 'r') as f:
+        data = read_file(f.read())
+        if data is not None:
+            # Write the data to the H5 file
+            write_to_h5(data, 'worker_file2.h5')
+
+if __name__ == "__main__":
+    main()
+```
+
+This code assumes that the files are named `worker_file.h5` and `worker_file2.h5` and are in the same directory as the script. If they're in a different directory, you'll need to specify the full path to the files.
+
+This code reads the files manually, which might not be the most efficient approach. A more efficient approach would be to use a library like `h5py` that can handle file joins out of the box.
+
+If you're using H5py, here's a modified version of your code that uses the `h5py` library to join the files:
+
+```python
+import h5py
+
+def join_files(fnames, output_filename):
+    try:
+        with h5py.File(output_filename, 'w') as output_file:
+            for fname in fnames:
+                with h5py.File(fname, 'r') as input_file:
+                    output_file.create_dataset('data', data=input_file['data'])
+    except FileNotFoundError:
+        print(f"File '{fname}' not found.")
+
+def main():
+    # Read the first file
+    with h5py.File('worker_file.h5', 'r') as input_file:
+        data = input_file['data']
+        if data is not None:
+            # Join the files
+            join_files(['worker_file.h5', 'worker_file2.h5'], 'output_file.h5')
+
+    # Read the second file
+    with h5py.File('worker_file2.h5', 'r') as input_file:
+        data = input_file['data']
+        if data is not None:
+            # Join the files
+            join_files(['worker_file.h5', 'worker_file2.h5'], 'output_file2.h5')
+
+if __name__ == "__main__":
+    main()
+```
+
+This code joins the files using the `h5py` library, which is more efficient than reading the files manually.

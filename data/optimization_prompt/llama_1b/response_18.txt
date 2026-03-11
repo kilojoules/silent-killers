@@ -1,0 +1,54 @@
+The issue here seems to be related to the file system permissions and the fact that the script is trying to read from a file that doesn't exist. 
+
+In your code, you're trying to read from a file named `worker_file` which is created inside the `main` function. The issue is that the file is not properly closed after you're done with it.
+
+Here's a modified version of your code with some improvements to handle the error and prevent the script from stopping abruptly:
+
+```python
+import h5py
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+
+def main():
+    try:
+        with h5py.File('worker_file', 'r') as h5_in:
+            # Rest of your code here...
+    except OSError as e:
+        logging.error(f"Error reading from file: {e}")
+        return
+
+    # Rest of your code here...
+
+if __name__ == "__main__":
+    main()
+```
+
+This way, if the file cannot be opened, the script will log the error and continue executing. This way, it won't stop abruptly.
+
+However, to ensure the script stops cleanly when an invalid worker file is encountered, you could try to handle the error and provide a more informative message:
+
+```python
+import h5py
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+
+def main():
+    try:
+        with h5py.File('worker_file', 'r') as h5_in:
+            # Rest of your code here...
+    except OSError as e:
+        logging.error(f"Error reading from file: {e}")
+        logging.error(f"Worker file is invalid. Please check the file name and make sure it exists.")
+        return
+
+    # Rest of your code here...
+
+if __name__ == "__main__":
+    main()
+```
+
+In this version, the script will log an error message and then exit cleanly, providing more information about the error and the nature of the problem.

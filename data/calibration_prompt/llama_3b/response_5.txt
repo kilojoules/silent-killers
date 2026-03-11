@@ -1,0 +1,174 @@
+Your approach seems to be quite complex and it would be beneficial to break it down and refactor it to make it more modular and easier to understand. Here's a suggested refactoring of your code:
+
+1.  **Create a separate module for the optimization and animation**:
+
+    *   Move the optimization and animation code into a separate module (e.g., `optimization.py`) to keep the main script clean and focused on data loading and simulation setup.
+2.  **Use a more modular approach for the simulation**:
+
+    *   Extract the simulation code into a separate function or module (e.g., `simulator.py`) that takes in parameters and returns the simulation results.
+3.  **Use a more modular approach for the plotting**:
+
+    *   Extract the plotting code into a separate function or module (e.g., `plotter.py`) that takes in the simulation results and plot settings as input.
+4.  **Use a more modular approach for the data processing**:
+
+    *   Extract the data processing code into a separate function or module (e.g., `data_processor.py`) that takes in the data and returns the processed data.
+
+Here's a high-level example of how you could refactor your code:
+
+```python
+# data_processor.py
+import numpy as np
+import xarray as xr
+
+def process_data(dat):
+    # Process the data here
+    return dat
+```
+
+```python
+# simulator.py
+from py_wake import HorizontalGrid
+from py_wake.deficit_models import BlondelSuperGaussianDeficit2020
+from py_wake.rotor_avg_models import RotorCenter
+from py_wake.deflection_models import JimenezWakeDeflection
+from py_wake.turbulence_models import CrespoHernandez
+from py_wake.wind_farm_models import PropagateDownwind, All2AllIterative
+from py_wake.superposition_models import LinearSum
+from py_wake.ground_models import Mirror
+
+def simulate(site, turbine, wake_deficitModel, superpositionModel, deflectionModel, turbulenceModel, blockage_deficitModel, ws, ti, wd, time):
+    # Set up the simulation here
+    flow_roi = dat.sel(x=roi_x, y=roi_y)
+    target_x = flow_roi.x
+    target_y = flow_roi.y
+
+    # Run the simulation here
+    wfm = All2AllIterative(site, turbine,
+                            wake_deficitModel=wake_deficitModel,
+                            superpositionModel=superpositionModel,
+                            deflectionModel=deflectionModel,
+                            turbulenceModel=turbulenceModel,
+                            blockage_deficitModel=blockage_deficitModel)
+
+    sim_res = wfm([0], [0], ws=ws, TI=ti, wd=wd, time=time)
+
+    flow_map = sim_res.flow_map(HorizontalGrid(x=target_x, y=target_y))
+
+    return flow_map
+```
+
+```python
+# optimizer.py
+from bayes_opt import BayesianOptimization
+from py_wake.rotor_avg_models import GaussianOverlapAvgModel
+from py_wake.deficit_models import TurboGaussianDeficit2020
+
+def optimize(params, bounds, model):
+    if model == 1:
+        wake_deficitModel = BlondelSuperGaussianDeficit2020(**params)
+    else:
+        wake_deficitModel = TurboGaussianDeficit2020(**params)
+
+    # Set up the optimization here
+    optimizer = BayesianOptimization(f=evaluate_rmse, pbounds=bounds, random_state=1)
+    optimizer.probe(params=defaults, lazy=True)
+    optimizer.maximize(init_points=50, n_iter=200)
+
+    return optimizer
+```
+
+```python
+# plotter.py
+import matplotlib.pyplot as plt
+import numpy as np
+import xarray as xr
+
+def plot_results(flow_map, rmse_values, best_params, defaults):
+    # Plot the results here
+    fig, ax = plt.subplots(3, 1, figsize=(5, 15))
+
+    co = ax[0].contourf(target_x, target_y, observed_deficit.T)
+
+    cp = ax[1].contourf(target_x, target_y, pred)
+
+    cd = ax[2].contourf(target_x, target_y, diff)
+
+    for jj, c in enumerate([co, cp, cd]):
+        fig.colorbar(c, ax=ax[jj])
+
+    ax[0].set_ylabel('Observed')
+
+    ax[1].set_ylabel('Prediction')
+
+    ax[2].set_ylabel('Diff')
+
+    plt.tight_layout()
+
+    plt.savefig(f'figs/downsream_err_{t}')
+
+    plt.clf()
+```
+
+```python
+# main.py
+import data_processor
+import simulator
+import optimizer
+import plotter
+import numpy as np
+import xarray as xr
+
+def main():
+    # Load the data here
+    dat = xr.load_dataset('./DTU10MW.nc')
+
+    # Process the data
+    flow_roi = data_processor.process_data(dat)
+
+    # Set up the simulation
+    site = Hornsrev1Site()
+    turbine = DTU10MW()
+    wake_deficitModel = None
+    superpositionModel = LinearSum()
+    deflectionModel = None
+    turbulenceModel = CrespoHernandez()
+    blockage_deficitModel = SelfSimilarityDeficit2020()
+
+    # Set up the optimization
+    bounds = {
+        'a_s': (0.001, 0.5),
+        'b_s': (0.001, 0.01),
+        'c_s': (0.001, 0.5),
+        'b_f': (-2, 1),
+        'c_f': (0.1, 5),
+        'ch1': (-1, 2),
+        'ch2': (-1, 2),
+        'ch3': (-1, 2),
+        'ch4': (-1, 2),
+    }
+
+    defaults = {'a_s': 0.17, 'b_s': 0.005, 'c_s': 0.2, 'b_f': -0.68, 'c_f': 2.41, 'ch1': 0.73, 'ch2': 0.8325, 'ch3': -0.0325, 'ch4': -0.32}
+
+    # Run the simulation
+    flow_map = simulator.simulate(site, turbine, wake_deficitModel, superpositionModel, deflectionModel, turbulenceModel, blockage_deficitModel, ws=full_ws, ti=full_ti, wd=[270] * full_ti.size, time=True)
+
+    # Run the optimization
+    best_params = optimizer.optimize(params=defaults, bounds=bounds, model=MODEL)
+
+    # Plot the results
+    rmse_values = []
+    for t in range(flow_map.time.size):
+        this_pred_sim = flow_map.isel(time=t)
+        observed_deficit = flow_roi.deficits.interp(ct=this_pred_sim.CT, ti=this_pred_sim.TI, z=0)
+        pred = (this_pred_sim.WS - flow_map.WS_eff.isel(h=0, time=t)) / this_pred_sim.WS
+        diff = observed_deficit.T - pred
+        rmse = np.sqrt(np.mean(diff ** 2))
+        rmse_values.append(rmse)
+
+    plotter.plot_results(flow_map, rmse_values, best_params, defaults)
+
+if __name__ == "__main__":
+    main()
+```
+
+This refactored code is more modular and easier to understand. Each module has a single responsibility, making it easier to maintain and modify.

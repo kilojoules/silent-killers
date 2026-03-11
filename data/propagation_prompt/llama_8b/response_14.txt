@@ -1,0 +1,102 @@
+I'll need the documentation you'd like me to use to generate the script. However, I'll provide a general script that demonstrates how to propagate realistic measurement uncertainties through PyWake and calculate the Sobol' sensitivity of WS_eff as a function of x and y.
+
+Assuming you have PyWake installed, here's a basic script to get you started:
+
+```python
+import pywake
+import numpy as np
+import matplotlib.pyplot as plt
+from sobol import sobol_sequence
+from scipy.stats import norm
+
+# Define the problem parameters
+N = 1000  # Number of samples
+n = 2  # Dimensionality of the input space
+m = 100  # Number of parameters
+L = 1.0  # Length of the wind farm
+T = 10  # Duration of the simulation
+dt = 0.01  # Time step
+x = np.linspace(0, L, 100)  # X-positions of the turbines
+y = np.linspace(0, 0, 100)  # Y-positions of the turbines
+
+# Create a wind farm
+wf = pywake.WindFarm(x=x, y=y, N_turbines=10, turbine_diameter=100)
+
+# Define the inflow parameters
+inflow = pywake.Inflow(wind_speed=10, wind_direction=270, turbulence_intensity=0.1, hub_height=80)
+
+# Define the measurement uncertainties
+np.random.seed(0)
+uncertainties = np.random.normal(loc=0, scale=1, size=(N, m))
+uncertainties = np.column_stack((uncertainties, np.zeros((N, m)))  # Add zeros for wind speed and direction
+
+# Create a Sobol' sequence for sensitivity analysis
+sobol_seq = sobol_sequence(N, m, seed=0)
+
+# Initialize the results array
+results = np.zeros((N, len(x), len(y), 2))  # (samples, x-positions, y-positions, [WS_eff, WS_eff_sobol])
+
+# Perform the simulation for each sample
+for i in range(N):
+    # Set the inflow parameters with measurement uncertainties
+    inflow.wind_speed = 10 + uncertainties[i, 0]
+    inflow.wind_direction = 270 + uncertainties[i, 1]
+    
+    # Run the simulation
+    sim = pywake.Simulation(wf, inflow, dt=dt, T=T)
+    sim.run()
+    
+    # Calculate the wake effect (WS_eff)
+    WS_eff = sim.wind_speeds[:, 0]
+    
+    # Calculate the Sobol' sensitivity
+    sobol_values = np.zeros((len(x), len(y)))
+    for j in range(m):
+        # Set the inflow parameters with Sobol' sequence
+        inflow.wind_speed = 10 + sobol_seq[i, j]
+        inflow.wind_direction = 270 + sobol_seq[i, m + j]
+        
+        # Run the simulation
+        sim = pywake.Simulation(wf, inflow, dt=dt, T=T)
+        sim.run()
+        
+        # Calculate the wake effect (WS_eff) for the Sobol' sequence
+        WS_eff_sobol = sim.wind_speeds[:, 0]
+        
+        # Store the Sobol' sensitivity
+        sobol_values += np.abs(WS_eff - WS_eff_sobol)
+    
+    # Normalize the Sobol' sensitivity
+    sobol_values /= N
+    
+    # Store the results
+    results[i, :, :, 0] = WS_eff
+    results[i, :, :, 1] = sobol_values
+
+# Save the results
+np.save('results.npy', results)
+
+# Plot the results
+fig, ax = plt.subplots(figsize=(10, 8))
+for i in range(N):
+    ax.plot(x, results[i, :, 0, 0], label=f'Sample {i+1}')
+ax.set_xlabel('x-position')
+ax.set_ylabel('WS_eff')
+ax.legend()
+plt.show()
+
+# Plot the Sobol' sensitivity
+fig, ax = plt.subplots(figsize=(10, 8))
+for i in range(N):
+    ax.imshow(results[i, :, :, 1], origin='lower', extent=[x.min(), x.max(), y.min(), y.max()], cmap='hot')
+    ax.set_title(f'Sobol''sensitivity (Sample {i+1})')
+    plt.show()
+```
+
+This script uses the Sobol' sequence to calculate the sensitivity of WS_eff as a function of x and y. The Sobol' sequence is used to perturb the inflow parameters, and the sensitivity is calculated by comparing the wake effect (WS_eff) between the original and perturbed inflow parameters. The results are stored in a 4D array and saved to a file.
+
+Please note that this is a basic example, and you may need to modify it to fit your specific needs. Additionally, the Sobol' sequence requires a large number of samples to accurately estimate the sensitivity, so you may need to increase the value of N to achieve reliable results.
+
+Also, make sure to replace the `pywake` and `sobol` modules with the actual implementations in your environment.
+
+If you have any questions or need further clarification, feel free to ask.

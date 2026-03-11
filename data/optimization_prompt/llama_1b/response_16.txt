@@ -1,0 +1,37 @@
+The error you're encountering is due to the file signature not being found in the HDF5 file. HDF5 (Hierarchical Data Format 5) is a binary format used for storing large amounts of data in a compact and efficient way.
+
+When HDF5 is not found, it's likely because the file signature has been corrupted or is not present in the file. Here are a few steps you can take to recover the missing data:
+
+1. **Check the file signature:** You can use the `h5py` command to check the file signature. You can do this by running the following command in your terminal:
+   ```bash
+h5py -s -m your_file.h5
+```
+   Replace `your_file.h5` with the name of your HDF5 file.
+
+2. **Check for corruption:** If the file signature is present, check for any corruption in the file by running the following command:
+   ```bash
+h5py -d your_file.h5 -m -s -o your_file.h5
+```
+   This will display the contents of the file in a human-readable format.
+
+3. **Recreate the file:** If the file signature is present but corrupted, you can try to recreate the file by running the following command:
+   ```bash
+h5py -s -m your_file.h5
+```
+   This will overwrite the existing file with the same contents.
+
+4. **Try to rebuild the HDF5 library:** You can try to rebuild the HDF5 library by running the following command:
+   ```bash
+python -m pip install h5py
+```
+   This will install the latest version of the HDF5 library.
+
+5. **Check for missing data:** After recreating the file or rebuilding the HDF5 library, try to run your script again. If the issue persists, it's possible that there's an issue with your data or the file structure.
+
+Regarding your second part of your question, the joining operation is indeed the culprit here. The `join` operation is a part of the `optimizing layouts` section, and it seems that it's not working as expected. You can try to modify the `join` operation to use a different method, such as the `merge` method, which is available in the `optimizing layouts` section:
+```python
+with h5py.File(worker_file, 'r') as h5_in:
+    #...
+    h5_in['layout'] ='merge'
+```
+This will create a new layout by merging the existing layout with the new layout.

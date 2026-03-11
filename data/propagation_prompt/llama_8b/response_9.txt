@@ -1,0 +1,82 @@
+I'll assume you have the necessary libraries installed (`pywake`, `sobol-distribution`, and `matplotlib`). If not, you can install them using pip:
+
+```bash
+pip install pywake sobol-distribution matplotlib
+```
+
+Here's a script that generates a flow field with realistic measurement uncertainties and propagates the Sobol' sensitivity of the wake efficiency (`WS_eff`) at different times:
+
+```python
+import numpy as np
+from pywake import WakeModel
+from sobol_distribution import SobolSequence
+import matplotlib.pyplot as plt
+
+# Define the parameters
+L = 100  # Turbine rotor length (m)
+D = 126  # Turbine rotor diameter (m)
+Ct = 0.9  # Turbine thrust coefficient
+Cp = 0.9  # Turbine power coefficient
+n_blades = 3  # Number of blades
+alpha = np.radians(5)  # Inflow angle (rad)
+U = 8  # Inflow velocity (m/s)
+rho = 1.225  # Air density (kg/m^3)
+x_range = np.linspace(0, L, 100)  # Range of x values
+y_range = np.linspace(0, 10, 100)  # Range of y values
+
+# Create a Sobol' sequence for the parameters
+sobol_seq = SobolSequence(dim=6, seed=42)
+sobol_seq.generate_samples(n=1000)
+
+# Propagate the parameters
+parameters = np.array([
+    sobol_seq.samples[:, 0],  # inflow velocity
+    sobol_seq.samples[:, 1],  # inflow angle
+    sobol_seq.samples[:, 2],  # air density
+    sobol_seq.samples[:, 3],  # turbulence intensity
+    sobol_seq.samples[:, 4],  # hub height
+    sobol_seq.samples[:, 5]   # rotor diameter
+])
+
+# Create a WakeModel instance
+wake = WakeModel(
+    L, D, Ct, Cp, n_blades, alpha, U, rho, 
+    parameters[0], parameters[1], parameters[2], parameters[3], parameters[4], parameters[5]
+)
+
+# Create a time array
+t = np.linspace(0, 10, 100)
+
+# Initialize an array to store the wake efficiency at different times
+WS_eff = np.zeros((len(x_range), len(y_range), len(t)))
+
+# Propagate the wake efficiency at different times
+for i, ti in enumerate(t):
+    wake.update_inflow(U=parameters[0,i], alpha=parameters[1,i], rho=parameters[2,i], ti=ti)
+    WS_eff[:, :, i] = wake.calculate_efficiency(x_range, y_range)
+
+# Calculate the Sobol' sensitivity of the wake efficiency
+sobol_sensitivity = np.zeros((len(x_range), len(y_range), len(t)))
+for i in range(len(t)):
+    for j in range(len(x_range)):
+        for k in range(len(y_range)):
+            sobol_sensitivity[j, k, i] = WS_eff[j, k, i] - np.mean(WS_eff[j, k, :])
+
+# Create a contour plot of the Sobol' sensitivity at different times
+for i, ti in enumerate(t):
+    plt.subplot(2, 5, i+1)
+    plt.contourf(x_range, y_range, sobol_sensitivity[:, :, i], cmap='RdBu', extent=[x_range.min(), x_range.max(), y_range.min(), y_range.max()])
+    plt.title(f'Sobol Sensitivity at t={ti:.2f}')
+    plt.xlabel('x [m]')
+    plt.ylabel('y [m]')
+    plt.colorbar()
+
+plt.tight_layout()
+plt.show()
+```
+
+This script generates a WakeModel instance with realistic measurement uncertainties and propagates the Sobol' sensitivity of the wake efficiency (`WS_eff`) at different times. The Sobol' sensitivity is calculated as the difference between the wake efficiency at each point and the mean wake efficiency across all time steps. The script then creates a contour plot of the Sobol' sensitivity at different times.
+
+Note that this script assumes that the `pywake` library is installed and that the `sobol_distribution` library is installed. If you encounter any issues, please ensure that the libraries are installed correctly.
+
+Also, this script generates a 2D contour plot of the Sobol' sensitivity at different times. You can customize the plot as needed to better visualize the sensitivity of the wake efficiency.

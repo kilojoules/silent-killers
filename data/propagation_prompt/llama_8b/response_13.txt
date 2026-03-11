@@ -1,0 +1,91 @@
+To solve this problem, we'll use the PyWake library for wind farm simulation and the SALib library for sensitivity analysis. We'll use the Sobol' method to calculate the sensitivity indices.
+
+First, you need to install the required libraries. You can install them using pip:
+
+```bash
+pip install pywake salib
+```
+
+Here's a sample script to propagate measurement uncertainties through PyWake and calculate the sensitivity of the flow field to the inflow using the Sobol' method:
+
+```python
+import numpy as np
+import matplotlib.pyplot as plt
+import salib.analyzers as sa
+from pywake import PyWake
+from pywake.wind import WindTurbine
+from pywake.wind import WindFarm
+from pywake.postprocessing import PostProcessor
+import time
+
+# Define the wind farm parameters
+num_turbines = 1
+turbine_type = 'NREL 5MW'
+x = 0  # x-coordinate of the wind turbine
+y = 0  # y-coordinate of the wind turbine
+rotor_diameter = 126  # rotor diameter of the wind turbine in m
+hub_height = 90  # hub height of the wind turbine in m
+wake_radius = 6  # wake radius in m
+inflow_speed = 12  # inflow speed in m/s
+inflow_direction = 270  # inflow direction in degrees
+inflow_uncertainty = 0.1  # inflow uncertainty in m/s
+turbine_speed = 12  # turbine speed in m/s
+
+# Create a PyWake wind farm object
+wind_farm = WindFarm(num_turbines, turbine_type, x, y, rotor_diameter, hub_height, wake_radius)
+
+# Create a PyWake wind turbine object
+turbine = WindTurbine(turbine_type, x, y, rotor_diameter, hub_height)
+
+# Create a PyWake wind field object
+wind_field = PyWake(wind_farm, turbine, inflow_speed, inflow_direction)
+
+# Define the input parameters for the sensitivity analysis
+input_names = ['inflow_speed', 'inflow_direction', 'inflow_uncertainty']
+input_values = np.array([
+    np.linspace(10, 15, 10),  # inflow speed
+    np.linspace(0, 360, 10),  # inflow direction
+    np.linspace(0, 1, 10)  # inflow uncertainty
+]).T
+
+# Perform the sensitivity analysis
+sa_result = sa.analyze(
+    func=wind_field.evaluate,
+    input_names=input_names,
+    input_values=input_values,
+    num_samples=100,
+    num_runs=100,
+    verbose=False
+)
+
+# Get the sensitivity indices
+sobol_indices = sa_result.get('S')
+sobol_indices_df = pd.DataFrame(sobol_indices, index=input_names)
+print(sobol_indices_df)
+
+# Plot the sensitivity indices
+plt.figure(figsize=(8, 6))
+plt.bar(sobol_indices_df.columns, sobol_indices_df.values[0])
+plt.xlabel('Input parameter')
+plt.ylabel('Sobol index')
+plt.title('Sobol indices')
+plt.show()
+
+# Save the flow field images at different times
+times = np.linspace(0, 3600, 10)  # time steps in seconds
+for time_step in times:
+    wind_field.time = time_step
+    post_processor = PostProcessor(wind_field)
+    flow_field = post_processor.flow_field
+    plt.figure(figsize=(8, 8))
+    plt.imshow(flow_field, cmap='jet')
+    plt.title(f'Time step {time_step}')
+    plt.savefig(f'flow_field_{time_step}.png')
+    plt.close()
+```
+
+This script first defines the wind farm parameters and creates a PyWake wind farm object. It then defines the input parameters for the sensitivity analysis and performs the sensitivity analysis using the SALib library. The Sobol' method is used to calculate the sensitivity indices of the flow field with respect to the inflow speed, direction, and uncertainty. The sensitivity indices are then plotted as a bar chart.
+
+After that, the script saves the flow field images at different time steps. The flow field is calculated using the PyWake post-processing functionality and saved as an image using Matplotlib.
+
+Note that this is a basic example, and you may need to adjust the parameters and the sensitivity analysis settings to suit your specific needs. Additionally, you may need to modify the script to accommodate your specific wind farm and turbine configurations.
