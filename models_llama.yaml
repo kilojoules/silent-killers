@@ -16,7 +16,7 @@
   max_tokens: 8192
 
 - alias: llama_70b
-  name: meta-llama/Llama-3.3-70B-Instruct
+  name: meta-llama/Llama-3.1-70B-Instruct
   provider: huggingface
   load_in_4bit: true
   max_tokens: 8192
