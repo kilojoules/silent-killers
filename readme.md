@@ -177,6 +177,70 @@ failure harder to spot during review.
 
 ---
 
+## 3b  Open-source models: a different pattern
+
+We extended the audit to the **Llama** family of open-weight models
+(1B, 3B, 8B, 70B) running locally via HuggingFace Transformers with
+4-bit quantization. The results are strikingly different from the
+frontier API models above.
+
+| Model | Easy | Medium | Hard |
+|-------|------|--------|------|
+| Llama-3.2-1B-Instruct | 0.00 | 0.00 | 0.20 |
+| Llama-3.2-3B-Instruct | 0.00 | 0.00 | 0.025 |
+| Llama-3.1-8B-Instruct | 0.00 | 0.00 | 0.00 |
+| Llama-3.1-70B-Instruct | 0.00 | 0.00 | 0.00 |
+
+*Mean bad exception rate across 20 seeds per cell.*
+
+**Key observations:**
+
+- **Open-source Llama models are dramatically less prone to silent
+  error swallowing than frontier API models.** Even the smallest
+  (1B) only exhibits the pattern on the hardest prompt, and at a
+  much lower rate than any API model except o3-mini.
+- **Bad exception rate decreases monotonically with model size:**
+  1B (6.7%) → 3B (1.7%) → 8B (0%) → 70B (0%). Larger open models
+  handle errors correctly.
+- **The silent-killer behaviour appears concentrated in
+  instruction-tuned API models**, suggesting it may be an artefact
+  of RLHF/RLAIF fine-tuning that optimises for user-perceived
+  "helpfulness" (code that runs without visible errors) rather than
+  correctness.
+- **Only the hardest prompt (wind-farm optimisation with HDF5 I/O)
+  triggers exception handling** in the Llama models at all. The
+  easy and medium prompts produce zero `try/except` blocks across
+  all sizes and seeds.
+
+This contrast raises the possibility that the silent-killer pattern
+is not inherent to large language models but is instead a learned
+behaviour from alignment training -- a concrete example of reward
+hacking introduced by the training process itself.
+
+### Reproducing the Llama benchmark
+
+The Llama experiments can be reproduced using the scripts on the
+[`llama-benchmark`](https://github.com/kilojoules/silent-killers/tree/llama-benchmark)
+branch:
+
+```bash
+# Model configs: models_llama.yaml
+# Run a single model (e.g. llama_8b) with 20 seeds:
+python scripts/run_experiments.py \
+    --models-config models_llama.yaml \
+    --model-alias llama_8b \
+    --seeds 20
+
+# Or deploy to a GPU cloud instance:
+bash scripts/vast_run_llama.sh
+```
+
+The `HuggingFaceProvider` in `src/silent_killers/llm_api.py`
+supports local inference with optional 4-bit quantization via
+bitsandbytes.
+
+---
+
 ## 4  Methodology
 
 Each LLM was prompted with three coding tasks of increasing
@@ -202,6 +266,10 @@ using a visitor pattern to:
 | DeepSeek V3 | DeepSeek |
 | DeepSeek R1 | DeepSeek |
 | Gemini 1.5 Flash | Google |
+| Llama-3.2-1B-Instruct | Meta (local) |
+| Llama-3.2-3B-Instruct | Meta (local) |
+| Llama-3.1-8B-Instruct | Meta (local) |
+| Llama-3.1-70B-Instruct | Meta (local) |
 
 ---
 
